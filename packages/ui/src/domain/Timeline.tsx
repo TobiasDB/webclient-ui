@@ -28,10 +28,11 @@ export function Timeline({ events, cursor, onCursor, className, lanes, height = 
   const x = (e: Event) => (((e.ts ?? t0) - t0) / span) * 100;
   const cur = events[cursor];
 
+  const GUTTER = 64; // px: the lane labels; the track (and every x) starts after it
   const pick = (clientX: number) => {
     const rect = ref.current?.getBoundingClientRect();
     if (!rect || !events.length) return;
-    const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    const frac = Math.min(1, Math.max(0, (clientX - rect.left - GUTTER) / Math.max(1, rect.width - GUTTER)));
     const t = t0 + frac * span;
     let best = 0;
     events.forEach((e, i) => { if (Math.abs((e.ts ?? t0) - t) < Math.abs((events[best]?.ts ?? t0) - t)) best = i; });
@@ -46,21 +47,25 @@ export function Timeline({ events, cursor, onCursor, className, lanes, height = 
 
   return (
     <div className={cn("select-none", className)}>
-      <div className="mb-1 flex justify-between font-mono text-[10px] text-muted"><span>0 ms</span><span>{Math.round(span * 1000)} ms</span></div>
+      <div className="mb-1 flex justify-between font-mono text-[10px] text-muted" style={{ paddingLeft: GUTTER }}><span>0 ms</span><span>{Math.round(span * 1000)} ms</span></div>
       <div ref={ref} tabIndex={0} onKeyDown={onKey} role="slider" aria-valuemin={0} aria-valuemax={events.length - 1} aria-valuenow={cursor}
         onMouseDown={(e) => { pick(e.clientX); const move = (m: MouseEvent) => pick(m.clientX); const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); }; window.addEventListener("mousemove", move); window.addEventListener("mouseup", up); }}
-        className="relative cursor-col-resize rounded-md border border-line bg-surface-2 outline-none focus-visible:outline-2 focus-visible:outline-accent" style={{ height }}>
+        className="relative mt-5 cursor-col-resize rounded-md border border-line bg-surface-2 outline-none focus-visible:outline-2 focus-visible:outline-accent" style={{ height }}>
         {shown.map((lane, li) => (
           <div key={lane} className="absolute left-0 right-0 border-t border-line/60" style={{ top: `${(li / shown.length) * 100}%`, height: `${100 / shown.length}%` }}>
-            <span className="absolute left-1 top-0 font-mono text-[9px] uppercase text-muted">{lane}</span>
-            {events.map((e, i) => topicRoot(e.topic) === lane && (
-              <span key={i} title={`#${e.n ?? i} ${e.topic}`} className={cn("absolute bottom-1 w-[3px] rounded-sm", i === cursor ? "h-3/4" : "h-1/2")}
-                style={{ left: `calc(${x(e)}% - 1px)`, background: topicColorVar(e.topic), opacity: i === cursor ? 1 : 0.75 }} />
-            ))}
+            <span className="absolute left-0 top-0 flex h-full items-center gap-1 border-r border-line/60 pl-1.5 font-mono text-[9px] uppercase text-muted" style={{ width: GUTTER }}>
+              <span className="inline-block size-1.5 rounded-full" style={{ background: topicColorVar(lane) }} />{lane}
+            </span>
+            <div className="absolute bottom-0 top-0" style={{ left: GUTTER, right: 0 }}>
+              {events.map((e, i) => topicRoot(e.topic) === lane && (
+                <span key={i} title={`#${e.n ?? i} ${e.topic}`} className={cn("absolute bottom-1 w-[3px] rounded-sm", i === cursor ? "h-3/4" : "h-1/2")}
+                  style={{ left: `calc(${x(e)}% - 1px)`, background: topicColorVar(e.topic), opacity: i === cursor ? 1 : 0.75 }} />
+              ))}
+            </div>
           </div>
         ))}
-        {cur && <div className="pointer-events-none absolute bottom-0 top-0 w-px bg-ink" style={{ left: `${x(cur)}%` }}>
-          <span className="absolute -top-0.5 left-1 rounded bg-ink px-1 font-mono text-[9px] text-surface">#{cur.n ?? cursor} {cur.topic}</span>
+        {cur && <div className="pointer-events-none absolute bottom-0 top-0 w-px bg-ink" style={{ left: `calc(${GUTTER}px + ${x(cur)}% * (1 - ${GUTTER}/${ref.current?.clientWidth || 1000}))` }}>
+          <span className={cn("absolute -top-5 whitespace-nowrap rounded bg-ink px-1 font-mono text-[9px] text-surface", x(cur) > 80 ? "right-1" : "left-1")}>#{cur.n ?? cursor} {cur.topic}</span>
         </div>}
       </div>
     </div>

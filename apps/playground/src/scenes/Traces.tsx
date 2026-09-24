@@ -18,6 +18,8 @@ export function Traces() {
   const [hidden, setHidden] = React.useState<Set<string>>(new Set());
   const [tab, setTab] = React.useState("snapshot");
   const all = events.data ?? [];
+  // open on the first snapshot (there is something to look at), not on event #1
+  React.useEffect(() => { const i = all.findIndex((e) => e.topic === "snapshot"); if (i > 0) setCursor(i); }, [events.data]);
   const shown = React.useMemo(() => all.filter((e) => !hidden.has(topicRoot(e.topic))), [all, hidden]);
   const cur = shown[cursor];
   const topics = [...new Set(all.map((e) => topicRoot(e.topic)))].sort();

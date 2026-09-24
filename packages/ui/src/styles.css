@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* the components live next to this file; consumers (the Playground, the site) build from
+   their own directory, so tell Tailwind to scan the library too */
+@source "./";
 
 /* ---- WebClient design tokens ------------------------------------------------
    One palette, light-first, with a dark override on [data-theme="dark"]. Semantic
