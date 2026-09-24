@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Chip, EmptyState, KeyValue, Panel } from "@webclient/ui";
 import { api } from "../lib/api";
 import { closeSession, ensureSession, useSession } from "../lib/session";
+import { useQueryClient } from "@tanstack/react-query";
 
 /** Settings (stories 9.1-9.5). Read-only where the API has no write endpoint yet: the model
  * (stub by default -- a key is configured on the API side), resources, limits. */
@@ -11,6 +12,9 @@ export function Settings() {
   const sessionId = useSession();
   const [sid, setSid] = React.useState<string | null>(null);
   React.useEffect(() => setSid(sessionId), [sessionId]);
+  const qc = useQueryClient();
+  const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions, refetchInterval: 4000 });
+  const refresh = () => { qc.invalidateQueries({ queryKey: ["sessions"] }); qc.invalidateQueries({ queryKey: ["health"] }); qc.invalidateQueries({ queryKey: ["session-docs"] }); };
   const r = (health.data?.resources ?? {}) as Record<string, unknown>;
   const pool = (r.pool ?? {}) as Record<string, unknown>;
   return (
@@ -20,9 +24,22 @@ export function Settings() {
           <Chip tone={sid ? "ok" : "warn"} dot>{sid ? `session ${sid}` : "no session"}</Chip>
           <span className="text-muted">Everything server-held -- the live pages you open, the plans you run -- lives in this one server-side session object (opened with the DOM recorder on).</span>
         </div>
-        <div className="mt-2 flex gap-2">
-          <Button size="sm" variant="secondary" onClick={async () => { await closeSession(); setSid(await ensureSession()); }}>Close and open a fresh one</Button>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" onClick={async () => { await closeSession(); setSid(await ensureSession()); refresh(); }}>Close and open a fresh one</Button>
+          {sid && <Button size="sm" variant="secondary" onClick={async () => { await api.sessionRelease(sid); refresh(); }}>Release my live pages</Button>}
         </div>
+        <div className="mt-4 mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Every session on the API</div>
+        <p className="mb-2 text-[12px] text-muted">A live page holds one of the API's browser pages until it is released; when none are free a browser fetch waits. Sessions idle past their ttl are reclaimed with their pages. Close what is not yours any more.</p>
+        <table className="w-full text-[12px]">
+          <thead><tr className="text-left text-[10px] uppercase tracking-wide text-muted"><th className="py-1">session</th><th>docs</th><th>live pages</th><th>crawls</th><th>expires</th><th></th></tr></thead>
+          <tbody>{(sessions.data ?? []).map((s) => (
+            <tr key={s.id} className="border-t border-line/60">
+              <td className="py-1 font-mono">{s.id.slice(0, 12)}{s.id === sid ? <Chip tone="accent" className="ml-1">you</Chip> : null}</td><td>{s.documents}</td><td>{s.live_pages}</td><td>{s.crawls}</td>
+              <td className="text-muted">{s.expires_at ? `${Math.max(0, Math.round((s.expires_at * 1000 - Date.now()) / 60000))} min` : "never"}</td>
+              <td className="text-right"><Button size="sm" variant="ghost" onClick={async () => { await api.sessionRelease(s.id); refresh(); }}>release pages</Button><Button size="sm" variant="ghost" onClick={async () => { await api.sessionClose(s.id); if (s.id === sid) { await closeSession(); setSid(await ensureSession()); } refresh(); }}>close</Button></td>
+            </tr>))}</tbody>
+        </table>
+        {sessions.data && sessions.data.length > 1 && <Button size="sm" variant="danger" className="mt-2" onClick={async () => { for (const s of sessions.data!) if (s.id !== sid) await api.sessionClose(s.id); refresh(); }}>Close every other session</Button>}
       </Panel>
       <Panel title="Model">
         <div className="flex items-center gap-2 text-[13px]"><Chip tone="warn">stub</Chip> The demo model ships with WebClient: Onboard and the index author work out of the box, deterministically.</div>

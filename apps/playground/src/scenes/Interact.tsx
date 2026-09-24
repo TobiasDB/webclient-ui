@@ -63,7 +63,7 @@ export function Interact() {
   const open = async (e?: React.FormEvent) => {
     e?.preventDefault(); if (!sessionId || !draft) return;
     setBusy("opening"); setError(null); setStream([]); since.current = 0;
-    try { const h = await api.docOpen(sessionId, { url: draft, browser: "always" }); setDoc(h); note(`opened ${h.title ?? h.url}`, true); }
+    try { const h = await api.docOpen(sessionId, { url: draft, browser: "always", live: true }); setDoc(h); note(`opened ${h.title ?? h.url}`, true); }
     catch (err) { setError(err as ApiError); }
     finally { setBusy(null); }
   };

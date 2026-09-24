@@ -20,10 +20,12 @@ export async function ensureSession(): Promise<string> {
   if (id) {
     try { const s = await api.sessionGet(id); if (s.status === "running") return id; } catch { /* gone */ }
   }
-  const s = await api.sessionOpen({ record: true });
+  const s = await api.sessionOpen({ record: true, ttl: 1800 });  // idle for 30 min -> reclaimed, pages released
   try { sessionStorage.setItem(KEY, s.id); } catch { /* fine */ }
   return s.id;
 }
+
+export function currentSessionId(): string | null { try { return sessionStorage.getItem(KEY); } catch { return null; } }
 
 export async function closeSession(): Promise<void> {
   let id: string | null = null;

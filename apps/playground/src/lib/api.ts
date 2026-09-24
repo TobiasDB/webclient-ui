@@ -40,6 +40,7 @@ export type CrawlState = {
   pending: Ask | null; goal: Record<string, unknown> | null;
   result: { reason: string; rounds: number; pages: number; found: string[] } | null; error: string | null;
 };
+export type SessionInfo = { id: string; status: string; expires_at: number | null; ttl: number | null; documents: number; live_pages: number; crawls: number; recording: boolean; mine?: boolean };
 export type DocHandle = { id: string; kind: string; ok: boolean; url?: string; title?: string | null; live?: boolean; tier?: string; tiers?: string[]; status_code?: number };
 export type DocViews = { document_id: string; kind: string; url: string; title?: string | null; live: boolean; tiers: string[]; card?: PageCard; content?: string;
   rrweb?: Record<string, unknown>[]; patterns?: PatternHint[]; records?: IndexedElement[]; flags?: Flag[]; skeleton?: string; markdown?: string; controls?: IndexedElement[]; elements?: IndexedElement[]; transport?: Record<string, unknown> };
@@ -65,6 +66,8 @@ export const api = {
   /** the doc handle a plan produced (a live page held by the session) */
   executeDoc: async (body: Record<string, unknown>): Promise<DocHandle> => { const out = await api.execute(body); const h = (out.rows as { __doc__?: DocHandle })?.__doc__; if (!h) throw new ApiError(500, { error: { message: "the plan did not yield a document" } }); return h; },
   sessionOpen: (opts: { record?: boolean; ttl?: number } = {}) => call<{ id: string; status: string }>("/sessions", { method: "POST", body: JSON.stringify(opts) }),
+  sessions: () => call<SessionInfo[]>("/sessions"),
+  sessionRelease: (id: string) => call<{ id: string; released: number }>(`/sessions/${encodeURIComponent(id)}/release`, { method: "POST", body: "{}" }),
   sessionGet: (id: string) => call<{ id: string; status: string }>(`/sessions/${encodeURIComponent(id)}`),
   sessionClose: (id: string) => call<{ id: string; status: string }>(`/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
   /** the bus history over HTTP (a live page's DOM stream when payload is on) */
@@ -81,7 +84,7 @@ export const api = {
   tracePlan: (id: string) => call<{ blob: string; describe: string }>(`/traces/${encodeURIComponent(id)}/plan`),
   /** the documents the session holds (the strip at the top): static captures and live pages */
   docs: (sid: string) => call<DocHandle[]>(`/sessions/${encodeURIComponent(sid)}/documents`),
-  docOpen: (sid: string, body: { url: string; browser?: unknown }) => call<DocHandle>(`/sessions/${encodeURIComponent(sid)}/documents`, { method: "POST", body: JSON.stringify(body) }),
+  docOpen: (sid: string, body: { url: string; browser?: unknown; live?: boolean }) => call<DocHandle>(`/sessions/${encodeURIComponent(sid)}/documents`, { method: "POST", body: JSON.stringify(body) }),
   docViews: (sid: string, id: string, include: string[]) => call<DocViews>(`/sessions/${encodeURIComponent(sid)}/documents/${encodeURIComponent(id)}/views?include=${include.join(",")}`),
   docReload: (sid: string, id: string) => call<DocHandle>(`/sessions/${encodeURIComponent(sid)}/documents/${encodeURIComponent(id)}/reload`, { method: "POST", body: "{}" }),
   docClose: (sid: string, id: string) => call<{ id: string }>(`/sessions/${encodeURIComponent(sid)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),

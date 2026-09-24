@@ -30,7 +30,7 @@ export function Explore() {
   React.useEffect(() => {
     if (!active || !sessionId || !wantUrl || docId) return;
     let on = true;
-    api.docOpen(sessionId, { url: wantUrl, browser }).then((h) => { if (on) setParams({ doc: h.id, tier }, { replace: true }); }).catch((e) => { if (on) setOpenError(e as ApiError); });
+    api.docOpen(sessionId, { url: wantUrl, browser, live: false }).then((h) => { if (on) setParams({ doc: h.id, tier }, { replace: true }); }).catch((e) => { if (on) setOpenError(e as ApiError); });
     return () => { on = false; };
   }, [active, sessionId, wantUrl, docId, browser, tier, setParams]);
   const snap = useQuery({ queryKey: ["doc-views", sessionId, docId, "explore"], queryFn: () => api.docViews(sessionId!, docId, ["card", "rrweb", "patterns", "records", "flags", "content"]), enabled: !!sessionId && !!docId, staleTime: Infinity });
@@ -69,7 +69,8 @@ export function Explore() {
       </Toolbar>
       {!url && !docId ? <EmptyState title="Paste a URL to explore" hint="You'll see the page, what's notable (with evidence), and where the data is. The page is opened into your session and stays listed at the top." /> :
        err ? <EmptyState title={`The fetch failed · ${err.code ?? err.status}`} hint={<>{err.hint ?? err.message}{err.remedy && <> — remedy: <b>{err.remedy}</b></>}</>}
-              action={err.remedy === "browser" ? <Button variant="primary" onClick={() => setParams({ url, tier: "always" })}>Re-explore with a browser</Button> : undefined} /> :
+              action={err.remedy === "browser" ? <Button variant="primary" onClick={() => setParams({ url, tier: "always" })}>Re-explore with a browser</Button>
+                    : err.code === "pool.exhausted" && sessionId ? <Button variant="primary" onClick={async () => { await api.sessionRelease(sessionId); setOpenError(null); setParams({ url: wantUrl || url, tier }); }}>Release my live pages and retry</Button> : undefined} /> :
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px]">

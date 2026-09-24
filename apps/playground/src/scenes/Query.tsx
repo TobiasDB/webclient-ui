@@ -30,7 +30,7 @@ export function Query() {
   React.useEffect(() => {  // a ?url= is opened into the session; the builder then works on the held document
     if (!active || !sessionId || !wantUrl || docId) return;
     let on = true;
-    api.docOpen(sessionId, { url: wantUrl, browser: tier === "false" ? false : tier }).then((h) => { if (on) setParams((p) => { const n = new URLSearchParams(p); n.delete("url"); n.set("doc", h.id); return n; }, { replace: true }); }).catch((e) => { if (on) setOpenError(e as ApiError); });
+    api.docOpen(sessionId, { url: wantUrl, browser: tier === "false" ? false : tier, live: false }).then((h) => { if (on) setParams((p) => { const n = new URLSearchParams(p); n.delete("url"); n.set("doc", h.id); return n; }, { replace: true }); }).catch((e) => { if (on) setOpenError(e as ApiError); });
     return () => { on = false; };
   }, [active, sessionId, wantUrl, docId, tier, setParams]);
   const [record, setRecord] = React.useState<string>(params.get("record") ?? "");
