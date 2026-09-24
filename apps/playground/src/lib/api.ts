@@ -1,5 +1,6 @@
 /** The Playground's only dependency: the WebClient HTTP API. In dev the Vite proxy maps
  * `/api/*` -> the service; in a build `VITE_API_URL` points at it directly. */
+import type { OpSpec } from "@webclient/ui";
 import type { Ask, Event, Flag, IndexedElement, PageCard, PatternHint, TraceSummary, WaitingLoop, ToolSpec } from "@webclient/ui";
 
 export const API_URL: string = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
@@ -50,6 +51,8 @@ export type Snapshot = { card: PageCard; kind: string; encoding?: string; conten
 export const api = {
   health: () => call<Record<string, unknown>>("/health"),
   tools: () => call<ToolSpec[]>("/tools"),
+  /** the op catalogue: what each core exposes (the menu is generated from it) */
+  ops: () => call<{ Document: OpSpec[]; Reference: OpSpec[] }>("/ops"),
   tool: async <T,>(name: string, args: Record<string, unknown>) => (await call<{ result: T }>(`/tools/${name}`, { method: "POST", body: JSON.stringify(args) })).result,
   /** ONE round trip for a page: the card, the content, and the player / pattern / record / flag views. */
   snapshot: (url: string, browser: unknown = false, include: string[] = ["rrweb", "patterns", "records", "flags"]) => api.tool<Snapshot>("snapshot", { url, browser, include }),

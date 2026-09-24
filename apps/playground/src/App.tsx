@@ -38,6 +38,8 @@ export function App() {
   const [frozen, setFrozen] = React.useState<Event[] | null>(null);
   const nav = useNavigate();
   const shown = paused && frozen ? frozen : events;
+  const [showEvents, setShowEventsRaw] = React.useState<boolean>(() => { try { return localStorage.getItem("wc.events") === "1"; } catch { return false; } });
+  const setShowEvents = (v: boolean) => { setShowEventsRaw(v); try { localStorage.setItem("wc.events", v ? "1" : "0"); } catch { /* fine */ } };
   const waiting = events.filter((e) => e.topic === "loop" && (e as { phase?: string }).phase === "waiting").length;
   return (
     <div className="flex h-full flex-col">
@@ -52,10 +54,11 @@ export function App() {
         </nav>
         <div className="flex-1" />
         <Chip tone="neutral" title="the model used by Onboard / the index author; configure a key in Settings">model: stub</Chip>
+        <Chip tone={showEvents ? "accent" : "neutral"} interactive onClick={() => setShowEvents(!showEvents)} title="the live event feed (debugging); off by default">events</Chip>
         <Chip tone={connected ? "ok" : "bad"} dot>{connected ? "connected" : "no API"}</Chip>
       </header>
       <DocumentStrip />
-      <main className="min-h-0 flex-1 overflow-hidden">
+      <main className="min-h-0 flex-1 overflow-hidden"><Boundary>
         {/* every workspace stays MOUNTED (hidden when not active): switching tabs, or going
             back and forward, never loses what you were doing; the URL carries the essentials */}
         <Keep path="/" exact><Home /></Keep>
@@ -69,10 +72,26 @@ export function App() {
         <Keep path="/traces"><Routes><Route path="/traces" element={<Traces />} /><Route path="/traces/:id" element={<Traces />} /></Routes></Keep>
         <Keep path="/tools"><Tools /></Keep>
         <Keep path="/settings"><Settings /></Keep>
-      </main>
-      <RunBar events={shown} connected={connected} paused={paused} onPause={(p) => { setPaused(p); setFrozen(p ? events : null); }} onOpen={() => nav("/traces")} />
+      </Boundary></main>
+      {showEvents && <RunBar events={shown} connected={connected} paused={paused} onPause={(p) => { setPaused(p); setFrozen(p ? events : null); }} onOpen={() => nav("/traces")} />}
     </div>
   );
+}
+
+/** A render error in a workspace shows what broke -- never a white screen. */
+class Boundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="m-3 rounded-lg border border-bad/40 bg-bad-soft p-3 text-[13px]">
+        <div className="font-semibold text-bad">The workspace hit an error</div>
+        <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{String(this.state.error?.stack ?? this.state.error)}</pre>
+        <button type="button" className="mt-2 rounded border border-line bg-surface px-2 py-1" onClick={() => { this.setState({ error: null }); window.location.href = window.location.pathname; }}>reset this workspace</button>
+      </div>
+    );
+  }
 }
 
 /** A workspace that mounts once and stays: shown when the location matches, hidden otherwise. */

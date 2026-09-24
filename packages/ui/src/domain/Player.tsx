@@ -10,8 +10,8 @@ import { topicColorVar } from "./TopicChip";
 /** One rrweb event (a DOM event, or one of ours as a custom event tagged with its topic). */
 export type RREvent = { type: number; data: any; timestamp: number };
 
-export type Highlight = { selector: string; label?: string; tone?: "accent" | "ok" | "warn" | "field" | "bad"; colour?: string; key?: string };
-export type Pick = { path: string; selector: string; tag: string; classes: string[]; id?: string; text: string; attrs: Record<string, string>; href?: string };
+export type Highlight = { selector: string; label?: string; tone?: "accent" | "ok" | "warn" | "field" | "bad"; colour?: string; key?: string; dashed?: boolean };
+export type Pick = { path: string; selector: string; tag: string; classes: string[]; id?: string; text: string; attrs: Record<string, string>; href?: string; /** the element itself (in the rebuilt page) */ el?: Element };
 type Box = { left: number; top: number; width: number; height: number; label?: string; colour: string; dashed?: boolean };
 type Pulse = { id: number; at: number; topic: string; text: string; tone: string };
 
@@ -25,7 +25,8 @@ export type PlayerProps = {
   highlights?: Highlight[];
   /** Pick mode: hover shows the element under the mouse (tag.class), click reports it. */
   pickable?: boolean;
-  onPick?: (pick: Pick) => void;
+  /** a click on an element: the pick, and where it was (px inside the player's page area) */
+  onPick?: (pick: Pick, at: { x: number; y: number }) => void;
   onHover?: (pick: Pick | null) => void;
   /** Seek to an absolute timestamp (ms since epoch) when it changes. */
   seekTo?: number | null;
@@ -176,7 +177,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     for (const h of highlights) {
       let els: Element[] = []; try { els = [...d.querySelectorAll(h.selector)]; } catch { continue; }
       const colour = h.colour ?? TONE[h.tone ?? "accent"];
-      els.forEach((el, i) => out.push(boxFor(el, colour, i === 0 ? (h.label ? `${h.label}${els.length > 1 && !h.label.includes("×") ? ` ×${els.length}` : ""}` : undefined) : undefined)));
+      els.forEach((el, i) => out.push(boxFor(el, colour, i === 0 ? (h.label ? `${h.label}${els.length > 1 && !h.label.includes("×") ? ` ×${els.length}` : ""}` : undefined) : undefined, !!h.dashed)));
     }
     setBoxes((prev) => (prev.length === out.length && prev.every((b, i) => b.left === out[i]!.left && b.top === out[i]!.top && b.width === out[i]!.width && b.height === out[i]!.height && b.label === out[i]!.label)) ? prev : out);
   }, [highlights]);
@@ -218,7 +219,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
   const hoverRaf = React.useRef(0);
   const onMove = (e: React.MouseEvent) => { if (!pickable) return; const ev = { clientX: e.clientX, clientY: e.clientY, currentTarget: e.currentTarget } as React.MouseEvent; cancelAnimationFrame(hoverRaf.current); hoverRaf.current = requestAnimationFrame(() => hoverAt(ev)); };
   const hoverAt = (e: React.MouseEvent) => { const p = pickAt(e); const d = doc(); if (!p || !d) { setHover(null); cbs.current.onHover?.(null); return; } const el = d.querySelector(p.path) ?? d.elementFromPoint((e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left) / scale, (e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top) / scale); if (el) setHover(boxFor(el, "#6b7280", p.selector, true)); cbs.current.onHover?.(p); };
-  const onClick = (e: React.MouseEvent) => { if (!pickable) return; e.preventDefault(); const p = pickAt(e); if (p) cbs.current.onPick?.(p); };
+  const onClick = (e: React.MouseEvent) => { if (!pickable) return; e.preventDefault(); const p = pickAt(e); if (!p) return; const r = host.current?.getBoundingClientRect(); cbs.current.onPick?.(p, { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0) }); };
 
   // -- transport (the MediaBar drives it through the controller) ----------------------
   const markers = React.useMemo(() => events.filter((e) => e.type === 5).map((e) => ({ t: e.timestamp, tag: String(e.data?.tag ?? "") })), [events]);
@@ -274,7 +275,7 @@ export function describe(el: Element): Pick {
   const semantic = classes.filter((c) => !/[0-9]|^(flex|grid|block|hidden|relative|absolute|border|rounded|text|font|p|m|px|py|mt|mb|ml|mr|w|h|gap|items|justify)(-|$)/.test(c));
   const selector = el.id ? `${tag}#${el.id}` : semantic[0] ? `${tag}.${semantic[0]}` : tag;
   const attrs: Record<string, string> = {}; for (const a of el.attributes) if (a.name !== "class" && a.name !== "style" && !a.name.startsWith("data-wc")) attrs[a.name] = a.value.slice(0, 120);
-  return { path: steps.reverse().join(" > "), selector, tag, classes, id: el.id || undefined, text: (el.textContent || "").trim().slice(0, 120), attrs, href: (el as HTMLAnchorElement).href || undefined };
+  return { path: steps.reverse().join(" > "), selector, tag, classes, id: el.id || undefined, text: (el.textContent || "").trim().slice(0, 120), attrs, href: (el as HTMLAnchorElement).href || undefined, el };
 }
 
 /** Re-time a run onto a story beat: consecutive events (ours, and the DOM events between

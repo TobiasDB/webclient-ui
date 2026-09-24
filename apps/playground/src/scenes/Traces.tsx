@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Chip, CodeBlock, EmptyState, ErrorCard, EventList, MediaBar, Player, TabPanel, Tabs, TopicChip, topicRoot, usePlayerController, type ErrorEvent, type Event } from "@webclient/ui";
+import { Button, Chip, CodeBlock, EmptyState, ErrorCard, EventList, MediaBar, PlanView, Player, TabPanel, Tabs, TopicChip, topicRoot, usePlayerController, type ErrorEvent, type Event, type Plan } from "@webclient/ui";
 import { api } from "../lib/api";
 
 /** Traces (stories 7.1-7.3): the Player IS the trace -- the page as it changed, the mouse,
@@ -13,7 +13,7 @@ export function Traces() {
   const traces = useQuery({ queryKey: ["traces"], queryFn: api.traces });
   const events = useQuery({ queryKey: ["trace-events", id], queryFn: () => api.traceEvents(id!), enabled: !!id });
   const rrweb = useQuery({ queryKey: ["trace-rrweb", id], queryFn: () => api.traceRrweb(id!), enabled: !!id });
-  const plan = useQuery({ queryKey: ["trace-plan", id], queryFn: () => api.tracePlan(id!).catch(() => null), enabled: !!id });
+  const plan = useQuery({ queryKey: ["trace-plan", id], queryFn: async () => { const p = await api.tracePlan(id!).catch(() => null); if (!p) return null; const ir = await api.plan({ blob: p.blob }).catch(() => null); return { ...p, ir: ir?.plan as Plan | undefined }; }, enabled: !!id });
   const [cursor, setCursor] = React.useState(0);
   const [hidden, setHidden] = React.useState<Set<string>>(new Set(["script", "resource", "trace"]));
   const [tab, setTab] = React.useState("events");
@@ -58,7 +58,7 @@ export function Traces() {
             <TabPanel value="errors" className="flex flex-col gap-2 p-2">
               {errors.length ? errors.map((e, i) => <ErrorCard key={i} error={e.error} raised={e.raised} when={e.ts && all[0]?.ts ? `+${Math.round((e.ts - all[0].ts) * 1000)} ms` : undefined} onJump={() => { const idx = shown.indexOf(e as Event); if (idx >= 0) jump(idx); }} />) : <span className="text-[12px] text-muted">No errors in this run.</span>}
             </TabPanel>
-            <TabPanel value="plan" className="p-2">{plan.data ? <div className="flex flex-col gap-2"><CodeBlock lang="explain" code={plan.data.describe} /><CodeBlock lang="blob" code={plan.data.blob} wrap /></div> : <EmptyState title="No plan recorded" hint="Open a recording session under the trace (`wc.record()`), or pass `plan=` to `wc.trace()`." />}</TabPanel>
+            <TabPanel value="plan" className="p-2">{plan.data ? <div className="flex flex-col gap-2">{plan.data.ir && <PlanView plan={{ root: plan.data.ir.root, steps: plan.data.ir.steps }} url={(plan.data.ir as any).source?.url} readOnly />}<CodeBlock lang="blob" code={plan.data.blob} wrap /></div> : <EmptyState title="No plan recorded" hint="Open a recording session under the trace (`wc.record()`), or pass `plan=` to `wc.trace()`." />}</TabPanel>
           </Tabs>
         </div>
       </div>}

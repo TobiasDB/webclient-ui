@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Button, Chip, CodeBlock, RowsTable } from "@webclient/ui";
+import { Button, Chip, CodeBlock, PlanView, RowsTable } from "@webclient/ui";
 import { api, siteOrigin } from "../lib/api";
 
 /** Story C1: a query is data. The same plan shown as its explain tree, its wireframe and
@@ -16,18 +16,18 @@ export function PlanDemo({ record, fields, path, paginate }: { record: string; f
   ] }), [record, fields, paginate]);
   const [plan, setPlan] = React.useState<Awaited<ReturnType<typeof api.plan>> | null>(null);
   const [runs, setRuns] = React.useState<{ rows: Record<string, unknown>[]; ms: number }[]>([]);
-  const [tab, setTab] = React.useState<"explain" | "wireframe" | "blob">("explain");
-  React.useEffect(() => { api.plan({ plan: body, wireframe: true }).then(setPlan).catch(() => setPlan(null)); }, [body]);
+  const [tab, setTab] = React.useState<"plan" | "explain" | "blob">("plan");
+  React.useEffect(() => { api.plan({ plan: body }).then(setPlan).catch(() => setPlan(null)); }, [body]);
   const run = async () => { const t0 = performance.now(); const out = await api.execute({ plan: body, url: siteOrigin() + path }); setRuns((r) => [...r, { rows: (out.rows as Record<string, unknown>[]) ?? [], ms: Math.round(performance.now() - t0) }]); };
   React.useEffect(() => { run().catch(() => undefined); }, [body]);
   const identical = runs.length > 1 && runs.every((r) => JSON.stringify(r.rows) === JSON.stringify(runs[0]!.rows));
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <div className="rounded-lg border border-line p-3">
-        <div className="mb-2 flex gap-1 text-[12px]">{(["explain", "wireframe", "blob"] as const).map((t) => <button key={t} type="button" onClick={() => setTab(t)} className={`rounded px-2 py-1 ${tab === t ? "bg-accent-soft font-medium" : "text-muted"}`}>{t}</button>)}</div>
+        <div className="mb-2 flex gap-1 text-[12px]">{(["plan", "explain", "blob"] as const).map((t) => <button key={t} type="button" onClick={() => setTab(t)} className={`rounded px-2 py-1 ${tab === t ? "bg-accent-soft font-medium" : "text-muted"}`}>{t}</button>)}</div>
         {!plan ? <span className="text-[12px] text-muted">asking the service for the plan…</span>
+         : tab === "plan" ? <PlanView plan={body as any} url={siteOrigin() + path} readOnly />
          : tab === "explain" ? <CodeBlock lang="explain" code={plan.explain ?? plan.describe} />
-         : tab === "wireframe" ? <iframe title="wireframe" sandbox="" srcDoc={plan.wireframe ?? ""} className="h-64 w-full rounded-md border border-line bg-white" />
          : <CodeBlock lang="blob" code={plan.blob} wrap />}
       </div>
       <div className="rounded-lg border border-line p-3">

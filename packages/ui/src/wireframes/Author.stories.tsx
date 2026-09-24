@@ -11,7 +11,7 @@ export default meta;
 function Shell({ mode, record, page, bar, stage2 }: { mode: "look" | "pick" | "drive"; record?: string; page: React.ReactNode; bar?: boolean; stage2?: boolean }) {
   const on = (m: string) => (m === mode ? "▣ " : "▢ ");
   return (
-    <Frame title="Author — one page, one plan, three modes">
+    <Frame title="Author — one page, one plan (built without modes: the click menu is the object's ops; see the Menu story)">
       <Col rows="auto auto auto minmax(0,1fr) auto" className="h-full">
         <Box label="loaded (the session's documents)" tone="nav" note="pages 3/4 free · release"><Pill>● case-studies · static</Pill><Pill>● cost · live</Pill><Pill>○ product/1 · static</Pill></Box>
         <Box label="address bar" tone="nav" note="the tier is always here; changing it re-opens the page"><Pill>http://…/case-studies</Pill><Pill>auto ▾</Pill><Pill>Open</Pill><Pill>⟳ reload</Pill><Pill>● session</Pill></Box>
@@ -47,3 +47,25 @@ export const Run: StoryObj = { name: "A7-A8 · paginate and run: the server rows
 
 export const Resume: StoryObj = { name: "A10 · resume: the plan rides in the URL; pages re-open as fresh captures",
   render: () => <Shell mode="look" stage2 page={<><Pill>/author?plan=&lt;blob&gt;&stage=2</Pill><Pill>each stage's page re-opened into the session · picks restored</Pill><Lines n={5} /></>} /> };
+
+/** What was built (docs/product/author-workspace.md §8): no modes. A click opens the
+ * ElementMenu -- the selector builder (toggles + live count in scope) over the object's ops
+ * generated from GET /ops; the scope is the last object until Esc / a plan click. */
+export const Menu: StoryObj = { name: "A13 · built: the click menu = selector builder + the object's ops; the scope is the last object",
+  render: () => (
+    <Frame title="Author — click an element">
+      <Col rows="auto auto minmax(0,1fr)" className="h-full">
+        <Box label="address bar" tone="nav"><Pill>http://…/case-studies</Pill><Pill>auto ▾</Pill><Pill>Open</Pill><Pill>go live</Pill><Pill>Save</Pill><Pill>Export</Pill><Pill>Import</Pill><Pill>Run ▶</Pill></Box>
+        <Box label="scope (one fixed line)" tone="muted" note="Esc / the chip / the plan root → the page; any plan node → that object"><Pill>scope: each article.row</Pill><Pill>a.name .text-[15px] “Price monitor…”</Pill><Pill>6 groups</Pill></Box>
+        <Row cols="minmax(0,1.4fr) minmax(0,1fr)">
+          <Box label="THE PAGE (Player) + the menu at the click" grow note="selector builder: ↳ main · ↳ div.flex · article.row · a.name (toggles) · [a.name] ×1 in each article.row · 4 on the page  |  ops from /ops: select_all ×1 · select · click · scroll · wait_for · ☑ record  |  read [name] text href count attr  |  open the link ▸ · pages: rel=next  |  ▸ more (32 ops)"><Lines n={8} /></Box>
+          <Col rows="auto auto minmax(0,1fr)">
+            <Box label="THE PLAN — live, editable" note="root (scope when nothing else) · open the page · pages · each article.row ×4 · fields: name → the a.name → read text · when → the time → read text · rows"><Lines n={5} /></Box>
+            <Box label="THE PAGE — card · signals · pattern groups" note="html · 200 · static → browser · timing | pagination 98% | record list article.row ×4 · page template · 6 items a.rounded"><Lines n={2} /></Box>
+            <Box label="Rows · Server run · Skeleton · Markdown · Elements · As code" grow><Lines n={4} /></Box>
+          </Col>
+        </Row>
+      </Col>
+    </Frame>
+  ) };
+
