@@ -1,0 +1,51 @@
+{
+ "measured": "2026-09-24",
+ "site": "http://127.0.0.1:4321",
+ "model": "stub (the scripted demo model)",
+ "chars_per_token": 4,
+ "pages": [
+  {
+   "page": "/",
+   "label": "Home (product grid)",
+   "tier": "static",
+   "html": 14690,
+   "markdown": 1485,
+   "skeleton": 1272,
+   "card": 319
+  },
+  {
+   "page": "/changelog",
+   "label": "Changelog (SPA, rendered)",
+   "tier": "browser",
+   "html": 5988,
+   "markdown": 509,
+   "skeleton": 1130,
+   "card": 334
+  },
+  {
+   "page": "/case-studies",
+   "label": "Case studies p1",
+   "tier": "static",
+   "html": 4952,
+   "markdown": 258,
+   "skeleton": 767,
+   "card": 346
+  },
+  {
+   "page": "/benchmarks",
+   "label": "Benchmarks (6000 rows)",
+   "tier": "static",
+   "html": 761624,
+   "markdown": 286067,
+   "skeleton": 697,
+   "card": 325
+  }
+ ],
+ "authoring": {
+  "ok": true,
+  "calls": 6,
+  "prompt_chars": 40388,
+  "response_chars": 399,
+  "seconds": 0.03
+ }
+}
