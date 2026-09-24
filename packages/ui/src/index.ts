@@ -20,6 +20,8 @@ export { Player, describe, fieldColour, FIELD_COLOURS } from "./domain/Player";
 export type { Highlight, Pick, RREvent, PlayerProps } from "./domain/Player";
 export { DataFrame } from "./domain/DataFrame";
 export { MediaBar } from "./domain/MediaBar";
+export { FrontierMap } from "./domain/FrontierMap";
+export type { MapPage, MapEdge, MapFailure } from "./domain/FrontierMap";
 export { PlayerController, usePlayerController, usePlayerState } from "./domain/PlayerController";
 export type { PlayerState, PlayerActions } from "./domain/PlayerController";
 export { humanMousePath, mouseDurationMs, pathTimingsMs, pathSeed } from "./lib/mouse";

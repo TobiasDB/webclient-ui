@@ -1,6 +1,6 @@
 /** The Playground's only dependency: the WebClient HTTP API. In dev the Vite proxy maps
  * `/api/*` -> the service; in a build `VITE_API_URL` points at it directly. */
-import type { Event, Flag, IndexedElement, PageCard, PatternHint, TraceSummary, WaitingLoop, ToolSpec } from "@webclient/ui";
+import type { Ask, Event, Flag, IndexedElement, PageCard, PatternHint, TraceSummary, WaitingLoop, ToolSpec } from "@webclient/ui";
 
 export const API_URL: string = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
 export const WS_URL = (() => {
@@ -32,6 +32,14 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+export type CrawlState = {
+  id: string; session: string; mode: "auto" | "manual"; seeds: string[]; running: boolean; done: boolean; status: string; round: number;
+  pages: { url: string; title?: string | null; kind?: string; status_code?: number }[];
+  frontier: { url: string; text: string; depth: number; score: number; parent: string }[];
+  failures: { url: string; reason: string; status_code?: number | null }[];
+  pending: Ask | null; goal: Record<string, unknown> | null;
+  result: { reason: string; rounds: number; pages: number; found: string[] } | null; error: string | null;
+};
 export type DocHandle = { id: string; kind: string; ok: boolean; url?: string; title?: string; live?: boolean };
 export type Snapshot = { card: PageCard; kind: string; encoding?: string; content: string; document_id: string;
   rrweb?: Record<string, unknown>[]; patterns?: PatternHint[]; records?: IndexedElement[]; flags?: Flag[] };
@@ -69,6 +77,14 @@ export const api = {
   traceRrweb: (id: string, documentId?: string) => call<Record<string, unknown>[]>(`/traces/${encodeURIComponent(id)}/rrweb${documentId ? `?document_id=${encodeURIComponent(documentId)}` : ""}`),
   traceHar: (id: string) => call<{ log: { entries: unknown[] } }>(`/traces/${encodeURIComponent(id)}/har`),
   tracePlan: (id: string) => call<{ blob: string; describe: string }>(`/traces/${encodeURIComponent(id)}/plan`),
+  /** crawls held by the session */
+  crawlStart: (sid: string, body: Record<string, unknown>) => call<CrawlState>(`/sessions/${encodeURIComponent(sid)}/crawls`, { method: "POST", body: JSON.stringify(body) }),
+  crawls: (sid: string) => call<CrawlState[]>(`/sessions/${encodeURIComponent(sid)}/crawls`),
+  crawl: (id: string) => call<CrawlState>(`/crawls/${id}`),
+  crawlStep: (id: string, picks?: string[]) => call<CrawlState>(`/crawls/${id}/step`, { method: "POST", body: JSON.stringify({ picks }) }),
+  crawlRun: (id: string) => call<CrawlState>(`/crawls/${id}/run`, { method: "POST", body: "{}" }),
+  crawlResume: (id: string, picks: unknown) => call<CrawlState>(`/crawls/${id}/resume`, { method: "POST", body: JSON.stringify({ picks }) }),
+  crawlClose: (id: string) => call<{ id: string }>(`/crawls/${id}`, { method: "DELETE" }),
   loops: () => call<WaitingLoop[]>("/loops"),
   resume: (id: string, answer: unknown) => call<Record<string, unknown>>(`/loops/${encodeURIComponent(id)}/resume`, { method: "POST", body: JSON.stringify({ answer }) }),
 };
