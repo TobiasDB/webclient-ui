@@ -13,6 +13,11 @@ export class ApiError extends Error {
   constructor(public status: number, public body: unknown) {
     super(`API ${status}: ${typeof body === "object" && body && "error" in body ? JSON.stringify((body as { error: unknown }).error) : String(body)}`);
   }
+  /** the problem details (code / hint / remedy / message) when the API sent them */
+  get detail(): { code?: string; type?: string; hint?: string; remedy?: string; message?: string } | undefined {
+    const e = (this.body as { error?: { code?: string; type?: string; hint?: string; remedy?: string; message?: string } })?.error;
+    return e ? { ...e, code: e.code ?? e.type } : undefined;
+  }
   get remedy(): string | undefined { const e = (this.body as { error?: { remedy?: string } })?.error; return e?.remedy; }
   get hint(): string | undefined { const e = (this.body as { error?: { hint?: string } })?.error; return e?.hint; }
   get code(): string | undefined { const e = (this.body as { error?: { code?: string; type?: string } })?.error; return e?.code ?? e?.type; }
@@ -27,25 +32,38 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+export type DocHandle = { id: string; kind: string; ok: boolean; url?: string; title?: string; live?: boolean };
+export type Snapshot = { card: PageCard; kind: string; encoding?: string; content: string; document_id: string;
+  rrweb?: Record<string, unknown>[]; patterns?: PatternHint[]; records?: IndexedElement[]; flags?: Flag[] };
+
 export const api = {
-  health: () => call<{ ok: boolean; resources: Record<string, unknown> }>("/health"),
+  health: () => call<Record<string, unknown>>("/health"),
   tools: () => call<ToolSpec[]>("/tools"),
-  tool: <T,>(name: string, args: Record<string, unknown>) => call<{ result: T }>(`/tools/${name}`, { method: "POST", body: JSON.stringify(args) }).then((r) => r.result),
-  // the explore bundle
-  snapshot: (url: string, browser: unknown = false) => api.tool<{ card: PageCard; content: string; kind: string }>("snapshot", { url, browser }),
-  card: (url: string) => api.tool<PageCard>("card", { url }),
-  flags: (url: string, browser: unknown = false) => api.tool<Flag[]>("flags", { url, browser }),
-  patterns: (url: string, for_?: string) => api.tool<PatternHint[]>("patterns", for_ ? { url, for: for_ } : { url }),
-  skeleton: (url: string, browser: unknown = false, opts: Record<string, unknown> = {}) => api.tool<string>("skeleton", { url, browser, ...opts }),
+  tool: async <T,>(name: string, args: Record<string, unknown>) => (await call<{ result: T }>(`/tools/${name}`, { method: "POST", body: JSON.stringify(args) })).result,
+  /** ONE round trip for a page: the card, the content, and the player / pattern / record / flag views. */
+  snapshot: (url: string, browser: unknown = false, include: string[] = ["rrweb", "patterns", "records", "flags"]) => api.tool<Snapshot>("snapshot", { url, browser, include }),
+  card: (url: string, browser: unknown = "auto") => api.tool<PageCard>("card", { url, browser }),
+  flags: (url: string) => api.tool<Flag[]>("flags", { url }),
+  patterns: (url: string, for_?: string) => api.tool<PatternHint[]>("patterns", { url, ...(for_ ? { for: for_ } : {}) }),
+  skeleton: (url: string, collapse = true) => api.tool<string>("skeleton", { url, collapse }),
   markdown: (url: string) => api.tool<string>("fetch_markdown", { url }),
-  elements: (url: string, kind: "interactive" | "content" | "records", browser: unknown = false) => api.tool<IndexedElement[]>("elements", { url, kind, browser }),
-  fields: (url: string, record: string, browser: unknown = false) => api.tool<IndexedElement[]>("fields", { url, record, browser }),
-  extract: (url: string, result: string, fields: Record<string, string>, limit?: number) => api.tool<Record<string, unknown>[]>("extract", { url, result, fields, ...(limit ? { limit } : {}) }),
-  plan: (body: Record<string, unknown>) => call<{ valid: boolean; describe: string; blob: string; plan: unknown; wireframe?: string; explain?: string; rows?: unknown }>("/plan", { method: "POST", body: JSON.stringify(body) }),
+  elements: (url: string, kind: "interactive" | "content" | "records" = "interactive") => api.tool<IndexedElement[]>("elements", { url, kind }),
+  fields: (url: string, record: string) => api.tool<IndexedElement[]>("fields", { url, record }),
+  extract: (url: string, result: string, fields: Record<string, string>, limit = 200) => api.tool<Record<string, unknown>[]>("extract", { url, result, fields, limit }),
+  plan: (body: Record<string, unknown>) => call<{ valid: boolean; describe: string; plan: unknown; blob: string; wireframe?: string; explain?: string; rows?: unknown }>("/plan", { method: "POST", body: JSON.stringify(body) }),
   execute: (body: Record<string, unknown>) => call<{ rows: unknown }>("/execute", { method: "POST", body: JSON.stringify(body) }),
-  // traces + loops
+  /** the doc handle a plan produced (a live page held by the session) */
+  executeDoc: async (body: Record<string, unknown>): Promise<DocHandle> => { const out = await api.execute(body); const h = (out.rows as { __doc__?: DocHandle })?.__doc__; if (!h) throw new ApiError(500, { error: { message: "the plan did not yield a document" } }); return h; },
+  sessionOpen: (opts: { record?: boolean; ttl?: number } = {}) => call<{ id: string; status: string }>("/sessions", { method: "POST", body: JSON.stringify(opts) }),
+  sessionGet: (id: string) => call<{ id: string; status: string }>(`/sessions/${encodeURIComponent(id)}`),
+  sessionClose: (id: string) => call<{ id: string; status: string }>(`/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** the bus history over HTTP (a live page's DOM stream when payload is on) */
+  history: (q: { since?: number; topic?: string; document_id?: string; payload?: boolean }) => {
+    const p = new URLSearchParams(); if (q.since) p.set("since", String(q.since)); if (q.topic) p.set("topic", q.topic); if (q.document_id) p.set("document_id", q.document_id); if (q.payload) p.set("payload", "true");
+    return call<(Event & { events?: Record<string, unknown>[] })[]>(`/events?${p}`);
+  },
   traces: () => call<TraceSummary[]>("/traces"),
-  trace: (id: string) => call<Record<string, unknown>>(`/traces/${encodeURIComponent(id)}`),
+  trace: (id: string) => call<TraceSummary & Record<string, unknown>>(`/traces/${encodeURIComponent(id)}`),
   traceEvents: (id: string, topic = "") => call<Event[]>(`/traces/${encodeURIComponent(id)}/events${topic ? `?topic=${topic}` : ""}`),
   traceEvent: (id: string, n: number) => call<Event & { content?: string; body?: string; events?: unknown[] }>(`/traces/${encodeURIComponent(id)}/events/${n}`),
   traceRrweb: (id: string, documentId?: string) => call<Record<string, unknown>[]>(`/traces/${encodeURIComponent(id)}/rrweb${documentId ? `?document_id=${encodeURIComponent(documentId)}` : ""}`),
@@ -55,7 +73,6 @@ export const api = {
   resume: (id: string, answer: unknown) => call<Record<string, unknown>>(`/loops/${encodeURIComponent(id)}/resume`, { method: "POST", body: JSON.stringify({ answer }) }),
 };
 
-/** Subscribe to the live event stream (ws /events), resuming from `since`. */
 export function subscribe(onEvent: (e: Event) => void, opts: { since?: number; topic?: string; onOpen?: () => void; onClose?: () => void } = {}) {
   const q = new URLSearchParams();
   if (opts.since) q.set("since", String(opts.since));

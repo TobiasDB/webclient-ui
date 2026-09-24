@@ -9,9 +9,10 @@ import { Traces } from "./scenes/Traces";
 import { Tools } from "./scenes/Tools";
 import { Settings } from "./scenes/Settings";
 import { Loops } from "./scenes/Loops";
+import { Interact } from "./scenes/Interact";
 
 const WORKSPACES = [
-  ["/", "Home"], ["/explore", "Explore"], ["/query", "Query"], ["/loops", "Crawl · Loops"], ["/traces", "Traces"], ["/tools", "Tools"], ["/settings", "Settings"],
+  ["/", "Home"], ["/explore", "Explore"], ["/query", "Query"], ["/interact", "Interact"], ["/loops", "Crawl · Loops"], ["/traces", "Traces"], ["/tools", "Tools"], ["/settings", "Settings"],
 ] as const;
 
 /** The live stream shared by every workspace (the run bar) -- one socket, resumed by cursor. */
@@ -59,6 +60,7 @@ export function App() {
           <Route path="/" element={<Home />} />
           <Route path="/explore" element={<Explore />} />
           <Route path="/query" element={<Query />} />
+          <Route path="/interact" element={<Interact />} />
           <Route path="/loops" element={<Loops liveEvents={events} />} />
           <Route path="/traces" element={<Traces />} />
           <Route path="/traces/:id" element={<Traces />} />

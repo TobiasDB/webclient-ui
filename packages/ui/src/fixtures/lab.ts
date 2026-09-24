@@ -79,3 +79,24 @@ export const TRACE_EVENTS: Event[] = [
   { topic: "script", n: 13, seq: 4, ts: t + 1.42, document_id: "doc:000-009", script: "demo.title", phase: "load", detail: { result: "Cart" } },
   { topic: "resource", n: 14, seq: 6, ts: t + 1.5, source: "pool", detail: { what: "wait", kind: "page", waiting: 1, held: 4 } },
 ];
+
+/** The shop page as rrweb events (Meta + FullSnapshot), for the Player's stories. */
+let _id = 1;
+const el = (tagName: string, attributes: Record<string, string>, childNodes: unknown[] = []) => ({ type: 2, tagName, attributes, childNodes, id: _id++ });
+const tx = (textContent: string) => ({ type: 3, textContent, id: _id++ });
+export const SHOP_RRWEB = [
+  { type: 4, data: { href: "http://lab/lab/shop", width: 1280, height: 800 }, timestamp: 1000 },
+  { type: 2, data: { node: { type: 0, id: _id++, childNodes: [
+    { type: 1, name: "html", publicId: "", systemId: "", id: _id++ },
+    el("html", {}, [
+      el("head", {}, [el("title", {}, [tx("Roasters Coffee")]), el("style", {}, [tx("body{font:15px system-ui;margin:24px}.card{border:1px solid #ddd;border-radius:8px;padding:12px;margin:8px 0;max-width:420px}.price{float:right;font-weight:600}nav a{margin-right:12px}")])]),
+      el("body", {}, [
+        el("nav", {}, [el("a", { href: "/lab/about" }, [tx("about")]), el("a", { href: "/lab/login" }, [tx("sign in")])]),
+        el("main", {}, [el("h1", {}, [tx("Featured")]),
+          ...[["Aeropress", "39.00", "$39"], ["Grinder", "129.00", "$129"], ["Gooseneck Kettle", "59.00", "$59"]].map(([n, p, d], i) =>
+            el("div", { class: "card", "data-rank": String(i + 1) }, [el("h2", { class: "title" }, [tx(n!)]), el("a", { class: "link", href: `/lab/shop/items/${i + 1}` }, [tx("view")]), el("span", { class: "price", "data-price": p! }, [tx(d!)])]))]),
+        el("footer", {}, [tx("(c) Roasters")]),
+      ]),
+    ]),
+  ] }, initialOffset: { top: 0, left: 0 } }, timestamp: 1001 },
+];

@@ -2,100 +2,108 @@ import * as React from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AsCode, Button, Chip, CodeBlock, ElementTable, EmptyState, Input, Panel, Preview, RowsTable, Select, TabPanel, Tabs,
-  Toolbar, ToolbarGroup, ToolbarSpacer, fieldColour, toolAsCode, type Highlight, type IndexedElement,
+  AsCode, Button, Chip, CodeBlock, DataFrame, EmptyState, Input, Player, Select, TabPanel, Tabs, Toolbar, ToolbarGroup, ToolbarSpacer,
+  describe, fieldColour, toolAsCode, type Highlight, type Pick,
 } from "@webclient/ui";
-import { api, ApiError } from "../lib/api";
+import { API_URL, api, ApiError } from "../lib/api";
+import { call, plan, useSession } from "../lib/session";
 
-type Column = { name: string; selector: string; source: "text" | "href" | "attr"; attr?: string };
+type Source = "text" | "href" | "html" | "attr";
+type Column = { name: string; selector: string; source: Source; attr?: string; all?: boolean; sub?: Column[] };
+type Suggest = { selector: string; classes: string[]; tag: string; sample: string; count: number };
 
-/** A column name from the selector, not the sample text: `h2.title` -> title, `a.link` -> link,
- * `span[data-price]` -> price, `td:nth-child(2)` -> td_2; the role is the last resort. */
-function columnName(selector: string, role: string): string {
-  const leaf = selector.split(/\s*[> ]\s*/).filter(Boolean).pop() ?? selector;
-  const cls = /\.([a-zA-Z0-9_-]+)/.exec(leaf)?.[1];
-  const attr = /\[(?:data-)?([a-zA-Z0-9_-]+)/.exec(leaf)?.[1];
-  const id = /#([a-zA-Z0-9_-]+)/.exec(leaf)?.[1];
-  const nth = /^([a-z0-9]+):nth-child\((\d+)\)/.exec(leaf);
-  const raw = cls ?? id ?? attr ?? (nth ? `${nth[1]}_${nth[2]}` : /^[a-z0-9]+/.exec(leaf)?.[0] ?? role);
-  return raw.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 24);
-}
-
-/** The query builder (stories 2.1-2.3): pick the record (a hint, the element table, or a
- * click in the preview), pick fields inside ONE record, rows fill live; the plan is data. */
+/** The query builder (stories 2.1-2.3). Build by pointing, in the Player: the page is
+ * rebuilt once, selectors are evaluated LOCALLY in it (zero requests while you pick),
+ * the class names are spelled out, the rows fill as a dataframe (nested JSON welcome),
+ * and "run on the server" executes the same plan through the session. */
 export function Query() {
   const [params, setParams] = useSearchParams();
   const url = params.get("url") ?? "";
+  const tier = params.get("tier") ?? "false";
+  const sessionId = useSession();
   const [draft, setDraft] = React.useState(url);
   const [record, setRecord] = React.useState<string>(params.get("record") ?? "");
   const [columns, setColumns] = React.useState<Column[]>([]);
   const [paginate, setPaginate] = React.useState(params.get("paginate") ?? "none");
   const [maxPages, setMaxPages] = React.useState(5);
   const [tab, setTab] = React.useState("rows");
+  const [pickFor, setPickFor] = React.useState<"record" | "column">(params.get("record") ? "column" : "record");
+  const [hover, setHover] = React.useState<Pick | null>(null);
+  const [doc, setDoc] = React.useState<Document | null>(null);
+  const [tick, setTick] = React.useState(0);
+  const [server, setServer] = React.useState<{ rows?: Record<string, unknown>[]; error?: ApiError; ms?: number; busy: boolean }>({ busy: false });
 
-  const snap = useQuery({ queryKey: ["snapshot", url, "false"], queryFn: () => api.snapshot(url, false), enabled: !!url });
-  const records = useQuery({ queryKey: ["elements", url, "records"], queryFn: () => api.elements(url, "records"), enabled: !!url && snap.isSuccess });
-  const fields = useQuery({ queryKey: ["fields", url, record], queryFn: () => api.fields(url, record), enabled: !!url && !!record });
-  React.useEffect(() => { if (!record && records.data?.[0]) setRecord(records.data[0].selector); }, [records.data, record]);
+  const snap = useQuery({ queryKey: ["snapshot", url, tier], queryFn: () => api.snapshot(url, tier === "false" ? false : tier, ["rrweb", "patterns", "records"]), enabled: !!url, staleTime: Infinity });
+  // suggestions: the pattern hints + the repeating-region options, from the one snapshot call
+  const suggestions = React.useMemo(() => {
+    const out: { selector: string; count: number; why: string; confidence?: number }[] = [];
+    for (const h of snap.data?.patterns ?? []) if (h.name === "record_list") out.push({ selector: h.subject, count: h.count ?? 0, why: "pattern", confidence: h.confidence });
+    for (const r of snap.data?.records ?? []) if (!out.some((o) => o.selector === r.selector)) out.push({ selector: r.selector, count: r.repeats ?? 0, why: "repeating region" });
+    return out;
+  }, [snap.data]);
+  React.useEffect(() => { if (!record && suggestions[0]) { setRecord(suggestions[0].selector); setPickFor("column"); } }, [suggestions, record]);
 
-  const fieldMap = Object.fromEntries(columns.filter((c) => c.source === "text").map((c) => [c.name, c.selector]));
-  const rows = useQuery({
-    queryKey: ["extract", url, record, JSON.stringify(columns), paginate, maxPages],
-    queryFn: async () => {
-      if (paginate === "none" || paginate === "") return api.extract(url, record, fieldMap, 200);
-      // pagination runs as a plan: reference(url).resolve().paginate(by=..).select_all(record).extract(...).project()
-      const plan = {
-        root: "Reference", steps: [
-          { kind: "get", name: "resolve" }, { kind: "call", name: "resolve", args: [], kwargs: {} },
-          { kind: "get", name: "paginate" }, { kind: "call", name: "paginate", args: [], kwargs: { by: { value: paginate }, max_pages: { value: maxPages } } },
-          { kind: "get", name: "select_all" }, { kind: "call", name: "select_all", args: [{ value: record }], kwargs: {} },
-          { kind: "get", name: "extract" }, { kind: "call", name: "extract", args: [], kwargs: Object.fromEntries(columns.map((c) => [c.name, { plan: { root: "Document", steps: [
-            { kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: c.selector }], kwargs: {} },
-            { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: c.source === "text" ? "text" : c.source === "href" ? "href" : c.attr }], kwargs: {} },
-          ] } }])) },
-          { kind: "get", name: "project" }, { kind: "call", name: "project", args: [], kwargs: {} },
-        ],
-      };
-      const out = await api.execute({ plan, url });
-      return (Array.isArray(out.rows) ? out.rows : []) as Record<string, unknown>[];
-    },
-    enabled: !!url && !!record && columns.length > 0,
-  });
+  // -- local evaluation in the rebuilt page --------------------------------------------
+  const recordEls = React.useMemo(() => { if (!doc || !record) return []; try { return [...doc.querySelectorAll(record)]; } catch { return []; } }, [doc, record, tick]);
+  const recordInfo = React.useMemo(() => recordEls[0] ? describe(recordEls[0]) : null, [recordEls]);
+  const fieldSuggestions = React.useMemo<Suggest[]>(() => {
+    const first = recordEls[0]; if (!first) return [];
+    const seen = new Map<string, Suggest>();
+    const walk = (el: Element) => {
+      for (const c of el.children) {
+        const own = [...c.childNodes].some((n) => n.nodeType === 3 && (n.textContent || "").trim());
+        const isLeaf = c.children.length === 0 || c.tagName === "A" || own;
+        if (isLeaf && (c.textContent || "").trim()) {
+          const d = describe(c); const rel = relativeSelector(first, c);
+          const n = recordEls.filter((r) => { try { return !!r.querySelector(rel); } catch { return false; } }).length;
+          if (!seen.has(rel)) seen.set(rel, { selector: rel, classes: d.classes, tag: d.tag, sample: d.text, count: n });
+        }
+        if (c.children.length) walk(c);
+      }
+    };
+    walk(first);
+    return [...seen.values()].slice(0, 24);
+  }, [recordEls]);
+  const rows = React.useMemo(() => recordEls.map((r) => project(r, columns)), [recordEls, columns, tick]);
 
-  // the plan (for the blob / wireframe / explain), built from the same pieces
-  const planBody = React.useMemo(() => {
-    if (!record) return null;
-    const extractKw = Object.fromEntries(columns.map((c) => [c.name, { plan: { root: "Document", steps: [
-      { kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: c.selector }], kwargs: {} },
-      { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: c.source === "text" ? "text" : c.source === "href" ? "href" : c.attr }], kwargs: {} },
-    ] } }]));
-    return { root: "Reference", steps: [
-      { kind: "get", name: "resolve" }, { kind: "call", name: "resolve", args: [], kwargs: {} },
-      ...(paginate !== "none" ? [{ kind: "get", name: "paginate" }, { kind: "call", name: "paginate", args: [], kwargs: { by: { value: paginate }, max_pages: { value: maxPages } } }] : []),
-      { kind: "get", name: "select_all" }, { kind: "call", name: "select_all", args: [{ value: record }], kwargs: {} },
-      ...(columns.length ? [{ kind: "get", name: "extract" }, { kind: "call", name: "extract", args: [], kwargs: extractKw }] : []),
-      { kind: "get", name: "project" }, { kind: "call", name: "project", args: [], kwargs: {} },
-    ] };
-  }, [record, columns, paginate, maxPages]);
-  const plan = useQuery({ queryKey: ["plan", JSON.stringify(planBody)], queryFn: () => api.plan({ plan: planBody, wireframe: true }), enabled: !!planBody });
-
-  const addField = (f: IndexedElement) => {
-    if (columns.some((c) => c.selector === f.selector)) return;
-    const base = columnName(f.selector, f.role) || `field_${columns.length + 1}`;
-    const name = columns.some((c) => c.name === base) ? `${base}_${columns.length + 1}` : base;
-    setColumns((cs) => [...cs, { name, selector: f.selector, source: f.role === "link" ? "href" : "text" }]);
-  };
   const highlights: Highlight[] = [
     ...(record ? [{ selector: record, label: "record", tone: "accent" as const }] : []),
-    ...columns.map((c) => ({ selector: `${record} ${c.selector}`, label: c.name, tone: "field" as const })),
+    ...columns.map((c, i) => ({ selector: `${record} ${c.selector}`, label: c.name, colour: fieldColour(i) })),
   ];
-  const err = rows.error as ApiError | null;
+  const onPick = (p: Pick) => {
+    if (pickFor === "record" || !record) { setRecord(bestRecordSelector(p, doc)); setColumns([]); setPickFor("column"); return; }
+    const el = doc?.querySelector(p.path); if (!el) return;
+    const container = recordEls.find((r) => r.contains(el)); if (!container) { setRecord(bestRecordSelector(p, doc)); setColumns([]); return; }
+    addColumn({ selector: relativeSelector(container, el), classes: p.classes, tag: p.tag, sample: p.text, count: recordEls.length });
+  };
+  const addColumn = (s: Suggest) => {
+    if (columns.some((c) => c.selector === s.selector)) return;
+    const base = columnName(s.selector, s.tag); const name = columns.some((c) => c.name === base) ? `${base}_${columns.length + 1}` : base;
+    setColumns((cs) => [...cs, { name, selector: s.selector, source: s.tag === "a" ? "href" : s.tag === "img" ? "attr" : "text", attr: s.tag === "img" ? "src" : undefined }]);
+  };
+  const update = (i: number, patch: Partial<Column>) => setColumns((cs) => cs.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+
+  // -- the plan (data) and the server run ------------------------------------------------
+  const body = React.useMemo(() => record ? plan("Reference", [
+    call("resolve", [], tier === "false" ? {} : { browser: tier }),
+    ...(paginate !== "none" ? [call("paginate", [], { by: paginate, max_pages: maxPages })] : []),
+    call("select_all", [record]),
+    ...(columns.length ? [[{ kind: "get" as const, name: "extract" }, { kind: "call" as const, name: "extract", args: [], kwargs: Object.fromEntries(columns.map((c) => [c.name, { plan: fieldPlan(c) }])) as any }]] : []),
+    call("project"),
+  ], sessionId) : null, [record, columns, paginate, maxPages, tier, sessionId]);
+  const planView = useQuery({ queryKey: ["plan", JSON.stringify(body)], queryFn: () => api.plan({ plan: body, wireframe: true }), enabled: !!body && (tab === "plan" || tab === "code") });
+  const runServer = async () => {
+    if (!body) return; setServer({ busy: true }); const t0 = performance.now(); setTab("server");
+    try { const out = await api.execute({ plan: body, url }); setServer({ rows: (Array.isArray(out.rows) ? out.rows : []) as Record<string, unknown>[], ms: Math.round(performance.now() - t0), busy: false }); }
+    catch (e) { setServer({ error: e as ApiError, busy: false }); }
+  };
 
   return (
-    <div className="flex h-full flex-col">
-      <Toolbar>
-        <form className="flex flex-1 items-center gap-2" onSubmit={(e) => { e.preventDefault(); setColumns([]); setRecord(""); setParams({ url: draft }); }}>
+    <div className="flex h-full min-h-0 flex-col">
+      <Toolbar className="flex-wrap">
+        <form className="flex min-w-[280px] flex-1 items-center gap-2" onSubmit={(e) => { e.preventDefault(); setColumns([]); setRecord(""); setPickFor("record"); setParams({ url: draft, tier }); }}>
           <ToolbarGroup className="flex-1"><Input mono value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="the page with the records" className="w-full" /></ToolbarGroup>
+          <Select value={tier} onChange={(e) => setParams({ url, tier: e.target.value })}><option value="false">static</option><option value="auto">auto</option><option value="always">browser</option></Select>
           <Button type="submit" size="sm">Load</Button>
         </form>
         <ToolbarGroup>
@@ -104,53 +112,126 @@ export function Query() {
           {paginate !== "none" && <Input type="number" min={1} max={50} value={maxPages} onChange={(e) => setMaxPages(Number(e.target.value))} className="w-16" />}
         </ToolbarGroup>
         <ToolbarSpacer />
-        {rows.data && <Chip tone="ok">{rows.data.length} rows</Chip>}
+        {rows.length > 0 && <Chip tone="ok">{rows.length} rows · local</Chip>}
+        <Button variant="primary" size="sm" onClick={runServer} disabled={!body || server.busy}>{server.busy ? "running…" : "Run on the server"}</Button>
       </Toolbar>
-      {!url ? <EmptyState title="Load a page to build a query" hint="Pick the repeating record, then the fields inside one of them. Rows fill as you go." /> :
-      <div className="grid min-h-0 flex-1 grid-cols-[1.2fr_1fr] gap-3 p-3">
-        <Panel title="Pick by pointing" flush actions={<span className="text-[11px] text-muted">{record ? `record: ${record}` : "1) pick a record"}</span>}>
-          {snap.data ? <Preview html={snap.data.content} highlights={highlights} baseUrl={snap.data.card.final_url} className="h-full rounded-none border-0"
-            onPick={(p) => { if (!record) setRecord(p.path); else addField({ index: 0, role: p.tag === "a" ? "link" : "text", name: p.text, kind: "content", selector: p.path.split(" > ").slice(-1)[0] ?? p.path, repeats: 1 }); }} /> : <EmptyState title="Fetching…" />}
-        </Panel>
-        <div className="grid min-h-0 grid-rows-[auto_auto_1fr] gap-3">
-          <Panel title="Records (repeating regions)" flush>
-            {records.data?.length ? <ElementTable elements={records.data} selected={records.data.find((r) => r.selector === record)?.index ?? null} onSelect={(r) => { setRecord(r.selector); setColumns([]); }} /> : <div className="p-3 text-[12px] text-muted">No repeating region detected — click one in the preview.</div>}
-          </Panel>
-          <Panel title="Fields inside one record — click to add a column" flush>
-            {fields.data ? <ElementTable elements={fields.data} onSelect={addField} emptyHint="No text leaves inside the record." /> : <div className="p-3 text-[12px] text-muted">pick a record first</div>}
-          </Panel>
-          <Panel flush className="min-h-0">
-            <Tabs items={[{ value: "rows", label: "Rows", count: rows.data?.length }, { value: "columns", label: "Columns", count: columns.length }, { value: "plan", label: "Plan" }, { value: "code", label: "As code" }]} value={tab} onValueChange={setTab} className="h-full">
+      {!url ? <EmptyState title="Load a page to build a query" hint="Pick the repeating record, then the fields inside one of them. Rows fill as you go -- no requests until you run it." /> :
+      snap.isError ? <EmptyState title="Could not load the page" hint={(snap.error as ApiError).detail?.hint ?? String(snap.error)} /> :
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,1fr)]">
+        <div className="min-w-0">
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px]">
+            <span className="text-muted">picking:</span>
+            <Chip tone={pickFor === "record" ? "accent" : "neutral"} interactive onClick={() => setPickFor("record")}>the record</Chip>
+            <Chip tone={pickFor === "column" ? "accent" : "neutral"} interactive onClick={() => setPickFor("column")}>a field inside it</Chip>
+            <span className="flex-1" />
+            {hover && <span className="truncate font-mono text-[11px] text-muted">{hover.selector}{hover.classes.length > 1 ? ` · ${hover.classes.join(" ")}` : ""}</span>}
+          </div>
+          {snap.data?.rrweb ? <Player events={snap.data.rrweb as any} highlights={highlights} pickable onPick={onPick} onHover={setHover} onDocument={(d) => { setDoc(d); setTick((t) => t + 1); }} controls={false} maxHeight={720} />
+            : <EmptyState title={snap.isLoading ? "Fetching…" : "Not an HTML page"} />}
+        </div>
+        <div className="flex min-w-0 flex-col gap-3">
+          <section className="rounded-lg border border-line p-3">
+            <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted">1 · the record {recordEls.length > 0 && <Chip tone="ok">×{recordEls.length}</Chip>}</div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Input mono value={record} onChange={(e) => { setRecord(e.target.value); setColumns([]); }} placeholder="e.g. div.card" className="h-8 w-56" />
+              {recordInfo && recordInfo.classes.length > 0 && <span className="text-[11px] text-muted">classes:</span>}
+              {recordInfo?.classes.map((c) => <Chip key={c} interactive onClick={() => { setRecord(`${recordInfo.tag}.${c}`); setColumns([]); }} tone={record.endsWith(`.${c}`) ? "accent" : "neutral"}>.{c}</Chip>)}
+            </div>
+            {suggestions.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]"><span className="text-muted">detected:</span>{suggestions.slice(0, 6).map((s) => <Chip key={s.selector} interactive tone={s.selector === record ? "accent" : "neutral"} onClick={() => { setRecord(s.selector); setColumns([]); setPickFor("column"); }} title={s.why}>{s.selector} ×{s.count}{s.confidence != null ? ` · ${Math.round(s.confidence * 100)}%` : ""}</Chip>)}</div>}
+          </section>
+          <section className="rounded-lg border border-line p-3">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">2 · the fields (inside one record) — click to add a column</div>
+            {!record ? <span className="text-[12px] text-muted">pick a record first</span> : fieldSuggestions.length ? (
+              <div className="flex max-h-40 flex-wrap gap-1.5 overflow-auto">
+                {fieldSuggestions.map((s) => { const on = columns.some((c) => c.selector === s.selector); return (
+                  <button key={s.selector} type="button" onClick={() => on ? setColumns((cs) => cs.filter((c) => c.selector !== s.selector)) : addColumn(s)} className={`flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-left text-[11px] ${on ? "border-accent bg-accent-soft" : "border-line hover:bg-surface-2"}`}>
+                    <code className="font-mono">{s.selector}</code><span className="truncate text-muted" title={s.sample}>“{s.sample.slice(0, 28)}”</span><span className="text-muted">{s.count}/{recordEls.length}</span>
+                  </button>); })}
+              </div>) : <span className="text-[12px] text-muted">no text inside the record — click a field in the page</span>}
+          </section>
+          <section className="flex min-h-0 flex-1 flex-col rounded-lg border border-line">
+            <Tabs items={[{ value: "rows", label: "Rows", count: rows.length }, { value: "columns", label: "Columns", count: columns.length }, { value: "server", label: "Server run", count: server.rows?.length }, { value: "plan", label: "Plan" }, { value: "code", label: "As code" }]} value={tab} onValueChange={setTab} className="min-h-0 flex-1">
               <TabPanel value="rows">
-                {!columns.length ? <EmptyState title="Add a column" hint="Click a field in the record (or in the preview)." /> :
-                 err ? <RowsTable rows={[]} emptyHint={<>{err.hint ?? err.message}{err.remedy && <> — remedy: <b>{err.remedy}</b></>}</>} /> :
-                 <RowsTable rows={rows.data ?? []} columns={columns.map((c) => c.name)} colours={columns.map((_, i) => fieldColour(i))} emptyHint="The record selector matched nothing. Pick another record, or check the page needs a browser (Explore → tier)." />}
+                {!columns.length ? <EmptyState title="Add a column" hint="Click a field chip above, or a field in the page." /> :
+                 <DataFrame rows={rows} columns={columns.map((c) => c.name)} colours={columns.map((_, i) => fieldColour(i))} className="max-h-[420px]" emptyHint="The record selector matched nothing in the page." />}
               </TabPanel>
               <TabPanel value="columns" className="p-2">
                 <ul className="flex flex-col gap-1 text-[12px]">
                   {columns.map((c, i) => (
-                    <li key={c.name} className="flex items-center gap-2 rounded border border-line p-1.5">
+                    <li key={i} className="flex flex-wrap items-center gap-2 rounded border border-line p-1.5">
                       <span className="inline-block size-2.5 rounded-sm" style={{ background: fieldColour(i) }} />
-                      <Input value={c.name} onChange={(e) => setColumns((cs) => cs.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} className="h-7 w-32" />
-                      <code className="flex-1 truncate font-mono text-muted">{c.selector}</code>
-                      <Select value={c.source} onChange={(e) => setColumns((cs) => cs.map((x, j) => j === i ? { ...x, source: e.target.value as Column["source"] } : x))} className="h-7"><option value="text">text</option><option value="href">href</option><option value="attr">attribute…</option></Select>
-                      {c.source === "attr" && <Input value={c.attr ?? ""} placeholder="data-price" onChange={(e) => setColumns((cs) => cs.map((x, j) => j === i ? { ...x, attr: e.target.value } : x))} className="h-7 w-28" mono />}
+                      <Input value={c.name} onChange={(e) => update(i, { name: e.target.value })} className="h-7 w-32" />
+                      <Input mono value={c.selector} onChange={(e) => update(i, { selector: e.target.value })} className="h-7 min-w-[140px] flex-1" />
+                      <Select value={c.source} onChange={(e) => update(i, { source: e.target.value as Source })} className="h-7"><option value="text">text</option><option value="href">href</option><option value="html">html</option><option value="attr">attribute…</option></Select>
+                      {c.source === "attr" && <Input value={c.attr ?? ""} placeholder="data-price" onChange={(e) => update(i, { attr: e.target.value })} className="h-7 w-28" mono />}
+                      <label className="inline-flex items-center gap-1 text-[11px] text-muted"><input type="checkbox" checked={!!c.all} onChange={(e) => update(i, { all: e.target.checked })} /> all matches (a list)</label>
                       <Button size="sm" variant="ghost" onClick={() => setColumns((cs) => cs.filter((_, j) => j !== i))}>✕</Button>
                     </li>
                   ))}
                   {!columns.length && <li className="text-muted">No columns yet.</li>}
                 </ul>
               </TabPanel>
+              <TabPanel value="server">
+                {server.error ? <div className="p-3 text-[12px]"><Chip tone="bad">{server.error.detail?.code ?? server.error.status}</Chip> {server.error.detail?.hint ?? server.error.message}{server.error.detail?.remedy && <div>remedy: <b>{server.error.detail.remedy}</b></div>}</div>
+                 : server.rows ? <><div className="px-2 pt-1 text-[11px] text-muted">{server.rows.length} rows from the server in {server.ms} ms{rows.length !== server.rows.length ? ` · the local preview had ${rows.length}` : " · same as the local preview"}</div><DataFrame rows={server.rows} className="max-h-[400px]" /></>
+                 : <EmptyState title="Not run yet" hint="Run on the server executes this exact plan through your session (pagination included)." />}
+              </TabPanel>
               <TabPanel value="plan" className="p-2">
-                {plan.data ? <div className="flex flex-col gap-2"><CodeBlock lang="explain" code={plan.data.explain ?? plan.data.describe} /><iframe title="wireframe" sandbox="" srcDoc={plan.data.wireframe ?? ""} className="h-72 w-full rounded-md border border-line bg-white" /></div> : <span className="text-muted">pick a record to see the plan</span>}
+                {planView.data ? <div className="flex flex-col gap-2"><CodeBlock lang="explain" code={planView.data.explain ?? planView.data.describe} /><iframe title="wireframe" sandbox="" srcDoc={planView.data.wireframe ?? ""} className="h-72 w-full rounded-md border border-line bg-white" /></div> : <span className="text-[12px] text-muted">{body ? "asking the service…" : "pick a record to see the plan"}</span>}
               </TabPanel>
               <TabPanel value="code">
-                <AsCode {...toolAsCode("extract", { url, result: record, fields: fieldMap })} blob={plan.data?.blob} python={`from webclient import WebClient, from_blob\n\nwith WebClient() as wc:\n    rows = from_blob(${JSON.stringify(plan.data?.blob ?? "<blob>")}, wc).collect()`} />
+                <AsCode {...toolAsCode("extract", { url, result: record, fields: Object.fromEntries(columns.filter((c) => c.source === "text").map((c) => [c.name, c.selector])) }, API_URL)} blob={planView.data?.blob} python={`from webclient import WebClient, from_blob\n\nwith WebClient() as wc:\n    rows = from_blob(${JSON.stringify(planView.data?.blob ?? "<open the Plan tab>")}, wc).collect()`} />
               </TabPanel>
             </Tabs>
-          </Panel>
+          </section>
         </div>
       </div>}
     </div>
   );
+}
+
+/** The sub-plan a column becomes in `extract(name=<plan>)`. */
+function fieldPlan(c: Column): Record<string, unknown> {
+  const sel = c.all ? call("select_all", [c.selector]) : call("select", [c.selector]);
+  const attr = c.source === "text" ? "text" : c.source === "href" ? "href" : c.source === "html" ? "html" : c.attr ?? "text";
+  return { root: "Document", steps: [...sel, ...call("attr", [attr])] };
+}
+
+function project(recordEl: Element, columns: Column[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const c of columns) {
+    let els: Element[] = []; try { els = c.all ? [...recordEl.querySelectorAll(c.selector)] : ([recordEl.querySelector(c.selector)].filter(Boolean) as Element[]); } catch { /* a bad selector: nothing */ }
+    const val = (el: Element): unknown => c.sub?.length ? project(el, c.sub) : c.source === "text" ? (el.textContent || "").trim() : c.source === "href" ? el.getAttribute("href") : c.source === "html" ? el.innerHTML : el.getAttribute(c.attr ?? "");
+    out[c.name] = c.all ? els.map(val) : els[0] ? val(els[0]) : null;
+  }
+  return out;
+}
+
+/** A selector for `el` relative to `root`: tag.class when unique inside the record, else a short path. */
+function relativeSelector(root: Element, el: Element): string {
+  const d = describe(el);
+  const tries = [d.selector, ...(d.classes.length > 1 ? [`${d.tag}.${d.classes.slice(0, 2).join(".")}`] : []), d.tag];
+  for (const t of tries) { try { if (root.querySelectorAll(t).length === 1 && root.querySelector(t) === el) return t; } catch { /* next */ } }
+  const steps: string[] = []; let n: Element | null = el;
+  while (n && n !== root) { const p: Element | null = n.parentElement; if (!p) break; const same = [...p.children].filter((c) => c.tagName === n!.tagName); steps.push(same.length > 1 ? `${n.tagName.toLowerCase()}:nth-of-type(${same.indexOf(n) + 1})` : n.tagName.toLowerCase()); n = p; }
+  return steps.reverse().join(" > ");
+}
+
+/** From a click inside a page: the selector of the repeating ancestor (the record), preferring a class shared by ≥2 siblings. */
+function bestRecordSelector(p: Pick, doc: Document | null): string {
+  if (!doc) return p.selector;
+  let el: Element | null = doc.querySelector(p.path);
+  while (el && el.tagName !== "BODY") {
+    const d = describe(el);
+    for (const c of d.classes) { const sel = `${d.tag}.${c}`; try { if (doc.querySelectorAll(sel).length >= 2) return sel; } catch { /* next */ } }
+    el = el.parentElement;
+  }
+  return p.selector;
+}
+
+function columnName(selector: string, tag: string): string {
+  const leaf = selector.split(/\s*[> ]\s*/).filter(Boolean).pop() ?? selector;
+  const cls = /\.([a-zA-Z0-9_-]+)/.exec(leaf)?.[1]; const attr = /\[(?:data-)?([a-zA-Z0-9_-]+)/.exec(leaf)?.[1]; const id = /#([a-zA-Z0-9_-]+)/.exec(leaf)?.[1];
+  const raw = cls ?? id ?? attr ?? (tag === "a" ? "link" : tag === "img" ? "image" : tag === "time" ? "when" : /^[a-z0-9]+/.exec(leaf)?.[0] ?? tag);
+  return raw.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 24) || "field";
 }

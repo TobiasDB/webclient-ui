@@ -78,3 +78,18 @@
 html, body { background: var(--color-surface); color: var(--color-ink); font-family: var(--font-sans); font-size: 14px; }
 * { box-sizing: border-box; }
 ::selection { background: var(--color-accent-soft); }
+
+/* ---- the Player's overlay + media bar ------------------------------------------- */
+.wc-player .wc-hl { outline: 2px solid var(--c); outline-offset: 1px; box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 18%, transparent); border-radius: 2px; pointer-events: none; }
+.wc-player .wc-hl-dashed { outline-style: dashed; box-shadow: none; }
+.wc-player .wc-hl-flash { animation: wc-flash .9s ease-out forwards; }
+.wc-player .wc-hl-label { position: absolute; top: -18px; left: -2px; background: var(--c); color: #fff; font: 600 10px/1.5 var(--font-mono); padding: 0 5px; border-radius: 3px; white-space: nowrap; }
+.wc-player .wc-pulse { display: inline-flex; align-items: center; gap: 6px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: color-mix(in srgb, var(--color-ink) 88%, transparent); color: var(--color-surface); font: 11px/1.6 var(--font-mono); padding: 1px 8px; border-radius: 999px; border-left: 3px solid var(--c); animation: wc-pulse-in 2.6s ease-out forwards; }
+.wc-player .wc-pulse-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--c); box-shadow: 0 0 0 0 var(--c); animation: wc-ring 1.2s ease-out 2; }
+.wc-player .wc-mb { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; color: var(--color-ink); }
+.wc-player .wc-mb:hover { background: var(--color-surface-2); }
+.wc-player .wc-mb-primary { background: var(--color-accent); color: #fff; }
+.wc-player .wc-mb-primary:disabled { opacity: .4; }
+@keyframes wc-flash { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 60%, transparent); } 100% { box-shadow: 0 0 0 18px transparent; outline-color: transparent; } }
+@keyframes wc-pulse-in { 0% { transform: translateX(24px); opacity: 0; } 8% { transform: none; opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes wc-ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 70%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }

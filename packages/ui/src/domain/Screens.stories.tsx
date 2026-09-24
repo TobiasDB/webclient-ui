@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import * as React from "react";
-import { Preview, fieldColour, type Highlight } from "./Preview";
+import { Player, fieldColour, type Highlight } from "./Player";
+import { DataFrame } from "./DataFrame";
 import { SkeletonPane } from "./SkeletonPane";
 import { ElementTable } from "./ElementTable";
 import { RowsTable } from "./RowsTable";
@@ -11,29 +12,30 @@ import { RunBar } from "./RunBar";
 import { ErrorCard } from "./ErrorCard";
 import { Panel } from "../primitives/Panel";
 import { Button } from "../primitives/Button";
-import { SHOP_HTML, SHOP_SKELETON, SHOP_CONTROLS, SHOP_FIELDS, SHOP_ROWS, TRACE_EVENTS } from "../fixtures/lab";
+import { SHOP_RRWEB, SHOP_SKELETON, SHOP_CONTROLS, SHOP_FIELDS, SHOP_ROWS, TRACE_EVENTS } from "../fixtures/lab";
 import type { ErrorEvent } from "../types";
 
 const meta: Meta = { title: "Domain/Screens", parameters: { layout: "fullscreen" } };
 export default meta;
 
-export const PreviewWithHighlights: StoryObj = {
-  name: "Preview · highlights + pick",
+export const PlayerAsPreview: StoryObj = {
+  name: "Player · the preview: highlights, pick, classes, a nested dataframe",
   render: function Story() {
     const [picked, setPicked] = React.useState<string>("");
     const [hover, setHover] = React.useState<string | null>(null);
     const highlights: Highlight[] = [
       { selector: "div.card", label: "record", tone: "accent" },
-      { selector: "div.card h2.title", label: "title", tone: "field" },
-      { selector: "div.card span.price", label: "price", tone: "field" },
+      { selector: "div.card h2.title", label: "title", colour: fieldColour(0) },
+      { selector: "div.card span.price", label: "price", colour: fieldColour(1) },
     ];
     return (
-      <div className="grid h-[560px] grid-cols-[1.2fr_1fr] gap-3 p-3">
-        <Panel title="Preview — click to pick, hover to link" flush><Preview html={SHOP_HTML} highlights={highlights} onPick={(p) => setPicked(`${p.tag} · ${p.path} · "${p.text}"`)} onHover={setHover} className="h-full rounded-none border-0" /></Panel>
-        <Panel title="Skeleton (hover-linked)">
-          <div className="mb-2 text-[12px] text-muted">picked: {picked || "—"} · hover: {hover ?? "—"}</div>
-          <SkeletonPane skeleton={SHOP_SKELETON} active={hover ? "<" + hover.split(" > ").pop()?.split(":")[0] : null} />
-        </Panel>
+      <div className="grid h-[640px] grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-3 p-3">
+        <Player events={SHOP_RRWEB as any} highlights={highlights} pickable controls={false} onPick={(p) => setPicked(`${p.selector} · classes: ${p.classes.join(" ") || "—"} · "${p.text}"`)} onHover={(p) => setHover(p?.selector ?? null)} />
+        <div className="flex min-h-0 flex-col gap-3">
+          <Panel title="Picked / hover"><div className="font-mono text-[12px]">picked: {picked || "click an element"}<br />hover: {hover ?? "—"}</div></Panel>
+          <Panel title="Rows — nested JSON expands in place" flush><DataFrame rows={SHOP_ROWS.map((r, i) => ({ ...r, meta: { rank: i + 1, tags: ["coffee", "gear"] } }))} colours={{ title: fieldColour(0), price: fieldColour(1) }} /></Panel>
+          <Panel title="Skeleton (hover-linked)"><SkeletonPane skeleton={SHOP_SKELETON} active={hover ? "<" + hover.split(".")[0] : null} /></Panel>
+        </div>
       </div>
     );
   },
