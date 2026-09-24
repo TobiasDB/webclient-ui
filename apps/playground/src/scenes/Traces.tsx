@@ -71,7 +71,7 @@ export function Traces() {
           <Panel flush className="min-h-0">
             <Tabs items={[{ value: "snapshot", label: "Snapshot" }, { value: "replay", label: "DOM replay", count: rrweb.data?.length }, { value: "event", label: "Event" }, { value: "plan", label: "Plan" }, { value: "errors", label: "Ledger", count: errors.length }]} value={tab} onValueChange={setTab} className="h-full">
               <TabPanel value="snapshot" className="p-3">{snapAt ? <SnapshotPane snapshot={snapAt} html={html} /> : <EmptyState title="No snapshot before this point" />}</TabPanel>
-              <TabPanel value="replay" className="p-3">
+              <TabPanel value="replay" className="flex flex-col p-3">
                 <ReplayPlayer events={rrweb.data ?? []} seekTo={cur?.ts ? cur.ts * 1000 : null} onTime={followPlayer} width={640} height={400} />
                 <p className="mt-2 text-[11px] text-muted">One list drives this: the DOM (recorded, or rebuilt from the snapshots of a static run) with every other event as a marker on the bar, coloured by topic. Play, and the panes follow.</p>
               </TabPanel>
