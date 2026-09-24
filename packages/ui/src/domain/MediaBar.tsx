@@ -40,7 +40,10 @@ export function MediaBar({ controller, className }: { controller: PlayerControll
         {!s.live && <span className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-accent bg-surface" style={{ left: `${(s.time / total) * 100}%` }} />}
       </div>
       {!s.live && <>
-        <select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={s.speed} onChange={(e) => a.setSpeed(Number(e.target.value))}>{SPEEDS.map((x) => <option key={x} value={x}>{x}×</option>)}</select>
+        <select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={s.speed} onChange={(e) => a.setSpeed(Number(e.target.value))} title="speed">{SPEEDS.map((x) => <option key={x} value={x}>{x}×</option>)}</select>
+        <select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={s.pace} onChange={(e) => a.setPace(Number(e.target.value))} title="story pace: the minimum beat between the run's events (a real run fires them milliseconds apart)">
+          <option value={0}>real timing</option><option value={400}>0.4 s beat</option><option value={900}>0.9 s beat</option><option value={1500}>1.5 s beat</option>
+        </select>
         <label className="inline-flex items-center gap-1 text-[11px] text-muted"><input type="checkbox" checked={s.skip} onChange={(e) => a.setSkip(e.target.checked)} /> skip idle</label>
       </>}
       <span className="hidden font-mono text-[10px] text-muted sm:inline">{s.size.w}×{s.size.h} · {Math.round(s.scale * 100)}%</span>

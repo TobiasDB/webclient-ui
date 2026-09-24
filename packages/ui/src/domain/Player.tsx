@@ -40,6 +40,10 @@ export type PlayerProps = {
    * MediaBar elsewhere (pinned to the window) -- it stays in sync through the controller. */
   controls?: boolean;
   controller?: PlayerController;
+  /** Story pace: the minimum gap (ms, at 1x) between consecutive events of the run. A real
+   * run fires its events milliseconds apart -- unwatchable; re-timing them onto a beat makes
+   * the replay followable. 0 = the recorded timing. Default 900. */
+  pace?: number;
   autoPlay?: boolean;
   className?: string;
   /** Max height of the viewport area (the page scales to fit width, then this). */
@@ -58,9 +62,12 @@ const TONE: Record<NonNullable<Highlight["tone"]>, string> = { accent: "#2457e6"
  * at the recorded viewport and is scaled to fit -- no reflow between documents. */
 const NO_HIGHLIGHTS: Highlight[] = [];
 
-export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, className, maxHeight = 720 }: PlayerProps) {
+export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
   const ownCtl = React.useMemo(() => new PlayerController(), []);
   const ctl = controller ?? ownCtl;
+  const [pace, setPace] = React.useState(paceProp);
+  // the re-timed stream (the story pace) and the map back to the recorded clock
+  const { events, toRecorded, toPaced } = React.useMemo(() => paceEvents(rawEvents, live ? 0 : pace), [rawEvents, pace, live]);
   const host = React.useRef<HTMLDivElement>(null);
   const root = React.useRef<HTMLDivElement>(null);
   const rep = React.useRef<any>(null);
@@ -68,6 +75,8 @@ export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, picka
   const cbs = React.useRef({ onTime, onEvent, onPick, onHover, onDocument });
   cbs.current = { onTime, onEvent, onPick, onHover, onDocument };
   const refreshRef = React.useRef<() => void>(() => {});
+  const toRecordedRef = React.useRef<(ms: number) => number>((ms) => ms);
+  toRecordedRef.current = toRecorded;
   const [size, setSize] = React.useState({ w: 1280, h: 800 });
   const [scale, setScale] = React.useState(1);
   const [playing, setPlaying] = React.useState(false);
@@ -121,7 +130,7 @@ export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, picka
           const d = (payload.detail ?? {}) as { op?: string; selector?: string };
           if (d.selector && ["select", "select_all", "attr", "text_content", "extract", "click", "write", "wait_for", "scroll"].includes(String(d.op))) {
             flashSelector(d.selector, d.op === "attr" || d.op === "text_content" ? "#7c3aed" : "#2457e6", `${d.op} ${d.selector}`);
-            if (d.op === "select" || d.op === "select_all") moveCursor(undefined, centreOf(d.selector), false);
+            moveCursor(undefined, centreOf(d.selector), false); // the pointer goes wherever the run looked
           }
         }
         if (tag === "error") pulse(tag, String((payload.error as any)?.code ?? "error"));
@@ -133,7 +142,7 @@ export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, picka
       if (live) { r.startLive(); setPlaying(true); }
       else if (autoPlay) { r.play(0); setPlaying(true); }
       else r.pause(0);
-      const tick = () => { if (!rep.current) return; const t = rep.current.getCurrentTime(); setTime(t); cbs.current.onTime?.(m.startTime + t); refreshRef.current(); raf = requestAnimationFrame(tick); };
+      const tick = () => { if (!rep.current) return; const t = rep.current.getCurrentTime(); setTime(t); cbs.current.onTime?.(toRecordedRef.current(m.startTime + t)); refreshRef.current(); raf = requestAnimationFrame(tick); };
       raf = requestAnimationFrame(tick);
     })();
     return () => { cancelled = true; cancelAnimationFrame(raf); try { r?.destroy?.(); } catch { /* gone */ } rep.current = null; };
@@ -149,7 +158,7 @@ export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, picka
 
   React.useEffect(() => { rep.current?.setConfig?.({ speed }); }, [speed]);
   React.useEffect(() => { rep.current?.setConfig?.({ skipInactive: skip }); }, [skip]);
-  React.useEffect(() => { if (seekTo == null || !rep.current || live) return; const off = Math.max(0, seekTo - meta.startTime); if (Math.abs(off - rep.current.getCurrentTime()) > 30) { rep.current.pause(off); setTime(off); } }, [seekTo, meta.startTime, live]);
+  React.useEffect(() => { if (seekTo == null || !rep.current || live) return; const off = Math.max(0, toPaced(seekTo) - meta.startTime); if (Math.abs(off - rep.current.getCurrentTime()) > 30) { rep.current.pause(off); setTime(off); } }, [seekTo, meta.startTime, live, toPaced]);
 
   // -- scale to fit --------------------------------------------------------------
   React.useLayoutEffect(() => {
@@ -215,8 +224,8 @@ export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, picka
   const toggle = () => { const r = rep.current; if (!r) return; if (playing) { r.pause(); setPlaying(false); } else { r.play(time >= total - 5 ? 0 : time); setPlaying(true); } };
   const step = (dir: 1 | -1) => { const r = rep.current; if (!r) return; const ts = markers.map((m) => m.t - meta.startTime).filter((t) => t >= 0); const next = dir > 0 ? ts.find((t) => t > time + 5) : [...ts].reverse().find((t) => t < time - 5); const target = next ?? (dir > 0 ? total : 0); r.pause(target); setTime(target); setPlaying(false); refreshRef.current(); };
   const seekFrac = (frac: number) => { const r = rep.current; if (!r) return; const t = Math.max(0, Math.min(total, frac * total)); if (playing) r.play(t); else r.pause(t); setTime(t); refreshRef.current(); };
-  ctl.actions = { toggle, step, seekFrac, setSpeed, setSkip };
-  React.useEffect(() => { ctl.set({ playing, live, ready, time, total, startTime: meta.startTime, speed, skip, markers, size, scale }); }, [ctl, playing, live, ready, time, total, meta.startTime, speed, skip, markers, size, scale]);
+  ctl.actions = { toggle, step, seekFrac, setSpeed, setSkip, setPace };
+  React.useEffect(() => { ctl.set({ playing, live, ready, time, total, startTime: meta.startTime, speed, skip, pace, markers, size, scale }); }, [ctl, playing, live, ready, time, total, meta.startTime, speed, skip, pace, markers, size, scale]);
   // keyboard: space plays / pauses, arrows step (when the pointer is over the player)
   const onKey = (e: React.KeyboardEvent) => { if (e.key === " ") { e.preventDefault(); toggle(); } if (e.key === "ArrowRight") { e.preventDefault(); step(1); } if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); } };
 
@@ -264,4 +273,23 @@ export function describe(el: Element): Pick {
   const selector = el.id ? `${tag}#${el.id}` : semantic[0] ? `${tag}.${semantic[0]}` : tag;
   const attrs: Record<string, string> = {}; for (const a of el.attributes) if (a.name !== "class" && a.name !== "style" && !a.name.startsWith("data-wc")) attrs[a.name] = a.value.slice(0, 120);
   return { path: steps.reverse().join(" > "), selector, tag, classes, id: el.id || undefined, text: (el.textContent || "").trim().slice(0, 120), attrs, href: (el as HTMLAnchorElement).href || undefined };
+}
+
+/** Re-time a run onto a story beat: consecutive events (ours, and the DOM events between
+ * them) are pushed apart to at least `gap` ms, everything after shifting with them. Returns
+ * the paced list and the maps between the two clocks (the panes and the seek use the
+ * recorded one; the replayer runs on the paced one). */
+function paceEvents(events: RREvent[], gap: number): { events: RREvent[]; toRecorded: (ms: number) => number; toPaced: (ms: number) => number } {
+  if (!gap || events.length < 3) return { events, toRecorded: (ms) => ms, toPaced: (ms) => ms };
+  const out: RREvent[] = []; const pairs: [number, number][] = []; // [recorded, paced]
+  let shift = 0; let lastBeat = -Infinity;
+  for (const e of events) {
+    const isBeat = e.type === 5 || e.type === 3; // our events and the DOM's changes are the beats
+    let t = e.timestamp + shift;
+    if (isBeat && t - lastBeat < gap) { shift += gap - (t - lastBeat); t = e.timestamp + shift; }
+    if (isBeat) lastBeat = t;
+    out.push({ ...e, timestamp: t }); pairs.push([e.timestamp, t]);
+  }
+  const interp = (x: number, from: 0 | 1, to: 0 | 1) => { let lo = pairs[0]!; for (const p of pairs) { if (p[from] <= x) lo = p; else break; } return x - lo[from] + lo[to]; };
+  return { events: out, toRecorded: (ms) => interp(ms, 1, 0), toPaced: (ms) => interp(ms, 0, 1) };
 }

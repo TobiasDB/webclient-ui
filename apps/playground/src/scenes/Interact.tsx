@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Chip, DataFrame, ElementTable, EmptyState, Input, Player, Select, TabPanel, Tabs, Toolbar, ToolbarGroup, ToolbarSpacer, type IndexedElement, type Pick, type RREvent } from "@webclient/ui";
 import { api, ApiError, type DocHandle } from "../lib/api";
-import { call, plan, useSession } from "../lib/session";
+import { call, plan, useActive, useSession } from "../lib/session";
 
 /** Interact (stories 4.1-4.3): a LIVE page held by the server-side session. Open it (a
  * plan: resolve(browser, keep_alive)), watch its DOM stream in the Player, act on it by
@@ -12,7 +12,9 @@ import { call, plan, useSession } from "../lib/session";
 export function Interact() {
   const [params] = useSearchParams();
   const sessionId = useSession();
+  const active = useActive("/interact");
   const [draft, setDraft] = React.useState(params.get("url") ?? "");
+  React.useEffect(() => { if (active) { const u = params.get("url"); if (u) setDraft(u); } }, [active, params]);
   const [doc, setDoc] = React.useState<DocHandle | null>(null);
   const [stream, setStream] = React.useState<RREvent[]>([]);
   const since = React.useRef(0);
@@ -25,6 +27,14 @@ export function Interact() {
   const [tab, setTab] = React.useState("controls");
   const [pickOn, setPickOn] = React.useState(true);
   const [hover, setHover] = React.useState<Pick | null>(null);
+  const wantDoc = active ? params.get("doc") : null;
+  React.useEffect(() => {  // attach to a page the session already holds (from the strip / Explore)
+    if (!sessionId || !wantDoc || doc?.id === wantDoc) return;
+    let on = true;
+    api.docs(sessionId).then((ds) => { const h = ds.find((d) => d.id === wantDoc); if (on && h && h.live) { setStream([]); since.current = 0; setDoc(h); setDraft(h.url ?? ""); note(`attached to ${h.title ?? h.url}`, true); } }).catch(() => undefined);
+    return () => { on = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, wantDoc]);
 
   // the page's stream: EVERY event of this document from the bus history -- the recorder's
   // DOM chunks as they are, and the actions / requests / errors as rrweb custom events, so
@@ -53,7 +63,7 @@ export function Interact() {
   const open = async (e?: React.FormEvent) => {
     e?.preventDefault(); if (!sessionId || !draft) return;
     setBusy("opening"); setError(null); setStream([]); since.current = 0;
-    try { const h = await api.executeDoc({ plan: plan("Reference", [call("resolve", [], { browser: true, keep_alive: true })], sessionId), url: draft }); setDoc(h); note(`opened ${h.title ?? h.url}`, true); }
+    try { const h = await api.docOpen(sessionId, { url: draft, browser: "always" }); setDoc(h); note(`opened ${h.title ?? h.url}`, true); }
     catch (err) { setError(err as ApiError); }
     finally { setBusy(null); }
   };

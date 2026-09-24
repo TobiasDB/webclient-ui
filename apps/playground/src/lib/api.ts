@@ -40,7 +40,9 @@ export type CrawlState = {
   pending: Ask | null; goal: Record<string, unknown> | null;
   result: { reason: string; rounds: number; pages: number; found: string[] } | null; error: string | null;
 };
-export type DocHandle = { id: string; kind: string; ok: boolean; url?: string; title?: string; live?: boolean };
+export type DocHandle = { id: string; kind: string; ok: boolean; url?: string; title?: string | null; live?: boolean; tier?: string; tiers?: string[]; status_code?: number };
+export type DocViews = { document_id: string; kind: string; url: string; title?: string | null; live: boolean; tiers: string[]; card?: PageCard; content?: string;
+  rrweb?: Record<string, unknown>[]; patterns?: PatternHint[]; records?: IndexedElement[]; flags?: Flag[]; skeleton?: string; markdown?: string; controls?: IndexedElement[]; elements?: IndexedElement[]; transport?: Record<string, unknown> };
 export type Snapshot = { card: PageCard; kind: string; encoding?: string; content: string; document_id: string;
   rrweb?: Record<string, unknown>[]; patterns?: PatternHint[]; records?: IndexedElement[]; flags?: Flag[] };
 
@@ -77,6 +79,12 @@ export const api = {
   traceRrweb: (id: string, documentId?: string) => call<Record<string, unknown>[]>(`/traces/${encodeURIComponent(id)}/rrweb${documentId ? `?document_id=${encodeURIComponent(documentId)}` : ""}`),
   traceHar: (id: string) => call<{ log: { entries: unknown[] } }>(`/traces/${encodeURIComponent(id)}/har`),
   tracePlan: (id: string) => call<{ blob: string; describe: string }>(`/traces/${encodeURIComponent(id)}/plan`),
+  /** the documents the session holds (the strip at the top): static captures and live pages */
+  docs: (sid: string) => call<DocHandle[]>(`/sessions/${encodeURIComponent(sid)}/documents`),
+  docOpen: (sid: string, body: { url: string; browser?: unknown }) => call<DocHandle>(`/sessions/${encodeURIComponent(sid)}/documents`, { method: "POST", body: JSON.stringify(body) }),
+  docViews: (sid: string, id: string, include: string[]) => call<DocViews>(`/sessions/${encodeURIComponent(sid)}/documents/${encodeURIComponent(id)}/views?include=${include.join(",")}`),
+  docReload: (sid: string, id: string) => call<DocHandle>(`/sessions/${encodeURIComponent(sid)}/documents/${encodeURIComponent(id)}/reload`, { method: "POST", body: "{}" }),
+  docClose: (sid: string, id: string) => call<{ id: string }>(`/sessions/${encodeURIComponent(sid)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   /** crawls held by the session */
   crawlStart: (sid: string, body: Record<string, unknown>) => call<CrawlState>(`/sessions/${encodeURIComponent(sid)}/crawls`, { method: "POST", body: JSON.stringify(body) }),
   crawls: (sid: string) => call<CrawlState[]>(`/sessions/${encodeURIComponent(sid)}/crawls`),

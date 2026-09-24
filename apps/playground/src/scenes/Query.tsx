@@ -6,7 +6,7 @@ import {
   describe, fieldColour, toolAsCode, type Highlight, type Pick,
 } from "@webclient/ui";
 import { API_URL, api, ApiError } from "../lib/api";
-import { call, plan, useSession } from "../lib/session";
+import { call, plan, useActive, useSession } from "../lib/session";
 
 type Source = "text" | "href" | "html" | "attr";
 type Column = { name: string; selector: string; source: Source; attr?: string; all?: boolean; sub?: Column[] };
@@ -18,10 +18,21 @@ type Suggest = { selector: string; classes: string[]; tag: string; sample: strin
  * and "run on the server" executes the same plan through the session. */
 export function Query() {
   const [params, setParams] = useSearchParams();
-  const url = params.get("url") ?? "";
-  const tier = params.get("tier") ?? "false";
+  const active = useActive("/query");
+  const [own, setOwn] = React.useState(() => new URLSearchParams(params));
+  React.useEffect(() => { if (active) setOwn(new URLSearchParams(params)); }, [active, params]);
+  const docId = own.get("doc") ?? "";
+  const wantUrl = own.get("url") ?? "";
+  const tier = own.get("tier") ?? "false";
   const sessionId = useSession();
-  const [draft, setDraft] = React.useState(url);
+  const [draft, setDraft] = React.useState(wantUrl);
+  const [openError, setOpenError] = React.useState<ApiError | null>(null);
+  React.useEffect(() => {  // a ?url= is opened into the session; the builder then works on the held document
+    if (!active || !sessionId || !wantUrl || docId) return;
+    let on = true;
+    api.docOpen(sessionId, { url: wantUrl, browser: tier === "false" ? false : tier }).then((h) => { if (on) setParams((p) => { const n = new URLSearchParams(p); n.delete("url"); n.set("doc", h.id); return n; }, { replace: true }); }).catch((e) => { if (on) setOpenError(e as ApiError); });
+    return () => { on = false; };
+  }, [active, sessionId, wantUrl, docId, tier, setParams]);
   const [record, setRecord] = React.useState<string>(params.get("record") ?? "");
   const [columns, setColumns] = React.useState<Column[]>([]);
   const [paginate, setPaginate] = React.useState(params.get("paginate") ?? "none");
@@ -33,7 +44,9 @@ export function Query() {
   const [tick, setTick] = React.useState(0);
   const [server, setServer] = React.useState<{ rows?: Record<string, unknown>[]; error?: ApiError; ms?: number; busy: boolean }>({ busy: false });
 
-  const snap = useQuery({ queryKey: ["snapshot", url, tier], queryFn: () => api.snapshot(url, tier === "false" ? false : tier, ["rrweb", "patterns", "records"]), enabled: !!url, staleTime: Infinity });
+  const snap = useQuery({ queryKey: ["doc-views", sessionId, docId, "query"], queryFn: () => api.docViews(sessionId!, docId, ["rrweb", "patterns", "records"]), enabled: !!sessionId && !!docId, staleTime: Infinity });
+  const url = snap.data?.url ?? wantUrl;
+  React.useEffect(() => { if (url) setDraft(url); }, [url]);
   // suggestions: the pattern hints + the repeating-region options, from the one snapshot call
   const suggestions = React.useMemo(() => {
     const out: { selector: string; count: number; why: string; confidence?: number }[] = [];
@@ -82,6 +95,14 @@ export function Query() {
     setColumns((cs) => [...cs, { name, selector: s.selector, source: s.tag === "a" ? "href" : s.tag === "img" ? "attr" : "text", attr: s.tag === "img" ? "src" : undefined }]);
   };
   const update = (i: number, patch: Partial<Column>) => setColumns((cs) => cs.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+  React.useEffect(() => {  // restore columns from the URL once (a back / forward, a shared link)
+    const raw = params.get("cols"); if (raw && !columns.length) { try { setColumns(JSON.parse(raw)); } catch { /* ignore */ } }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  React.useEffect(() => {  // ...and keep it there (only while this workspace is on screen)
+    if (!active || !docId) return;
+    setParams((p) => { const n = new URLSearchParams(p); if (record) n.set("record", record); else n.delete("record"); if (columns.length) n.set("cols", JSON.stringify(columns)); else n.delete("cols"); return n; }, { replace: true });
+  }, [active, record, columns, docId, setParams]);
 
   // -- the plan (data) and the server run ------------------------------------------------
   const body = React.useMemo(() => record ? plan("Reference", [
@@ -101,7 +122,7 @@ export function Query() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Toolbar className="flex-wrap">
-        <form className="flex min-w-[280px] flex-1 items-center gap-2" onSubmit={(e) => { e.preventDefault(); setColumns([]); setRecord(""); setPickFor("record"); setParams({ url: draft, tier }); }}>
+        <form className="flex min-w-[280px] flex-1 items-center gap-2" onSubmit={(e) => { e.preventDefault(); setColumns([]); setRecord(""); setPickFor("record"); setOpenError(null); setParams({ url: draft, tier }); }}>
           <ToolbarGroup className="flex-1"><Input mono value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="the page with the records" className="w-full" /></ToolbarGroup>
           <Select value={tier} onChange={(e) => setParams({ url, tier: e.target.value })}><option value="false">static</option><option value="auto">auto</option><option value="always">browser</option></Select>
           <Button type="submit" size="sm">Load</Button>
@@ -115,8 +136,8 @@ export function Query() {
         {rows.length > 0 && <Chip tone="ok">{rows.length} rows · local</Chip>}
         <Button variant="primary" size="sm" onClick={runServer} disabled={!body || server.busy}>{server.busy ? "running…" : "Run on the server"}</Button>
       </Toolbar>
-      {!url ? <EmptyState title="Load a page to build a query" hint="Pick the repeating record, then the fields inside one of them. Rows fill as you go -- no requests until you run it." /> :
-      snap.isError ? <EmptyState title="Could not load the page" hint={(snap.error as ApiError).detail?.hint ?? String(snap.error)} /> :
+      {!url && !docId ? <EmptyState title="Load a page to build a query" hint="Pick the repeating record, then the fields inside one of them. Rows fill as you go -- no requests until you run it." /> :
+      snap.isError || openError ? <EmptyState title="Could not load the page" hint={((snap.error ?? openError) as ApiError).detail?.hint ?? String(snap.error ?? openError)} /> :
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,1fr)]">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px]">

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Chip, RunBar, cn, type Event } from "@webclient/ui";
 import { subscribe } from "./lib/api";
 import { Home } from "./scenes/Home";
@@ -10,6 +10,7 @@ import { Tools } from "./scenes/Tools";
 import { Settings } from "./scenes/Settings";
 import { Loops } from "./scenes/Loops";
 import { Interact } from "./scenes/Interact";
+import { DocumentStrip } from "./components/DocumentStrip";
 
 const WORKSPACES = [
   ["/", "Home"], ["/explore", "Explore"], ["/query", "Query"], ["/interact", "Interact"], ["/loops", "Crawl · Loops"], ["/traces", "Traces"], ["/tools", "Tools"], ["/settings", "Settings"],
@@ -55,20 +56,30 @@ export function App() {
         <Chip tone="neutral" title="the model used by Onboard / the index author; configure a key in Settings">model: stub</Chip>
         <Chip tone={connected ? "ok" : "bad"} dot>{connected ? "connected" : "no API"}</Chip>
       </header>
+      <DocumentStrip />
       <main className="min-h-0 flex-1 overflow-hidden">
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/explore" element={<Explore />} />
-          <Route path="/query" element={<Query />} />
-          <Route path="/interact" element={<Interact />} />
-          <Route path="/loops" element={<Loops liveEvents={events} />} />
-          <Route path="/traces" element={<Traces />} />
-          <Route path="/traces/:id" element={<Traces />} />
-          <Route path="/tools" element={<Tools />} />
-          <Route path="/settings" element={<Settings />} />
-        </Routes>
+        {/* every workspace stays MOUNTED (hidden when not active): switching tabs, or going
+            back and forward, never loses what you were doing; the URL carries the essentials */}
+        <Keep path="/" exact><Home /></Keep>
+        <Keep path="/explore"><Explore /></Keep>
+        <Keep path="/query"><Query /></Keep>
+        <Keep path="/interact"><Interact /></Keep>
+        <Keep path="/loops"><Loops liveEvents={events} /></Keep>
+        <Keep path="/traces"><Routes><Route path="/traces" element={<Traces />} /><Route path="/traces/:id" element={<Traces />} /></Routes></Keep>
+        <Keep path="/tools"><Tools /></Keep>
+        <Keep path="/settings"><Settings /></Keep>
       </main>
       <RunBar events={shown} connected={connected} paused={paused} onPause={(p) => { setPaused(p); setFrozen(p ? events : null); }} onOpen={() => nav("/traces")} />
     </div>
   );
+}
+
+/** A workspace that mounts once and stays: shown when the location matches, hidden otherwise. */
+function Keep({ path, exact, children }: { path: string; exact?: boolean; children: React.ReactNode }) {
+  const loc = useLocation();
+  const active = exact ? loc.pathname === path : loc.pathname === path || loc.pathname.startsWith(path + "/");
+  const [mounted, setMounted] = React.useState(active);
+  React.useEffect(() => { if (active) setMounted(true); }, [active]);
+  if (!mounted) return null;
+  return <div className={cn("h-full min-h-0", !active && "hidden")}>{children}</div>;
 }

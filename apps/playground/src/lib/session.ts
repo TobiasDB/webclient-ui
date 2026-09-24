@@ -2,7 +2,15 @@
  * server-side session object -- opened with the DOM recorder on, remembered per tab, and
  * closed from Settings. Plans carry its id; documents live in its store. */
 import * as React from "react";
+import { useLocation } from "react-router-dom";
 import { api } from "./api";
+
+/** Whether this workspace is the one on screen. Workspaces stay mounted when hidden, so
+ * anything that READS or WRITES the URL must be gated on this. */
+export function useActive(path: string): boolean {
+  const loc = useLocation();
+  return loc.pathname === path || loc.pathname.startsWith(path + "/");
+}
 
 const KEY = "wc.session";
 
