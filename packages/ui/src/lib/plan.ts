@@ -103,6 +103,8 @@ export function describe(p: Plan): string {
 export type Local = { rows: Record<string, unknown>[]; count: number; note?: string };
 
 const text = (el: Element) => (el.textContent || "").trim();
+/** an element of the page (the page is in an iframe: another realm, so no instanceof) */
+const isEl = (x: unknown): x is Element => !!x && typeof x === "object" && (x as Node).nodeType === 1;
 function attrOf(el: Element, name: string, pattern?: string): unknown {
   let val: unknown = name === "text" ? text(el) : name === "text:own" ? [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent?.trim()).join(" ").trim()
     : name === "html" ? el.innerHTML : name === "count" ? el.children.length : name === "href" || name === "src" || name === "action" ? el.getAttribute(name) : el.getAttribute(name);
@@ -126,13 +128,31 @@ export function evalLocal(p: Plan, el: Element, followed: (href: string, sub: Pl
       // a followed page: attr("href").resolve()… -> the rest of the chain runs there
       const nxt = cs[i + 1]; if (nxt?.name === "resolve" && (a0 === "href" || a0 === "src")) { const rest: Plan = { root: "Document", steps: p.steps.slice(cs[i + 2]?.index ?? p.steps.length) }; return followed(String(cur), rest); } }
     else if (c.name === "limit") { if (Array.isArray(cur)) cur = (cur as unknown[]).slice(0, Number(a0)); }
-    else if (c.name === "extract") { const one = (e: Element) => Object.fromEntries(Object.entries(c.kwargs).map(([k, a]) => [k, a.plan ? evalLocal(a.plan, e, followed) : v(a)])); cur = Array.isArray(cur) ? (cur as Element[]).map(one) : cur ? one(cur as Element) : null; }
+    else if (c.name === "extract") {
+      const one = (e: Element) => {
+        const row: Record<string, unknown> = {};
+        for (const a of c.args) { if (!a.plan) continue; const { value, name } = splitAlias(a.plan); const key = name && typeof name === "object" ? String(evalLocal(name as Plan, e, followed) ?? "").trim() || "field" : String(name ?? "field"); row[key] = evalLocal(value, e, followed); }
+        for (const [k, a] of Object.entries(c.kwargs)) row[k] = a.plan ? evalLocal(a.plan, e, followed) : v(a);
+        return row;
+      };
+      cur = Array.isArray(cur) ? (cur as Element[]).map(one) : cur ? one(cur as Element) : null;
+    }
     else if (c.name === "project") { /* rows already dicts */ }
+    else if (c.name === "alias") { /* the column's name rides on the chain; extract reads it */ }
+    else if (c.name === "merge") { cur = Array.isArray(cur) ? Object.assign({}, ...(cur as unknown[]).filter((r) => r && typeof r === "object" && !(isEl(r)))) : cur; }
     else if (c.name === "count") { cur = Array.isArray(cur) ? (cur as unknown[]).length : cur ? (cur as Element).children.length : 0; }
     else if (["resolve", "click", "write", "scroll", "wait_for", "goto", "paginate", "reload"].includes(c.name)) { /* IO: the page is what the server made of it */ }
     else return null;
   }
   return cur;
+}
+
+/** A positional extract column split at its `.alias(name)`: the value chain and the name (a
+ * literal, or a sub-plan read off the element). */
+export function splitAlias(p: Plan): { value: Plan; name: unknown } {
+  const cs = calls(p);
+  for (let i = cs.length - 1; i >= 0; i--) if (cs[i]!.name === "alias") { const a = cs[i]!.args[0]; return { value: { root: p.root, steps: p.steps.slice(0, cs[i]!.index) }, name: a?.plan ?? a?.value }; }
+  return { value: p, name: undefined };
 }
 
 /** The chain's rows on a page: the root's first `select_all` fans out; without one, the page is one row. */
@@ -141,20 +161,24 @@ export function localRows(p: Plan, doc: Document, followed?: (href: string, sub:
   const fan = cs.findIndex((c) => c.name === "select_all");
   if (fan < 0) {  // the page is one row: a dict as is, a scalar / list as {value}
     const out = evalLocal({ root: "Document", steps: p.steps }, doc.body, followed);
-    if (out == null || out instanceof Element || calls(p).length === 0) return { rows: [], count: 1 };
-    return { rows: [out && typeof out === "object" && !Array.isArray(out) ? (out as Record<string, unknown>) : { value: Array.isArray(out) ? (out as unknown[]).map((x) => (x instanceof Element ? text(x) : x)) : out }], count: 1 };
+    if (out == null || isEl(out) || calls(p).length === 0) return { rows: [], count: 1 };
+    return { rows: [out && typeof out === "object" && !Array.isArray(out) ? (out as Record<string, unknown>) : { value: Array.isArray(out) ? (out as unknown[]).map((x) => (isEl(x) ? text(x) : x)) : out }], count: 1 };
   }
   const out = evalLocal({ root: "Document", steps: p.steps.slice(cs[fan]!.index) }, doc.body, followed);
-  const rows = Array.isArray(out) ? (out as unknown[]).map((r) => (r && typeof r === "object" && !(r instanceof Element) ? (r as Record<string, unknown>) : { value: r instanceof Element ? text(r) : r })) : [];
+  const rows = Array.isArray(out) ? (out as unknown[]).map((r) => (r && typeof r === "object" && !(isEl(r)) ? (r as Record<string, unknown>) : { value: isEl(r) ? text(r) : r })) : [];
   let count = 0; try { count = doc.querySelectorAll(String(v(cs[fan]!.args[0]))).length; } catch { /* bad selector */ }
   return { rows, count };
 }
 
 /** The record selector (the first select_all) and the extract fields of a chain, for highlights. */
-export function shape(p: Plan): { record?: string; fields: { name: string; selector?: string; follow?: boolean; optional?: boolean }[]; actions: Call[]; paginate?: Call } {
+export function shape(p: Plan): { record?: string; fields: { name: string; selector?: string; follow?: boolean; optional?: boolean; dynamic?: boolean }[]; actions: Call[]; paginate?: Call } {
   const cs = calls(p);
   const rec = cs.find((c) => c.name === "select_all");
   const ex = cs.find((c) => c.name === "extract");
-  const fields = ex ? Object.entries(ex.kwargs).map(([name, a]) => { const sub = a.plan ? calls(a.plan) : []; const sel = sub.find((c) => c.name === "select" || c.name === "select_all"); return { name, selector: sel ? String(v(sel.args[0])) : undefined, follow: sub.some((c) => c.name === "resolve"), optional: !!(sel && v(sel.kwargs.optional)) }; }) : [];
+  const fieldOf = (name: string, plan: Plan | undefined, dynamic = false) => { const sub = plan ? calls(plan) : []; const sel = sub.find((c) => c.name === "select" || c.name === "select_all"); return { name, selector: sel ? String(v(sel.args[0])) : undefined, follow: sub.some((c) => c.name === "resolve"), optional: !!(sel && v(sel.kwargs.optional)), dynamic }; };
+  const fields = ex ? [
+    ...ex.args.filter((a) => a.plan).map((a) => { const { value, name } = splitAlias(a.plan!); return fieldOf(typeof name === "string" ? name : name && typeof name === "object" ? `= ${describe(name as Plan).replace(/^Document\./, "")}` : "field", value, typeof name === "object"); }),
+    ...Object.entries(ex.kwargs).map(([name, a]) => fieldOf(name, a.plan)),
+  ] : [];
   return { record: rec ? String(v(rec.args[0])) : undefined, fields, actions: cs.filter((c) => ["click", "write", "scroll", "wait_for", "goto"].includes(c.name)), paginate: cs.find((c) => c.name === "paginate") };
 }

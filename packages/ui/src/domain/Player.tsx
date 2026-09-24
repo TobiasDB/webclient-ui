@@ -206,7 +206,16 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     cursorAnim.current = requestAnimationFrame(step);
   };
   /** the reader scrolls the rebuilt page by hand (rrweb's frame takes no pointer events) */
-  const onWheel = (e: React.WheelEvent) => { const d = doc(); if (!d) return; (d.scrollingElement ?? d.documentElement).scrollBy({ left: e.deltaX, top: e.deltaY }); refreshRef.current(); };
+  // a NATIVE, non-passive wheel listener: the page inside scrolls, and the wheel never
+  // reaches the workspace around it (React's synthetic wheel handler is passive, so it
+  // could not preventDefault -- the two scrolls were coupled)
+  React.useEffect(() => {
+    const h = host.current; if (!h) return;
+    const onWheel = (e: WheelEvent) => { const d = doc(); if (!d) return; e.preventDefault(); e.stopPropagation(); (d.scrollingElement ?? d.documentElement).scrollBy({ left: e.deltaX, top: e.deltaY }); refreshRef.current(); };
+    h.addEventListener("wheel", onWheel, { passive: false });
+    return () => h.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const pulse = (topic: string, text: string) => { const id = Date.now() + Math.random(); setPulses((p) => [...p.slice(-5), { id, at: Date.now(), topic, text, tone: topicColorVar(topic) }]); setTimeout(() => setPulses((p) => p.filter((x) => x.id !== id)), 2600); };
 
   const pickAt = (e: React.MouseEvent): Pick | null => {
@@ -237,7 +246,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
       <div ref={host} className="relative w-full overflow-hidden bg-white" style={{ height: Math.round(size.h * scale) }}>
         <div ref={root} className="absolute left-0 top-0 origin-top-left" style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} />
         {/* the overlay: highlights, hover, flashes -- scaled with the page */}
-        <div className={cn("absolute left-0 top-0 origin-top-left", pickable && "cursor-crosshair")} style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); cbs.current.onHover?.(null); }} onClick={onClick} onWheel={onWheel}>
+        <div className={cn("absolute left-0 top-0 origin-top-left", pickable && "cursor-crosshair")} style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); cbs.current.onHover?.(null); }} onClick={onClick}>
           {cursor && <div className={cn("wc-cursor", cursor.down && "wc-cursor-down")} style={{ left: cursor.x, top: cursor.y }} />}
           {[...boxes, ...flash, ...(hover ? [hover] : [])].map((b, i) => (
             <div key={i} className={cn("wc-hl absolute", b.dashed && "wc-hl-dashed", flash.includes(b) && "wc-hl-flash")} style={{ left: b.left, top: b.top, width: b.width, height: b.height, ["--c" as any]: b.colour }}>

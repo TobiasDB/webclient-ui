@@ -1,7 +1,7 @@
 import * as React from "react";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, X } from "lucide-react";
 import { cn } from "../lib/cn";
-import { calls, moveCall, planAt, removeCall, updateCall, v, type Call, type Path, type Plan } from "../lib/plan";
+import { calls, moveCall, planAt, removeCall, splitAlias, updateCall, v, withPlanAt, type Call, type Path, type Plan } from "../lib/plan";
 import { fieldColour } from "./Player";
 
 export type PlanViewProps = {
@@ -88,7 +88,7 @@ function Paginate({ c, readOnly, onKw, onKws }: { c: Call; readOnly?: boolean; o
   );
 }
 
-const LABEL: Record<string, string> = { resolve: "open the page", select_all: "each", select: "the", attr: "read", extract: "fields", project: "rows", paginate: "pages", click: "click", write: "type", scroll: "scroll", wait_for: "wait for", goto: "go to", limit: "first", count: "count", filter: "keep" };
+const LABEL: Record<string, string> = { resolve: "open the page", select_all: "each", select: "the", attr: "read", extract: "fields", project: "rows", paginate: "pages", alias: "named by", merge: "as one dict", click: "click", write: "type", scroll: "scroll", wait_for: "wait for", goto: "go to", limit: "first", count: "count", filter: "keep" };
 
 function CallNode({ c, i, n, path, selected, count, readOnly, onSelect, onName, onArg, onKw, onKws, onRemove, onMove, onRenameField, onRemoveField, onOpen, plan, onChange, selectedPath, onSelectPath, counts, depth }: {
   c: Call; i: number; n: number; path: Path; selected: boolean; count?: number | string; readOnly?: boolean; onSelect: () => void;
@@ -127,7 +127,24 @@ function CallNode({ c, i, n, path, selected, count, readOnly, onSelect, onName, 
       </div>
       {isExtract && open && (
         <div className="mt-1 flex flex-col gap-1">
-          {Object.entries(c.kwargs).map(([name, a], fi) => {
+          {c.args.map((a, ai) => {  // a positional column: named by its .alias(...) -- a literal or a chain read off the element
+            if (!a.plan) return null;
+            const fp: Path = [...path, `arg:${ai}`]; const { name } = splitAlias(a.plan); const fi = ai;
+            const dynamic = !!name && typeof name === "object";
+            return (
+              <div key={`arg${ai}`} className="rounded-md border border-line/70 p-1" style={{ borderLeft: `3px solid ${fieldColour(fi)}` }}>
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-block size-2 rounded-sm" style={{ background: fieldColour(fi) }} />
+                  {dynamic ? <span className="text-[11px] font-semibold" title="the column's name is read off each element (the chain under 'named by')">name from the page</span> : <b className="text-[11px]">{String(name ?? "field")}</b>}
+                  <span className="text-[10px] text-muted">positional · .alias(…)</span>
+                  <span className="flex-1" />
+                  {!readOnly && <button type="button" className="text-muted hover:text-bad" onClick={(e) => { e.stopPropagation(); onChange?.(replaceArg(plan, path, ai, null)); }}><X size={11} /></button>}
+                </div>
+                <Chain plan={a.plan} path={fp} onChange={onChange ? (np) => onChange(replaceSub(plan, fp, np)) : undefined} selected={selectedPath} onSelect={onSelectPath} onOpen={onOpen} readOnly={readOnly} counts={counts} depth={depth + 1} colour={fieldColour(fi)} />
+              </div>
+            );
+          })}
+          {Object.entries(c.kwargs).map(([name, a], fi0) => { const fi = fi0 + c.args.length;
             const fp: Path = [...path, `kw:${name}`];
             const sub = a.plan ?? { root: "Document" as const, steps: [] };
             const follows = calls(sub).some((x) => x.name === "resolve");
@@ -145,7 +162,7 @@ function CallNode({ c, i, n, path, selected, count, readOnly, onSelect, onName, 
               </div>
             );
           })}
-          {Object.keys(c.kwargs).length === 0 && <span className="px-1 text-[11px] text-muted">no fields yet — click a value inside a record</span>}
+          {Object.keys(c.kwargs).length === 0 && c.args.length === 0 && <span className="px-1 text-[11px] text-muted">no fields yet — click a value inside a record</span>}
         </div>
       )}
     </div>
@@ -168,6 +185,13 @@ function replaceSub(root: Plan, fp: Path, sub: Plan): Plan {
     return { ...p, steps };
   };
   return rebuild(root, fp);
+}
+
+/** Rebuild the plan with positional column `ai` of the extract at `path` removed (null) or replaced. */
+function replaceArg(root: Plan, path: Path, ai: number, sub: Plan | null): Plan {
+  const target = planAt(root, path.slice(0, -1)); const idx = path[path.length - 1] as number;
+  const next = updateCall(target, [], idx, (c) => ({ ...c, args: sub ? c.args.map((a, q) => (q === ai ? { plan: sub } : a)) : c.args.filter((_, q) => q !== ai) }));
+  return withPlanAt(root, path.slice(0, -1), next);
 }
 
 export { planAt as planAtPath };

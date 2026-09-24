@@ -51,7 +51,7 @@ export const Resume: StoryObj = { name: "A10 · resume: the plan rides in the UR
 /** What was built (docs/product/author-workspace.md §8): no modes. A click opens the
  * ElementMenu -- the selector builder (toggles + live count in scope) over the object's ops
  * generated from GET /ops; the scope is the last object until Esc / a plan click. */
-export const Menu: StoryObj = { name: "A13 · built: the click menu = selector builder + the object's ops; the scope is the last object",
+export const Menu: StoryObj = { name: "A13 · superseded by the graph builder (A14): the click menu = selector builder + the object's ops",
   render: () => (
     <Frame title="Author — click an element">
       <Col rows="auto auto minmax(0,1fr)" className="h-full">
@@ -66,6 +66,22 @@ export const Menu: StoryObj = { name: "A13 · built: the click menu = selector b
           </Col>
         </Row>
       </Col>
+    </Frame>
+  ) };
+
+/** What stands (docs/product/author-workspace.md §10): the builder is a GRAPH of the package's
+ * objects; the view shows the selected node; the inspector adds nodes; outputs compile to the plan. */
+export const Graph: StoryObj = { name: "A14 · built: the graph builder — objects as nodes, ops as edges, outputs projected",
+  render: () => (
+    <Frame title="Author — the graph builder">
+      <Row cols="340px minmax(0,1fr) 400px">
+        <Box label="THE GRAPH" grow note="REF url → DOC open auto (pages: next link ×2) → EACH select_all li.col-xs-6 ×20 → EL select h3 a → REF attr href → DOC open (the book) → EL select #product_description ~ p → VAL attr text → description · EACH select_all table tr → info → EL td → VAL text (name from th)"><Lines n={12} /></Box>
+        <Box label="THE SELECTED NODE'S VIEW" grow note="REF: the URL + open it (static / auto / browser / live) · DOC / EL / EACH / VAL: its page (static or live) with the node's matches and the outputs outlined; click anything → the inspector"><Lines n={10} /></Box>
+        <Col rows="auto minmax(0,1fr)">
+          <Box label="ELEMENT INSPECTOR (on a click) / THE NODE" note="parents with class toggles (↑ re-target) · candidates per group (each li.col-xs-6 ×20 · ↑1 table tr ×7) · one (#product_description ~ p) · ops: select_all / select / click / scroll / wait for / type / open the link / pages · read off it: text, own text, count, label, href, src, data-*, aria-*, class — tick, name, or name from the page"><Lines n={6} /></Box>
+          <Box label="Rows · Server run · Plan · Page · Skeleton · Markdown · Elements · As code" grow><Lines n={5} /></Box>
+        </Col>
+      </Row>
     </Frame>
   ) };
 
