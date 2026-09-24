@@ -169,7 +169,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
 
   // -- overlay: highlights, hover, action flashes --------------------------------
   const doc = () => rep.current?.iframe?.contentDocument as Document | undefined;
-  const boxFor = (el: Element, colour: string, label?: string, dashed = false): Box => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height, colour, label, dashed }; };
+  const boxFor = (el: Element, colour: string, label?: string, dashed = false): Box => { const r = el.getBoundingClientRect(); return { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height), colour, label, dashed }; };
   const refreshBoxes = React.useCallback(() => {
     const d = doc(); if (!d) return;
     const out: Box[] = [];
@@ -215,7 +215,9 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     const el = d.elementFromPoint(x, y); if (!el || el === d.documentElement || el === d.body) return null;
     return describe(el);
   };
-  const onMove = (e: React.MouseEvent) => { if (!pickable) return; const p = pickAt(e); const d = doc(); if (!p || !d) { setHover(null); cbs.current.onHover?.(null); return; } const el = d.querySelector(p.path) ?? d.elementFromPoint((e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left) / scale, (e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top) / scale); if (el) setHover(boxFor(el, "#6b7280", p.selector, true)); cbs.current.onHover?.(p); };
+  const hoverRaf = React.useRef(0);
+  const onMove = (e: React.MouseEvent) => { if (!pickable) return; const ev = { clientX: e.clientX, clientY: e.clientY, currentTarget: e.currentTarget } as React.MouseEvent; cancelAnimationFrame(hoverRaf.current); hoverRaf.current = requestAnimationFrame(() => hoverAt(ev)); };
+  const hoverAt = (e: React.MouseEvent) => { const p = pickAt(e); const d = doc(); if (!p || !d) { setHover(null); cbs.current.onHover?.(null); return; } const el = d.querySelector(p.path) ?? d.elementFromPoint((e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left) / scale, (e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top) / scale); if (el) setHover(boxFor(el, "#6b7280", p.selector, true)); cbs.current.onHover?.(p); };
   const onClick = (e: React.MouseEvent) => { if (!pickable) return; e.preventDefault(); const p = pickAt(e); if (p) cbs.current.onPick?.(p); };
 
   // -- transport (the MediaBar drives it through the controller) ----------------------

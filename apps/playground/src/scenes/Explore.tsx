@@ -21,7 +21,7 @@ export function Explore() {
   React.useEffect(() => { if (active) setOwn(new URLSearchParams(params)); }, [active, params]);
   const docId = own.get("doc") ?? "";
   const wantUrl = own.get("url") ?? "";
-  const tier = own.get("tier") ?? "false";
+  const tier = own.get("tier") ?? "auto";
   const [draft, setDraft] = React.useState(wantUrl);
   const browser = tier === "auto" ? "auto" : tier === "always" ? "always" : false;
   const [openError, setOpenError] = React.useState<ApiError | null>(null);
@@ -73,12 +73,11 @@ export function Explore() {
                     : err.code === "pool.exhausted" && sessionId ? <Button variant="primary" onClick={async () => { await api.sessionRelease(sessionId); setOpenError(null); setParams({ url: wantUrl || url, tier }); }}>Release my live pages and retry</Button> : undefined} /> :
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
         <div className="min-w-0">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px]">
-            <b className="truncate text-[13px]">{card?.title ?? "…"}</b>
-            <span className="truncate font-mono text-[11px] text-muted">{card?.final_url ?? url}</span>
-            <span className="flex-1" />
+          {/* ONE line, fixed height: nothing here may ever reflow the page below */}
+          <div className="mb-2 flex h-7 items-center gap-2 overflow-hidden whitespace-nowrap text-[12px]">
+            <b className="shrink-0 truncate text-[13px]">{card?.title ?? "…"}</b>
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">{hover ? <>{hover.tag}{hover.classes.map((c) => <span key={c}>.{c}</span>)}{hover.text ? ` “${hover.text.slice(0, 40)}”` : ""}</> : card?.final_url ?? url}</span>
             {recordHint && <Chip tone="accent" interactive onClick={() => setShowRecords(!showRecords)}>{showRecords ? "hide" : "show"} record list ×{recordHint.count}</Chip>}
-            {hover && <span className="font-mono text-[11px] text-muted">{hover.selector}{hover.classes.length > 1 ? ` · ${hover.classes.join(" ")}` : ""}</span>}
           </div>
           {snap.data?.rrweb ? <Player events={snap.data.rrweb as any} highlights={highlights} pickable onHover={setHover} onPick={(p) => nav(`/query?doc=${encodeURIComponent(docId)}&tier=${tier}&record=${encodeURIComponent(p.selector)}`)} controls={false} maxHeight={760} />
             : snap.data ? <pre className="max-h-[600px] overflow-auto rounded-lg border border-line bg-surface-2 p-3 font-mono text-[11px]">{(snap.data.content ?? "").slice(0, 20000)}</pre> : <EmptyState title="Fetching…" />}

@@ -96,11 +96,10 @@ export function Interact() {
       {!doc ? <EmptyState title="Open a page live" hint="The page is held by the server inside your session; you see its DOM as it changes, and every action you take is a plan on that document." /> :
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1.4fr)_minmax(340px,0.8fr)]">
         <div className="min-w-0">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px]">
+          <div className="mb-2 flex h-7 items-center gap-2 overflow-hidden whitespace-nowrap text-[12px]">
             <Chip tone={pickOn ? "accent" : "neutral"} interactive onClick={() => setPickOn(!pickOn)}>{pickOn ? "picking: click an element to target it" : "pick off"}</Chip>
-            {hover && <span className="truncate font-mono text-[11px] text-muted">{hover.selector}{hover.classes.length > 1 ? ` · ${hover.classes.join(" ")}` : ""}</span>}
-            <span className="flex-1" />
-            <span className="font-mono text-[11px] text-muted">{stream.length} DOM events</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">{hover ? `${hover.tag}${hover.classes.map((c) => `.${c}`).join("")}${hover.text ? ` “${hover.text.slice(0, 40)}”` : ""}` : ""}</span>
+            <span className="shrink-0 font-mono text-[11px] text-muted">{stream.length} DOM events</span>
           </div>
           <Player events={stream} live highlights={selector ? [{ selector, label: "target", tone: "warn" }] : []} pickable={pickOn} onPick={onPick} onHover={setHover} maxHeight={720} />
         </div>

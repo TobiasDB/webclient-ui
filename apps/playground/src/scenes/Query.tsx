@@ -23,7 +23,7 @@ export function Query() {
   React.useEffect(() => { if (active) setOwn(new URLSearchParams(params)); }, [active, params]);
   const docId = own.get("doc") ?? "";
   const wantUrl = own.get("url") ?? "";
-  const tier = own.get("tier") ?? "false";
+  const tier = own.get("tier") ?? "auto";
   const sessionId = useSession();
   const [draft, setDraft] = React.useState(wantUrl);
   const [openError, setOpenError] = React.useState<ApiError | null>(null);
@@ -140,12 +140,14 @@ export function Query() {
       snap.isError || openError ? <EmptyState title="Could not load the page" hint={((snap.error ?? openError) as ApiError).detail?.hint ?? String(snap.error ?? openError)} /> :
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,1fr)]">
         <div className="min-w-0">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px]">
-            <span className="text-muted">picking:</span>
+          {/* ONE line, fixed height: nothing here may ever reflow the page below */}
+          <div className="mb-2 flex h-7 items-center gap-2 overflow-hidden whitespace-nowrap text-[12px]">
+            <span className="shrink-0 text-muted">picking:</span>
             <Chip tone={pickFor === "record" ? "accent" : "neutral"} interactive onClick={() => setPickFor("record")}>the record</Chip>
             <Chip tone={pickFor === "column" ? "accent" : "neutral"} interactive onClick={() => setPickFor("column")}>a field inside it</Chip>
-            <span className="flex-1" />
-            {hover && <span className="truncate font-mono text-[11px] text-muted">{hover.selector}{hover.classes.length > 1 ? ` · ${hover.classes.join(" ")}` : ""}</span>}
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">
+              {hover ? <>{hover.tag}{hover.id ? `#${hover.id}` : ""}{hover.classes.map((c) => <span key={c} className={usedClass(c, hover, record, columns) ? "rounded bg-accent-soft px-0.5 text-accent" : ""}>.{c}</span>)}{hover.text ? <span className="text-ink"> “{hover.text.slice(0, 40)}”</span> : null}</> : "hover the page to read an element; the class that selects it lights up"}
+            </span>
           </div>
           {snap.data?.rrweb ? <Player events={snap.data.rrweb as any} highlights={highlights} pickable onPick={onPick} onHover={setHover} onDocument={(d) => { setDoc(d); setTick((t) => t + 1); }} controls={false} maxHeight={720} />
             : <EmptyState title={snap.isLoading ? "Fetching…" : "Not an HTML page"} />}
@@ -164,9 +166,10 @@ export function Query() {
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">2 · the fields (inside one record) — click to add a column</div>
             {!record ? <span className="text-[12px] text-muted">pick a record first</span> : fieldSuggestions.length ? (
               <div className="flex max-h-40 flex-wrap gap-1.5 overflow-auto">
-                {fieldSuggestions.map((s) => { const on = columns.some((c) => c.selector === s.selector); return (
-                  <button key={s.selector} type="button" onClick={() => on ? setColumns((cs) => cs.filter((c) => c.selector !== s.selector)) : addColumn(s)} className={`flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-left text-[11px] ${on ? "border-accent bg-accent-soft" : "border-line hover:bg-surface-2"}`}>
-                    <code className="font-mono">{s.selector}</code><span className="truncate text-muted" title={s.sample}>“{s.sample.slice(0, 28)}”</span><span className="text-muted">{s.count}/{recordEls.length}</span>
+                {fieldSuggestions.map((s) => { const on = columns.some((c) => c.selector === s.selector); const used = /\.([a-zA-Z0-9_-]+)/.exec(s.selector)?.[1]; return (
+                  <button key={s.selector} type="button" onClick={() => on ? setColumns((cs) => cs.filter((c) => c.selector !== s.selector)) : addColumn(s)} className={`flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-left text-[11px] ${on ? "border-accent bg-accent-soft" : "border-line hover:bg-surface-2"}`} title={s.classes.length ? `classes: ${s.classes.join(" ")}` : "no classes"}>
+                    <code className="font-mono">{s.tag}{s.classes.length ? s.classes.map((c) => <span key={c} className={c === used ? "font-semibold text-accent underline decoration-accent/60" : "text-muted"}>.{c}</span>) : s.selector.replace(/^[a-z0-9]+/, "")}</code>
+                    <span className="truncate text-muted" title={s.sample}>“{s.sample.slice(0, 28)}”</span><span className="text-muted">{s.count}/{recordEls.length}</span>
                   </button>); })}
               </div>) : <span className="text-[12px] text-muted">no text inside the record — click a field in the page</span>}
           </section>
@@ -255,4 +258,10 @@ function columnName(selector: string, tag: string): string {
   const cls = /\.([a-zA-Z0-9_-]+)/.exec(leaf)?.[1]; const attr = /\[(?:data-)?([a-zA-Z0-9_-]+)/.exec(leaf)?.[1]; const id = /#([a-zA-Z0-9_-]+)/.exec(leaf)?.[1];
   const raw = cls ?? id ?? attr ?? (tag === "a" ? "link" : tag === "img" ? "image" : tag === "time" ? "when" : /^[a-z0-9]+/.exec(leaf)?.[0] ?? tag);
   return raw.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 24) || "field";
+}
+
+/** Whether class `c` of a hovered element is the one a current selector (the record's, or a column's) uses. */
+function usedClass(c: string, hover: Pick, record: string, columns: Column[]): boolean {
+  const sels = [record, ...columns.map((x) => x.selector)];
+  return sels.some((sel) => sel.split(/[\s>]+/).some((part) => part.startsWith(hover.tag) && part.includes(`.${c}`)));
 }
