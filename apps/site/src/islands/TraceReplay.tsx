@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Chip, EmptyState, EventList, Player, StageRail, topicRoot, type Event, type PipelineEvent, type StageInfo } from "@webclient/ui";
+import { Chip, EmptyState, EventList, MediaBar, Player, StageRail, topicRoot, usePlayerController, type Event, type PipelineEvent, type StageInfo } from "@webclient/ui";
 import { api } from "../lib/api";
 
 /** Stories C5 / C6: a recorded run replayed at the reader's pace. ONE stream: the Player
@@ -11,6 +11,7 @@ export function TraceReplay({ trace, height = 520 }: { trace: string; height?: n
   const [err, setErr] = React.useState<string | null>(null);
   const [cursor, setCursor] = React.useState(0);
   const [seek, setSeek] = React.useState<number | null>(null);
+  const controller = usePlayerController();
   React.useEffect(() => {
     api.traceEvents(trace).then((ev) => setEvents(ev.filter((e) => !["trace", "script", "resource"].includes(topicRoot(e.topic))))).catch((e) => setErr(String(e.message)));
     api.traceRrweb(trace).then(setRr).catch(() => setRr([]));
@@ -28,9 +29,11 @@ export function TraceReplay({ trace, height = 520 }: { trace: string; height?: n
       <div className="flex flex-wrap items-center gap-2 text-[12px]"><Chip tone="warn">demo model</Chip><Chip>recorded · {events.length} events</Chip><span className="text-muted">press play, or step through the events</span></div>
       {stages.length > 0 && <StageRail stages={stages} />}
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <Player events={rr as any} seekTo={seek} onTime={follow} maxHeight={height} />
+        <Player events={rr as any} seekTo={seek} onTime={follow} maxHeight={height} controls={false} controller={controller} />
         <EventList events={events} cursor={cursor} onCursor={(i) => { setCursor(i); const e = events[i]; if (e?.ts) setSeek(e.ts * 1000); }} className="max-h-[560px] overflow-auto rounded-md border border-line" />
       </div>
+      {/* the transport, stuck to the bottom of the window while this section is in view */}
+      <MediaBar controller={controller} className="sticky bottom-0 z-10 rounded-md border border-line shadow-[0_-4px_16px_rgba(0,0,0,.06)]" />
     </div>
   );
 }

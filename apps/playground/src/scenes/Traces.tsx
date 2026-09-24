@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Chip, CodeBlock, EmptyState, ErrorCard, EventList, Player, TabPanel, Tabs, TopicChip, topicRoot, type ErrorEvent, type Event } from "@webclient/ui";
+import { Button, Chip, CodeBlock, EmptyState, ErrorCard, EventList, MediaBar, Player, TabPanel, Tabs, TopicChip, topicRoot, usePlayerController, type ErrorEvent, type Event } from "@webclient/ui";
 import { api } from "../lib/api";
 
 /** Traces (stories 7.1-7.3): the Player IS the trace -- the page as it changed, the mouse,
@@ -18,6 +18,7 @@ export function Traces() {
   const [hidden, setHidden] = React.useState<Set<string>>(new Set(["script", "resource", "trace"]));
   const [tab, setTab] = React.useState("events");
   const [seek, setSeek] = React.useState<number | null>(null);
+  const controller = usePlayerController();
   const all = React.useMemo(() => (events.data ?? []).filter((e) => e.topic !== "trace"), [events.data]);
   const shown = React.useMemo(() => all.filter((e) => !hidden.has(topicRoot(e.topic))), [all, hidden]);
   const cur = shown[cursor];
@@ -49,7 +50,7 @@ export function Traces() {
       </div>
       {!all.length ? <EmptyState title="Loading…" /> :
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1fr)_minmax(320px,380px)]">
-        <div className="min-w-0"><Player events={(rrweb.data ?? []) as any} seekTo={seek} onTime={follow} maxHeight={640} /></div>
+        <div className="min-w-0"><Player events={(rrweb.data ?? []) as any} seekTo={seek} onTime={follow} maxHeight={900} controls={false} controller={controller} /></div>
         <div className="flex min-h-0 min-w-0 flex-col rounded-lg border border-line">
           <Tabs items={[{ value: "events", label: "Events", count: shown.length }, { value: "event", label: "This event" }, { value: "errors", label: "Ledger", count: errors.length }, { value: "plan", label: "Plan" }]} value={tab} onValueChange={setTab} className="min-h-0 flex-1">
             <TabPanel value="events" className="min-h-0"><EventList events={shown} cursor={cursor} onCursor={jump} groupByDocument className="max-h-[640px] overflow-auto" /></TabPanel>
@@ -61,6 +62,8 @@ export function Traces() {
           </Tabs>
         </div>
       </div>}
+      {/* the transport, pinned: always in reach however far the page above scrolls */}
+      {all.length > 0 && <MediaBar controller={controller} className="shrink-0" />}
     </div>
   );
 }

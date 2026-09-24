@@ -1,6 +1,10 @@
+import "rrweb/dist/style.css";
 import * as React from "react";
-import { Pause, Play, SkipBack, SkipForward, Radio, Crosshair } from "lucide-react";
+import { Crosshair } from "lucide-react";
 import { cn } from "../lib/cn";
+import { MediaBar } from "./MediaBar";
+import { PlayerController } from "./PlayerController";
+import { humanMousePath, mouseDurationMs, pathTimingsMs } from "../lib/mouse";
 import { topicColorVar } from "./TopicChip";
 
 /** One rrweb event (a DOM event, or one of ours as a custom event tagged with its topic). */
@@ -32,8 +36,10 @@ export type PlayerProps = {
   /** The rebuilt page's document (after every full snapshot): the query builder evaluates
    * selectors in it locally -- no round trips while picking. */
   onDocument?: (doc: Document) => void;
-  /** The media bar (default on). */
+  /** The docked media bar (default on). Pass `controls={false}` + a `controller` to put a
+   * MediaBar elsewhere (pinned to the window) -- it stays in sync through the controller. */
   controls?: boolean;
+  controller?: PlayerController;
   autoPlay?: boolean;
   className?: string;
   /** Max height of the viewport area (the page scales to fit width, then this). */
@@ -43,7 +49,6 @@ export type PlayerProps = {
 export const FIELD_COLOURS = ["#2457e6", "#15803d", "#b45309", "#7c3aed", "#0f766e", "#be185d"];
 export const fieldColour = (i: number) => FIELD_COLOURS[i % FIELD_COLOURS.length]!;
 const TONE: Record<NonNullable<Highlight["tone"]>, string> = { accent: "#2457e6", ok: "#15803d", warn: "#b45309", field: "#7c3aed", bad: "#b91c1c" };
-const SPEEDS = [0.5, 1, 2, 4, 8];
 
 /** THE player: one component for replay, live pages and the query builder's preview.
  * rrweb's Replayer rebuilds the DOM (mouse cursor + tail, smooth scroll, inputs); every
@@ -53,7 +58,9 @@ const SPEEDS = [0.5, 1, 2, 4, 8];
  * at the recorded viewport and is scaled to fit -- no reflow between documents. */
 const NO_HIGHLIGHTS: Highlight[] = [];
 
-export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, seekTo, onTime, onEvent, onDocument, controls = true, autoPlay = false, className, maxHeight = 720 }: PlayerProps) {
+export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, className, maxHeight = 720 }: PlayerProps) {
+  const ownCtl = React.useMemo(() => new PlayerController(), []);
+  const ctl = controller ?? ownCtl;
   const host = React.useRef<HTMLDivElement>(null);
   const root = React.useRef<HTMLDivElement>(null);
   const rep = React.useRef<any>(null);
@@ -72,6 +79,9 @@ export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, picka
   const [hover, setHover] = React.useState<Box | null>(null);
   const [pulses, setPulses] = React.useState<Pulse[]>([]);
   const [flash, setFlash] = React.useState<Box[]>([]);
+  const [cursor, setCursor] = React.useState<{ x: number; y: number; down: boolean } | null>(null);
+  const cursorAnim = React.useRef(0);
+  const cursorPos = React.useRef<{ x: number; y: number } | null>(null);
   const [ready, setReady] = React.useState(false);
   const staticOnly = !live && events.length <= 2;
 
@@ -83,15 +93,14 @@ export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, picka
     setReady(false);
     (async () => {
       const mod: any = await import("rrweb");
-      await import("rrweb/dist/style.css");
       if (cancelled || !root.current) return;
       root.current.innerHTML = "";
       const Replayer = mod.Replayer;
       if (events.length < 2) return; // live: wait for the Meta + FullSnapshot pair
       r = new Replayer(events, {
         root: root.current, speed, skipInactive: skip, showWarning: false, showDebug: false, liveMode: live,
-        mouseTail: { strokeStyle: "#2457e6", lineWidth: 2, duration: 700 },
-        insertStyleRules: ["html { scroll-behavior: smooth !important; }", ".replayer-mouse { transition: left .12s linear, top .12s linear; }"],
+        insertStyleRules: ["html { scroll-behavior: smooth !important; }"],
+        mouseTail: false,
         UNSAFE_replayCanvas: false,
       });
       rep.current = r;
@@ -102,7 +111,19 @@ export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, picka
         const tag = String(e?.data?.tag ?? ""); const payload = (e?.data?.payload ?? {}) as Record<string, unknown>;
         cbs.current.onEvent?.(tag, payload);
         if (tag.startsWith("network")) pulse(tag, `${String(payload.method ?? "GET").toUpperCase()} ${short(String(payload.url ?? ""))}${payload.status_code ? ` → ${payload.status_code}` : ""}`);
-        if (tag === "action") { const sel = (payload.args as any)?.selector; pulse(tag, `${payload.action}${sel ? ` ${sel}` : ""}`); if (sel) flashSelector(String(sel)); }
+        if (tag === "action") {
+          const args = (payload.args ?? {}) as { selector?: string; from?: number[]; to?: number[] };
+          pulse(tag, `${payload.action}${args.selector ? ` ${args.selector}` : ""}`);
+          if (args.selector) flashSelector(String(args.selector));
+          if (payload.action === "click" || payload.action === "write") moveCursor(args.from, args.to ?? (args.selector ? centreOf(String(args.selector)) : undefined), true);
+        }
+        if (tag === "plan" && payload.phase === "step") {
+          const d = (payload.detail ?? {}) as { op?: string; selector?: string };
+          if (d.selector && ["select", "select_all", "attr", "text_content", "extract", "click", "write", "wait_for", "scroll"].includes(String(d.op))) {
+            flashSelector(d.selector, d.op === "attr" || d.op === "text_content" ? "#7c3aed" : "#2457e6", `${d.op} ${d.selector}`);
+            if (d.op === "select" || d.op === "select_all") moveCursor(undefined, centreOf(d.selector), false);
+          }
+        }
         if (tag === "error") pulse(tag, String((payload.error as any)?.code ?? "error"));
         if (tag === "loop" || tag === "pipeline") pulse(tag, `${payload.loop ?? payload.pipeline} · ${payload.phase}`);
       });
@@ -153,7 +174,29 @@ export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, picka
   refreshRef.current = refreshBoxes;
   React.useEffect(() => { refreshBoxes(); }, [refreshBoxes, scale, ready]);
   React.useEffect(() => { const d = doc(); if (!d) return; const h = () => refreshBoxes(); d.addEventListener("scroll", h, true); return () => d.removeEventListener("scroll", h, true); }, [refreshBoxes, ready]);
-  const flashSelector = (sel: string) => { const d = doc(); if (!d) return; let els: Element[] = []; try { els = [...d.querySelectorAll(sel)].slice(0, 3); } catch { return; } const fb = els.map((el) => boxFor(el, "#b45309", "action")); setFlash(fb); setTimeout(() => setFlash([]), 900); };
+  const flashSelector = (sel: string, colour = "#b45309", label = "action") => { const d = doc(); if (!d) return; let els: Element[] = []; try { els = [...d.querySelectorAll(sel)].slice(0, 12); } catch { return; } const fb = els.map((el, i) => boxFor(el, colour, i === 0 ? label : undefined)); setFlash(fb); setTimeout(() => setFlash([]), 1100); };
+  /** the centre of a selector's first match, in page coordinates (what the driver aimed at) */
+  const centreOf = (sel: string): number[] | undefined => { const d = doc(); if (!d) return undefined; let el: Element | null = null; try { el = d.querySelector(sel); } catch { return undefined; } if (!el) return undefined; try { el.scrollIntoView({ block: "center" }); } catch { /* fine */ } const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  /** OUR pointer: drawn along the same human path the driver took (from/to on the event, or
+   * from where it last was to the target) -- nothing is recorded; both sides compute it. */
+  const moveCursor = (from: number[] | undefined, to: number[] | undefined, click: boolean) => {
+    if (!to) return;
+    const start = from ?? (cursorPos.current ? [cursorPos.current.x, cursorPos.current.y] : [size.w * 0.55, size.h * 0.45]);
+    const pts = humanMousePath(start[0]!, start[1]!, to[0]!, to[1]!);
+    const dist = Math.hypot(to[0]! - start[0]!, to[1]! - start[1]!);
+    const times = pathTimingsMs(pts.length, mouseDurationMs(dist) / Math.max(0.25, speed));
+    cancelAnimationFrame(cursorAnim.current);
+    const t0 = performance.now();
+    const step = () => {
+      const el = performance.now() - t0; let i = 0; while (i < times.length - 1 && times[i + 1]! <= el) i++;
+      const [x, y] = pts[i]!; setCursor({ x, y, down: false }); cursorPos.current = { x, y };
+      if (i < pts.length - 1) cursorAnim.current = requestAnimationFrame(step);
+      else if (click) { setCursor({ x, y, down: true }); setTimeout(() => setCursor((c) => (c ? { ...c, down: false } : c)), 260); }
+    };
+    cursorAnim.current = requestAnimationFrame(step);
+  };
+  /** the reader scrolls the rebuilt page by hand (rrweb's frame takes no pointer events) */
+  const onWheel = (e: React.WheelEvent) => { const d = doc(); if (!d) return; (d.scrollingElement ?? d.documentElement).scrollBy({ left: e.deltaX, top: e.deltaY }); refreshRef.current(); };
   const pulse = (topic: string, text: string) => { const id = Date.now() + Math.random(); setPulses((p) => [...p.slice(-5), { id, at: Date.now(), topic, text, tone: topicColorVar(topic) }]); setTimeout(() => setPulses((p) => p.filter((x) => x.id !== id)), 2600); };
 
   const pickAt = (e: React.MouseEvent): Pick | null => {
@@ -166,21 +209,24 @@ export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, picka
   const onMove = (e: React.MouseEvent) => { if (!pickable) return; const p = pickAt(e); const d = doc(); if (!p || !d) { setHover(null); cbs.current.onHover?.(null); return; } const el = d.querySelector(p.path) ?? d.elementFromPoint((e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left) / scale, (e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top) / scale); if (el) setHover(boxFor(el, "#6b7280", p.selector, true)); cbs.current.onHover?.(p); };
   const onClick = (e: React.MouseEvent) => { if (!pickable) return; e.preventDefault(); const p = pickAt(e); if (p) cbs.current.onPick?.(p); };
 
-  // -- media bar -----------------------------------------------------------------
+  // -- transport (the MediaBar drives it through the controller) ----------------------
   const markers = React.useMemo(() => events.filter((e) => e.type === 5).map((e) => ({ t: e.timestamp, tag: String(e.data?.tag ?? "") })), [events]);
   const total = Math.max(1, meta.totalTime);
   const toggle = () => { const r = rep.current; if (!r) return; if (playing) { r.pause(); setPlaying(false); } else { r.play(time >= total - 5 ? 0 : time); setPlaying(true); } };
-  const step = (dir: 1 | -1) => { const r = rep.current; if (!r) return; const ts = markers.map((m) => m.t - meta.startTime).filter((t) => t >= 0); const next = dir > 0 ? ts.find((t) => t > time + 5) : [...ts].reverse().find((t) => t < time - 5); const target = next ?? (dir > 0 ? total : 0); r.pause(target); setTime(target); setPlaying(false); refreshBoxes(); };
-  const seekFrac = (frac: number) => { const r = rep.current; if (!r) return; const t = Math.max(0, Math.min(total, frac * total)); if (playing) r.play(t); else r.pause(t); setTime(t); refreshBoxes(); };
-  const track = React.useRef<HTMLDivElement>(null);
-  const onTrack = (e: React.MouseEvent) => { const rct = track.current?.getBoundingClientRect(); if (!rct) return; const f = (clientX: number) => seekFrac((clientX - rct.left) / rct.width); f(e.clientX); const mv = (m: MouseEvent) => f(m.clientX); const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); }; window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up); };
+  const step = (dir: 1 | -1) => { const r = rep.current; if (!r) return; const ts = markers.map((m) => m.t - meta.startTime).filter((t) => t >= 0); const next = dir > 0 ? ts.find((t) => t > time + 5) : [...ts].reverse().find((t) => t < time - 5); const target = next ?? (dir > 0 ? total : 0); r.pause(target); setTime(target); setPlaying(false); refreshRef.current(); };
+  const seekFrac = (frac: number) => { const r = rep.current; if (!r) return; const t = Math.max(0, Math.min(total, frac * total)); if (playing) r.play(t); else r.pause(t); setTime(t); refreshRef.current(); };
+  ctl.actions = { toggle, step, seekFrac, setSpeed, setSkip };
+  React.useEffect(() => { ctl.set({ playing, live, ready, time, total, startTime: meta.startTime, speed, skip, markers, size, scale }); }, [ctl, playing, live, ready, time, total, meta.startTime, speed, skip, markers, size, scale]);
+  // keyboard: space plays / pauses, arrows step (when the pointer is over the player)
+  const onKey = (e: React.KeyboardEvent) => { if (e.key === " ") { e.preventDefault(); toggle(); } if (e.key === "ArrowRight") { e.preventDefault(); step(1); } if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); } };
 
   return (
-    <div className={cn("wc-player flex flex-col overflow-hidden rounded-lg border border-line bg-surface-2", className)}>
+    <div className={cn("wc-player flex flex-col overflow-hidden rounded-lg border border-line bg-surface-2 outline-none", className)} tabIndex={0} onKeyDown={onKey}>
       <div ref={host} className="relative w-full overflow-hidden bg-white" style={{ height: Math.round(size.h * scale) }}>
         <div ref={root} className="absolute left-0 top-0 origin-top-left" style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} />
         {/* the overlay: highlights, hover, flashes -- scaled with the page */}
-        <div className={cn("absolute left-0 top-0 origin-top-left", pickable ? "cursor-crosshair" : "pointer-events-none")} style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); cbs.current.onHover?.(null); }} onClick={onClick}>
+        <div className={cn("absolute left-0 top-0 origin-top-left", pickable && "cursor-crosshair")} style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); cbs.current.onHover?.(null); }} onClick={onClick} onWheel={onWheel}>
+          {cursor && <div className={cn("wc-cursor", cursor.down && "wc-cursor-down")} style={{ left: cursor.x, top: cursor.y }} />}
           {[...boxes, ...flash, ...(hover ? [hover] : [])].map((b, i) => (
             <div key={i} className={cn("wc-hl absolute", b.dashed && "wc-hl-dashed", flash.includes(b) && "wc-hl-flash")} style={{ left: b.left, top: b.top, width: b.width, height: b.height, ["--c" as any]: b.colour }}>
               {b.label && <span className="wc-hl-label">{b.label}</span>}
@@ -195,34 +241,11 @@ export function Player({ events, live = false, highlights = NO_HIGHLIGHTS, picka
         {events.length < 2 && <div className="absolute inset-0 flex items-center justify-center text-[12px] text-muted">{live ? "waiting for the page's first snapshot…" : "nothing to show yet"}</div>}
         {pickable && <span className="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded bg-ink/80 px-1.5 py-0.5 text-[10px] text-surface"><Crosshair size={10} /> click an element to pick it</span>}
       </div>
-      {controls && (
-        <div className="flex items-center gap-2 border-t border-line bg-surface px-2 py-1.5 text-[12px]">
-          {live ? <span className="inline-flex items-center gap-1 text-ok"><Radio size={13} className="animate-pulse" /> live</span> : (
-            <>
-              <button type="button" className="wc-mb" onClick={() => step(-1)} title="previous event"><SkipBack size={14} /></button>
-              <button type="button" className="wc-mb wc-mb-primary" onClick={toggle} title={playing ? "pause" : "play"} disabled={staticOnly}>{playing ? <Pause size={14} /> : <Play size={14} />}</button>
-              <button type="button" className="wc-mb" onClick={() => step(1)} title="next event"><SkipForward size={14} /></button>
-              <span className="w-[86px] font-mono text-[11px] text-muted">{fmt(time)} / {fmt(total)}</span>
-            </>
-          )}
-          <div ref={track} className="relative h-6 flex-1 cursor-pointer" onMouseDown={live ? undefined : onTrack}>
-            <div className="absolute left-0 right-0 top-1/2 h-1 -translate-y-1/2 rounded bg-line" />
-            {!live && <div className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded bg-accent" style={{ width: `${(time / total) * 100}%` }} />}
-            {!live && markers.map((m, i) => <span key={i} className="absolute top-1/2 h-3 w-[2px] -translate-y-1/2 rounded-sm" style={{ left: `${((m.t - meta.startTime) / total) * 100}%`, background: topicColorVar(m.tag), opacity: 0.85 }} title={m.tag} />)}
-            {!live && <span className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-accent bg-surface" style={{ left: `${(time / total) * 100}%` }} />}
-          </div>
-          {!live && <>
-            <select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>{SPEEDS.map((s) => <option key={s} value={s}>{s}×</option>)}</select>
-            <label className="inline-flex items-center gap-1 text-[11px] text-muted"><input type="checkbox" checked={skip} onChange={(e) => setSkip(e.target.checked)} /> skip idle</label>
-          </>}
-          <span className="font-mono text-[10px] text-muted">{size.w}×{size.h} · {Math.round(scale * 100)}%</span>
-        </div>
-      )}
+      {controls && <MediaBar controller={ctl} />}
     </div>
   );
 }
 
-function fmt(ms: number): string { const s = Math.max(0, ms) / 1000; const m = Math.floor(s / 60); return `${m}:${String(Math.floor(s % 60)).padStart(2, "0")}.${String(Math.floor((s % 1) * 10))}`; }
 function short(url: string): string { try { const u = new URL(url); return (u.pathname + u.search).slice(0, 48) || "/"; } catch { return url.slice(0, 48); } }
 
 /** The element under the mouse, as the query builder needs it: a durable-ish path, a

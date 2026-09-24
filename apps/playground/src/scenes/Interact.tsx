@@ -26,16 +26,23 @@ export function Interact() {
   const [pickOn, setPickOn] = React.useState(true);
   const [hover, setHover] = React.useState<Pick | null>(null);
 
-  // the DOM stream: the session's recorder chunks for this document, polled from the bus history
+  // the page's stream: EVERY event of this document from the bus history -- the recorder's
+  // DOM chunks as they are, and the actions / requests / errors as rrweb custom events, so
+  // the live Player animates them exactly like a replay (the pointer path, the pulses)
   React.useEffect(() => {
     if (!doc) return;
     let on = true;
     const pull = async () => {
       try {
-        const chunks = await api.history({ since: since.current, topic: "rrweb", document_id: doc.id, payload: true });
-        if (!on || !chunks.length) return;
-        since.current = Math.max(since.current, ...chunks.map((c) => c.n ?? 0));
-        setStream((s) => [...s, ...chunks.flatMap((c) => (c.events ?? []) as RREvent[])]);
+        const evs = await api.history({ since: since.current, document_id: doc.id, payload: true });
+        if (!on || !evs.length) return;
+        since.current = Math.max(since.current, ...evs.map((c) => c.n ?? 0));
+        const out: RREvent[] = [];
+        for (const e of evs) {
+          if (e.topic === "rrweb") out.push(...((e.events ?? []) as RREvent[]));
+          else if (e.topic !== "snapshot") { const { events: _drop, content: _c, body: _b, ...payload } = e as any; out.push({ type: 5, data: { tag: e.topic, payload }, timestamp: Math.round((e.ts ?? Date.now() / 1000) * 1000) }); }
+        }
+        setStream((s) => [...s, ...out]);
       } catch { /* the API blinked; next tick */ }
     };
     pull();
