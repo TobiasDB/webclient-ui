@@ -47,9 +47,10 @@ export const api = {
   traces: () => call<TraceSummary[]>("/traces"),
   trace: (id: string) => call<Record<string, unknown>>(`/traces/${encodeURIComponent(id)}`),
   traceEvents: (id: string, topic = "") => call<Event[]>(`/traces/${encodeURIComponent(id)}/events${topic ? `?topic=${topic}` : ""}`),
-  traceRrweb: (id: string) => call<Record<string, unknown>[]>(`/traces/${encodeURIComponent(id)}/rrweb`),
-  traceAssetUrl: (id: string, rel: string) => `${API_URL}/traces/${encodeURIComponent(id)}/asset/${rel}`,
-  traceAsset: async (id: string, rel: string) => (await fetch(api.traceAssetUrl(id, rel))).text(),
+  traceEvent: (id: string, n: number) => call<Event & { content?: string; body?: string; events?: unknown[] }>(`/traces/${encodeURIComponent(id)}/events/${n}`),
+  traceRrweb: (id: string, documentId?: string) => call<Record<string, unknown>[]>(`/traces/${encodeURIComponent(id)}/rrweb${documentId ? `?document_id=${encodeURIComponent(documentId)}` : ""}`),
+  traceHar: (id: string) => call<{ log: { entries: unknown[] } }>(`/traces/${encodeURIComponent(id)}/har`),
+  tracePlan: (id: string) => call<{ blob: string; describe: string }>(`/traces/${encodeURIComponent(id)}/plan`),
   loops: () => call<WaitingLoop[]>("/loops"),
   resume: (id: string, answer: unknown) => call<Record<string, unknown>>(`/loops/${encodeURIComponent(id)}/resume`, { method: "POST", body: JSON.stringify({ answer }) }),
 };

@@ -76,7 +76,9 @@ export interface PipelineEvent extends Event {
 
 export interface SnapshotEvent extends Event {
   topic: "snapshot"; phase: "fetch" | "load" | "action"; url: string; final_url?: string; kind: string;
-  status_code: number; headers?: Record<string, string>; asset?: string; tiers?: Tier[];
+  status_code: number; headers?: Record<string, string>; tiers?: Tier[];
+  /** inline when fetched in full (`/traces/{id}/events/{n}`); absent on the wire view */
+  content?: string;
 }
 
 export interface TraceSummary { id: string; events: number; started?: number; finished?: number; schema_version?: number }

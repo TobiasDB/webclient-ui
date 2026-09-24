@@ -75,7 +75,7 @@ export const TRACE_EVENTS: Event[] = [
   { topic: "loop", n: 9, seq: 5, ts: t + 0.5, loop: "resolve", phase: "waiting", round: 1, detail: { ask: { reason: "render?", options: ["browser"] } } },
   { topic: "action", n: 10, seq: 1, ts: t + 1.2, document_id: "doc:000-009", action: "click", args: { selector: "#add" } },
   { topic: "snapshot", n: 11, seq: 2, ts: t + 1.4, document_id: "doc:000-009", phase: "action", url: "http://lab/lab/app", kind: "html", status_code: 200, asset: "snapshots/11.html", tiers: ["browser"] },
-  { topic: "rrweb", n: 12, seq: 3, ts: t + 1.41, document_id: "doc:000-009", count: 9, asset: "rrweb/12.json" },
+  { topic: "rrweb", n: 12, seq: 3, ts: t + 1.41, document_id: "doc:000-009", count: 9 },
   { topic: "script", n: 13, seq: 4, ts: t + 1.42, document_id: "doc:000-009", script: "demo.title", phase: "load", detail: { result: "Cart" } },
   { topic: "resource", n: 14, seq: 6, ts: t + 1.5, source: "pool", detail: { what: "wait", kind: "page", waiting: 1, held: 4 } },
 ];

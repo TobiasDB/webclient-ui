@@ -2,12 +2,15 @@ import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Button, Chip, EmptyState, ErrorCard, EventList, Panel, ReplayPlayer, SnapshotPane, TabPanel, Tabs, Timeline, TopicChip,
+  Button, Chip, CodeBlock, EmptyState, ErrorCard, EventList, Panel, ReplayPlayer, SnapshotPane, TabPanel, Tabs, Timeline, TopicChip,
   topicRoot, type ErrorEvent, type Event, type SnapshotEvent,
 } from "@webclient/ui";
 import { api } from "../lib/api";
 
-/** Traces (stories 7.1-7.3): one scrubber; snapshot, DOM replay, request and event JSON follow it. */
+/** Traces (stories 7.1-7.3): ONE stream, one clock. The rrweb player (fed the whole trace:
+ * DOM + every other event as a tagged custom event) is the master clock while it plays; our
+ * timeline scrubber drives it when the reader seeks. Snapshot, event JSON, network and the
+ * ledger all sit at the same instant. */
 export function Traces() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -29,7 +32,15 @@ export function Traces() {
     for (let i = cursor; i >= 0; i--) { const e = shown[i]; if (e && e.topic === "snapshot" && (!cur.document_id || e.document_id === cur.document_id)) return e as SnapshotEvent; }
     return (shown.slice(0, cursor + 1).reverse().find((e) => e.topic === "snapshot") ?? null) as SnapshotEvent | null;
   }, [cur, cursor, shown]);
-  const html = useQuery({ queryKey: ["asset", id, snapAt?.asset], queryFn: () => api.traceAsset(id!, snapAt!.asset!), enabled: !!id && !!snapAt?.asset });
+  const full = useQuery({ queryKey: ["trace-event", id, snapAt?.n], queryFn: () => api.traceEvent(id!, snapAt!.n!), enabled: !!id && snapAt?.n != null });
+  const html = full.data?.content ?? null;
+  const plan = useQuery({ queryKey: ["trace-plan", id], queryFn: () => api.tracePlan(id!).catch(() => null), enabled: !!id });
+  // the player's clock -> our cursor (the last event at or before that instant)
+  const followPlayer = React.useCallback((ms: number) => {
+    let best = 0;
+    shown.forEach((e, i) => { if ((e.ts ?? 0) * 1000 <= ms) best = i; });
+    setCursor(best);
+  }, [shown]);
   const errors = all.filter((e) => e.topic === "error") as ErrorEvent[];
 
   if (!id) return (
@@ -58,9 +69,13 @@ export function Traces() {
         <div className="grid min-h-0 grid-cols-2 gap-3">
           <Panel title="Events" flush><EventList events={shown} cursor={cursor} onCursor={setCursor} groupByDocument className="h-full" /></Panel>
           <Panel flush className="min-h-0">
-            <Tabs items={[{ value: "snapshot", label: "Snapshot" }, { value: "replay", label: "DOM replay", count: rrweb.data?.length }, { value: "event", label: "Event" }, { value: "errors", label: "Ledger", count: errors.length }]} value={tab} onValueChange={setTab} className="h-full">
-              <TabPanel value="snapshot" className="p-3">{snapAt ? <SnapshotPane snapshot={snapAt} html={html.data ?? null} /> : <EmptyState title="No snapshot before this point" />}</TabPanel>
-              <TabPanel value="replay" className="p-3"><ReplayPlayer events={rrweb.data ?? []} seekTo={cur?.ts ? cur.ts * 1000 : null} width={640} height={400} /></TabPanel>
+            <Tabs items={[{ value: "snapshot", label: "Snapshot" }, { value: "replay", label: "DOM replay", count: rrweb.data?.length }, { value: "event", label: "Event" }, { value: "plan", label: "Plan" }, { value: "errors", label: "Ledger", count: errors.length }]} value={tab} onValueChange={setTab} className="h-full">
+              <TabPanel value="snapshot" className="p-3">{snapAt ? <SnapshotPane snapshot={snapAt} html={html} /> : <EmptyState title="No snapshot before this point" />}</TabPanel>
+              <TabPanel value="replay" className="p-3">
+                <ReplayPlayer events={rrweb.data ?? []} seekTo={cur?.ts ? cur.ts * 1000 : null} onTime={followPlayer} width={640} height={400} />
+                <p className="mt-2 text-[11px] text-muted">One list drives this: the DOM (recorded, or rebuilt from the snapshots of a static run) with every other event as a marker on the bar, coloured by topic. Play, and the panes follow.</p>
+              </TabPanel>
+              <TabPanel value="plan" className="p-3">{plan.data ? <div className="flex flex-col gap-2"><CodeBlock lang="explain" code={plan.data.describe} /><CodeBlock lang="blob" code={plan.data.blob} /></div> : <EmptyState title="No plan recorded" hint="Open a recording session under the trace (`wc.record()`), or pass `plan=` to `wc.trace()`, and it lands in the footer." />}</TabPanel>
               <TabPanel value="event" className="p-3"><pre className="overflow-auto rounded-md border border-line bg-surface-2 p-2 font-mono text-[11px]">{JSON.stringify(cur, null, 2)}</pre></TabPanel>
               <TabPanel value="errors" className="flex flex-col gap-2 p-3">
                 {errors.length ? errors.map((e, i) => <ErrorCard key={i} error={e.error} raised={e.raised} when={e.ts && all[0]?.ts ? `+${Math.round((e.ts - all[0].ts) * 1000)} ms` : undefined} onJump={() => { const idx = shown.indexOf(e as Event); if (idx >= 0) setCursor(idx); }} />) : <span className="text-[12px] text-muted">No errors in this run.</span>}
