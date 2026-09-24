@@ -12,9 +12,9 @@ export function Home() {
   return (
     <div className="grid h-full grid-cols-3 gap-3 p-3">
       <Panel title="Start with a URL">
-        <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); if (url) nav(`/explore?url=${encodeURIComponent(url)}`); }}>
+        <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); if (url) nav(`/author?url=${encodeURIComponent(url)}`); }}>
           <Input mono value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://… (or a lab page, e.g. http://localhost:8765/lab/shop)" autoFocus />
-          <div className="flex gap-2"><Button variant="primary" type="submit">Explore</Button><Button onClick={() => nav("/query")}>Open the query builder</Button><Button onClick={() => nav("/tools")}>Try a tool</Button></div>
+          <div className="flex gap-2"><Button variant="primary" type="submit">Author a scrape</Button><Button onClick={() => nav("/loops")}>Crawl a site</Button><Button onClick={() => nav("/tools")}>Try a tool</Button></div>
           <p className="text-[12px] text-muted">You'll see what the page is, what's notable (with evidence), where the data is — then build an extraction by pointing.</p>
         </form>
       </Panel>

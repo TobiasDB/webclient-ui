@@ -34,7 +34,7 @@ export function DocumentStrip() {
       {docs.data.map((d) => (
         <span key={d.id} className={cn("inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5", current === d.id ? "border-accent bg-accent-soft" : "border-line bg-surface")}>
           <span className={cn("inline-block size-1.5 rounded-full", d.live ? "bg-ok animate-pulse" : "bg-muted")} title={d.live ? "live: a browser page held open" : "a static capture"} />
-          <button type="button" className="max-w-[220px] truncate text-left hover:text-accent" title={d.url} onClick={() => nav(d.live ? `/interact?doc=${encodeURIComponent(d.id)}` : `/explore?doc=${encodeURIComponent(d.id)}`)}>{d.title || d.url}</button>
+          <button type="button" className="max-w-[220px] truncate text-left hover:text-accent" title={d.url} onClick={() => nav(`/author?doc=${encodeURIComponent(d.id)}`)}>{d.title || d.url}</button>
           <span className="font-mono text-[10px] text-muted">{d.live ? "live" : d.tier ?? "static"}{d.ok === false ? " · !" : ""}</span>
           <button type="button" className="text-muted hover:text-ink" title="reload" onClick={() => reload(d)} disabled={busy === d.id}><RefreshCw size={11} className={busy === d.id ? "animate-spin" : ""} /></button>
           <button type="button" className="text-muted hover:text-bad" title="close" onClick={() => close(d)}><X size={11} /></button>

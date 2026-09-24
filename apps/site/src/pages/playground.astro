@@ -9,8 +9,8 @@ import { PLAYGROUND_URL } from "../lib/site";
     <p class="mb-6 max-w-[820px] text-[15px] leading-7 text-muted">A separate app over the same HTTP API: explore a page (what it is, what is notable, where the data is), build a query by pointing, watch crawls and loops as they run and answer their questions, read traces on one clock, call any tool, and onboard a dataset with your model or the stub. No account needed.</p>
     <a href={PLAYGROUND_URL} class="inline-block rounded-md bg-accent px-4 py-2 text-[14px] font-medium text-white">Open the Playground → {PLAYGROUND_URL}</a>
     <div class="mt-8 grid gap-3 md:grid-cols-3">
-      <Card href={`${PLAYGROUND_URL}/explore?url=${Astro.url.origin}/`} title="Explore this site">Card, tier ladder, flags with evidence, the skeleton, the element table.</Card>
-      <Card href={`${PLAYGROUND_URL}/query?url=${Astro.url.origin}/case-studies`} title="Build a query on the case studies">Pick the record, pick the fields, rows fill live; the plan as data.</Card>
+      <Card href={`${PLAYGROUND_URL}/author?url=${Astro.url.origin}/`} title="Author a scrape of this site">Card, tier ladder, flags with evidence, the skeleton, the element table.</Card>
+      <Card href={`${PLAYGROUND_URL}/author?url=${Astro.url.origin}/case-studies`} title="Pick the case studies by pointing">Pick the record, pick the fields, rows fill live; the plan as data.</Card>
       <Card href={`${PLAYGROUND_URL}/traces`} title="Read the demo trace">One scrubber; DOM replay, network, loops, ledger together.</Card>
     </div>
   </Section>

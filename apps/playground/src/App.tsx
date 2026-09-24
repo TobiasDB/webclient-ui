@@ -1,19 +1,17 @@
 import * as React from "react";
-import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Chip, RunBar, cn, type Event } from "@webclient/ui";
 import { subscribe } from "./lib/api";
 import { Home } from "./scenes/Home";
-import { Explore } from "./scenes/Explore";
-import { Query } from "./scenes/Query";
+import { Author } from "./scenes/Author";
 import { Traces } from "./scenes/Traces";
 import { Tools } from "./scenes/Tools";
 import { Settings } from "./scenes/Settings";
 import { Loops } from "./scenes/Loops";
-import { Interact } from "./scenes/Interact";
 import { DocumentStrip } from "./components/DocumentStrip";
 
 const WORKSPACES = [
-  ["/", "Home"], ["/explore", "Explore"], ["/query", "Query"], ["/interact", "Interact"], ["/loops", "Crawl · Loops"], ["/traces", "Traces"], ["/tools", "Tools"], ["/settings", "Settings"],
+  ["/", "Home"], ["/author", "Author"], ["/loops", "Crawl · Loops"], ["/traces", "Traces"], ["/tools", "Tools"], ["/settings", "Settings"],
 ] as const;
 
 /** The live stream shared by every workspace (the run bar) -- one socket, resumed by cursor. */
@@ -61,9 +59,12 @@ export function App() {
         {/* every workspace stays MOUNTED (hidden when not active): switching tabs, or going
             back and forward, never loses what you were doing; the URL carries the essentials */}
         <Keep path="/" exact><Home /></Keep>
-        <Keep path="/explore"><Explore /></Keep>
-        <Keep path="/query"><Query /></Keep>
-        <Keep path="/interact"><Interact /></Keep>
+        <Keep path="/author"><Author /></Keep>
+        {/* the three former workspaces live on as redirects into Author */}
+        <Routes>
+          <Route path="/explore" element={<Redirect />} /><Route path="/query" element={<Redirect />} /><Route path="/interact" element={<Redirect />} />
+          <Route path="*" element={null} />
+        </Routes>
         <Keep path="/loops"><Loops liveEvents={events} /></Keep>
         <Keep path="/traces"><Routes><Route path="/traces" element={<Traces />} /><Route path="/traces/:id" element={<Traces />} /></Routes></Keep>
         <Keep path="/tools"><Tools /></Keep>
@@ -82,4 +83,13 @@ function Keep({ path, exact, children }: { path: string; exact?: boolean; childr
   React.useEffect(() => { if (active) setMounted(true); }, [active]);
   if (!mounted) return null;
   return <div className={cn("h-full min-h-0", !active && "hidden")}>{children}</div>;
+}
+
+/** /explore, /query and /interact used to be separate workspaces: keep their links working. */
+function Redirect() {
+  const loc = useLocation();
+  const p = new URLSearchParams(loc.search);
+  const n = new URLSearchParams();
+  for (const k of ["url", "doc", "tier"]) { const v = p.get(k); if (v) n.set(k, v); }
+  return <Navigate to={`/author?${n}`} replace />;
 }

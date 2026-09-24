@@ -102,7 +102,7 @@ export function Loops({ liveEvents }: { liveEvents: Event[] }) {
               {!st.running && !st.done && st.mode !== "manual" && <Button size="sm" onClick={run}>Run to the budget</Button>}
               <Button size="sm" variant="ghost" onClick={close}>Close</Button>
             </div>
-            <FrontierMap seeds={st.seeds} pages={st.pages} frontier={st.frontier} failures={st.failures} picked={picked} onPick={(u) => setPicked((p) => { const n = new Set(p); n.has(u) ? n.delete(u) : n.add(u); return n; })} onOpen={(u) => window.open(`/explore?url=${encodeURIComponent(u)}`, "_blank")} height={520} />
+            <FrontierMap seeds={st.seeds} pages={st.pages} frontier={st.frontier} failures={st.failures} picked={picked} onPick={(u) => setPicked((p) => { const n = new Set(p); n.has(u) ? n.delete(u) : n.add(u); return n; })} onOpen={(u) => window.open(`/author?url=${encodeURIComponent(u)}`, "_blank")} height={520} />
             <p className="mt-1 text-[11px] text-muted">solid = fetched · hollow = in the frontier (bigger = higher score) · red = failed · a line joins a link to the page it was found on · click a hollow node to pick it for the next step, a solid one to explore it</p>
           </div>
           <div className="flex min-w-0 flex-col gap-3">
