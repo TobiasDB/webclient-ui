@@ -1,0 +1,20 @@
+---
+import Feature from "../../layouts/Feature.astro";
+import Code from "../../components/Code.astro";
+import { TraceReplay } from "../../islands/TraceReplay";
+const TRACE = `with WebClient() as wc, wc.trace("run.jsonl"):     # ONE file: every event, payloads inline, the plan in the footer
+    ...
+
+from webclient.replay import Replay
+with Replay("run.jsonl") as rep:
+    rep.state(n)          # everything the run knew at event n: documents, network, console, loops, errors
+    rep.documents()       # offline projections: select / skeleton / flags answer as they did live
+    rep.rrweb()           # the stream as rrweb events: DOM + every other event, for one player
+WebClient(har="run.jsonl")   # the network, served back from the trace: zero calls`;
+---
+<Feature slug="traces" next={["/features/onboarding", "/features/scale", "/features/errors"]}>
+  <p class="mb-4 max-w-[820px] text-[15px] leading-7 text-muted">Everything the engine does is an event on a bus: network, snapshots, actions, console, loops, pipelines, scripts, errors. A trace is that stream in one file, and every replay is a translation of it — offline documents, a HAR, an rrweb DOM recording (synthesised from snapshots when the run was static) with every other event marked on the same bar. Below: the demo run, on one clock.</p>
+  <TraceReplay client:only="react" trace="demo" />
+  <h3 class="mt-10 mb-2 text-[16px] font-semibold">Record, then replay three ways</h3>
+  <Code code={TRACE} />
+</Feature>

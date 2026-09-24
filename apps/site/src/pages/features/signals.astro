@@ -1,0 +1,10 @@
+---
+import Feature from "../../layouts/Feature.astro";
+import { SignalsCatalogue } from "../../islands/Catalogues";
+import { LiveDemo } from "../../islands/LiveDemo";
+---
+<Feature slug="signals" next={["/features/transport", "/features/errors", "/lab"]}>
+  <p class="mb-4 max-w-[820px] text-[15px] leading-7 text-muted">A flag is a conclusion; a detector is one piece of evidence for (or against) it, at a stage: request, static HTML, rendered DOM, network. The catalogue below comes from <code>GET /signals</code> — the registry itself — and every flag has a page on this site that raises it.</p>
+  <SignalsCatalogue client:only="react" examples={{ spa: "/changelog", login_present: "/login", login_required: "/login", anti_bot_present: "/blocked", anti_bot_triggered: "/blocked", large_document: "/benchmarks", shadow_dom: "/status", iframe: "/whitepaper", pagination: "/case-studies", tabbed: "/events", forms: "/docs", buttons: "/docs" }} />
+  <div class="mt-8"><LiveDemo client:only="react" tool="flags" args={{ url: "{site}/login" }} title="flags() — the sign-in wall, with evidence" /></div>
+</Feature>

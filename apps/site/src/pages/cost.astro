@@ -1,0 +1,51 @@
+---
+/** Cost (Epic F) -- and the `app` fixture: the calculator's controls (#qty, #add, #load), rows in #cart. */
+import Base from "../layouts/Base.astro";
+import Section from "../components/Section.astro";
+import { COST } from "../data/cost";
+const tok = (c: number) => Math.round(c * COST.tokensPerChar);
+---
+<Base title="Cost · WebClient">
+  <Section kicker="the economics, measured" title="What an extraction costs">
+    <div class="prose max-w-[820px]">
+      <p>There is no price page. The product's economics are the argument: <b>self-hosted</b>, your data never leaves, no per-page fee — the cost of running it is your infrastructure. What a model costs is measured here: the tokens a page costs a model in each view the client can hand it, and the difference between paying that on every run and paying it once.</p>
+    </div>
+    <h3 class="mt-8 mb-2 text-[16px] font-semibold">Tokens per page, by view <span class="font-normal text-muted">(measured {COST.measured} on this site's pages; ≈ chars × {COST.tokensPerChar})</span></h3>
+    <table class="prose w-full max-w-[820px]"><thead><tr><th>page</th><th>raw HTML</th><th>markdown</th><th>skeleton</th><th>card</th><th>skeleton vs HTML</th></tr></thead>
+      <tbody>{COST.pages.map((p) => <tr><td><a class="text-accent" href={p.page}>{p.label}</a></td><td>{tok(p.html).toLocaleString()}</td><td>{tok(p.markdown).toLocaleString()}</td><td>{tok(p.skeleton).toLocaleString()}</td><td>{tok(p.card).toLocaleString()}</td><td><b>{Math.round(p.html / p.skeleton)}×</b> fewer</td></tr>)}</tbody></table>
+    <h3 class="mt-8 mb-2 text-[16px] font-semibold">Author once vs a session per run</h3>
+    <p class="mb-3 max-w-[820px] text-[14px] text-muted">Authoring one query in the recorded onboarding run took <b>{COST.authoring.calls}</b> model calls, <b>{COST.authoring.inputTokens.toLocaleString()}</b> input and <b>{COST.authoring.outputTokens}</b> output tokens ({COST.model}). Every re-run of the resulting plan costs 0 tokens. Put in your pages per day and your model's list price; add scenarios to compare.</p>
+    <main class="rounded-lg border border-line p-4 text-[14px]">
+      <div class="flex flex-wrap items-end gap-2">
+        <label class="flex flex-col text-[12px] text-muted">pages / day<input id="qty" type="text" placeholder="e.g. 40" class="h-9 w-32 rounded-md border border-line bg-surface px-2 text-[14px] text-ink" /></label>
+        <label class="flex flex-col text-[12px] text-muted">$ per 1M input tokens<input id="price" type="text" value="3" class="h-9 w-32 rounded-md border border-line bg-surface px-2 text-[14px] text-ink" /></label>
+        <label class="flex flex-col text-[12px] text-muted">runs / day<input id="runs" type="text" value="1" class="h-9 w-24 rounded-md border border-line bg-surface px-2 text-[14px] text-ink" /></label>
+        <button id="add" type="button" class="h-9 rounded-md bg-accent px-3 font-medium text-white">add scenario</button>
+        <button id="load" type="button" class="h-9 rounded-md border border-line px-3">load presets</button>
+      </div>
+      <ul id="cart" class="mt-3 flex flex-col gap-1"></ul>
+      <p class="mt-2 text-[12px] text-muted">per-run = pages × runs × raw-HTML tokens × price, per day · author-once = the authoring tokens, once; then $0 per run.</p>
+    </main>
+    <script id="cost-data" type="application/json" set:html={JSON.stringify({ html: tok(COST.pages[0]!.html), authoring: COST.authoring.inputTokens + COST.authoring.outputTokens })} />
+    <script is:inline>
+      (function () {
+        var data = JSON.parse(document.getElementById('cost-data').textContent);
+        function row(name, pages, runs, price) {
+          var perRun = pages * runs * data.html * price / 1e6, once = data.authoring * price / 1e6;
+          return '<li class="row rounded border border-line px-2 py-1">' + name + ': <b>' + pages + '</b> pages × ' + runs + ' run(s)/day — per-run model: <b>$' + perRun.toFixed(2) + '/day</b> · author-once: <b>$' + once.toFixed(4) + ' once</b>, then $0</li>';
+        }
+        var cart = document.getElementById('cart');
+        document.getElementById('add').onclick = function () {
+          var pages = Number(document.getElementById('qty').value || 0), runs = Number(document.getElementById('runs').value || 1), price = Number(document.getElementById('price').value || 0);
+          cart.insertAdjacentHTML('beforeend', row('scenario x' + pages, pages, runs, price));
+        };
+        document.getElementById('load').onclick = function () {
+          var price = Number(document.getElementById('price').value || 0);
+          fetch('/api/cost/presets').then(function (r) { return r.json(); }).then(function (ps) {
+            cart.innerHTML = ps.map(function (p) { return row(p.name, p.pagesPerDay, p.rerunsPerDay, price); }).join('');
+          });
+        };
+      })();
+    </script>
+  </Section>
+</Base>

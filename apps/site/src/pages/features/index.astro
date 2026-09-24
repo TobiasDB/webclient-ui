@@ -1,0 +1,11 @@
+---
+import Base from "../../layouts/Base.astro";
+import Section from "../../components/Section.astro";
+import Card from "../../components/Card.astro";
+import { FEATURES } from "../../data/features";
+---
+<Base title="Features · WebClient">
+  <Section kicker="each one a live demo of this site" title="Features">
+    <div class="grid gap-3 md:grid-cols-3">{FEATURES.map((f) => <Card href={`/features/${f.slug}`} title={f.title}>{f.claim}</Card>)}</div>
+  </Section>
+</Base>

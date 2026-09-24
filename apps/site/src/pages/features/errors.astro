@@ -1,0 +1,13 @@
+---
+import Feature from "../../layouts/Feature.astro";
+import { ErrorsCatalogue } from "../../islands/Catalogues";
+import { LiveDemo } from "../../islands/LiveDemo";
+---
+<Feature slug="errors" next={["/features/signals", "/features/tools", "/docs"]}>
+  <p class="mb-4 max-w-[820px] text-[15px] leading-7 text-muted">Every error is problem-details shaped: a catalogued <code>code</code>, a title, a <code>remedy</code> from a closed vocabulary an agent can act on (retry, browser, proxy, stealth, credentials, fix_selector…), a hint, whether it is retriable, and the op and subject it happened on. Nothing disappears: a swallowed error still lands on the ledger. The catalogue is <code>GET /errors</code>; the trigger column points at a page of this site.</p>
+  <ErrorsCatalogue client:only="react" triggers={{ "fetch.http_status": "/status/500", "fetch.login_required": "/login", "fetch.anti_bot": "/blocked", "select.no_match": "/", "fetch.timeout": "/slow?delay=20" }} />
+  <div class="mt-8 grid gap-4 md:grid-cols-2">
+    <LiveDemo client:only="react" tool="card" args={{ url: "{site}/status/500" }} title="card() on /status/500 — retriable" />
+    <LiveDemo client:only="react" tool="extract" args={{ url: "{site}/", result: "div.nope", fields: { x: ".y" } }} view="rows" title="extract() with a wrong selector — 0 rows, honestly" />
+  </div>
+</Feature>

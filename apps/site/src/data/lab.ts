@@ -19,7 +19,7 @@ export const TITLES = {
 };
 export const BENCH_ROWS = 6000;
 export const SITEMAP_PAGES = ["/", "/why", "/features", "/docs", "/cost", "/case-studies", "/changelog", "/news", "/events", "/benchmarks", "/whitepaper", "/about"];
-export const ROBOTS_DISALLOW = ["/login", "/account", "/blocked"];
+export const ROBOTS_DISALLOW = ["/login", "/account", "/blocked", "/api/", "/lab/"]; // crawlers: pages, not the JSON contracts
 
 /** every anchor the home page renders, in DOM order (nav, the grid, the three paths, footer) */
 export const HOME_PATHS: [string, string, string][] = [
@@ -28,6 +28,7 @@ export const HOME_PATHS: [string, string, string][] = [
   ["/features/scale", "Operate", "Self-hosted. A pool, fairness, resource events, the k8s recipe; your data never leaves."],
 ];
 export const HOME_LINKS = [
+  "/", // the brand link in the header
   ...SITE.nav.map(([h]) => h),
   ...PRODUCTS.map((p) => `/api/products/${p.id}`),
   ...HOME_PATHS.map(([h]) => h),
@@ -73,7 +74,7 @@ export const FIXTURES: Fixture[] = [
     expected: { records: BENCH_ROWS, flags: ["large_document"], record_selector: "li.item" } },
   { name: "gzip", title: "Benchmark data: a gzip-encoded response", path: "/benchmarks/data", feature: "transport:encoding", browser: false, expected: { title: TITLES.benchData } },
   { name: "sitemap", title: "sitemap.xml + robots.txt discovery", path: "/sitemap.xml", feature: "crawl:sitemap", browser: false,
-    expected: { sitemap_urls: SITEMAP_PAGES, disallow: ROBOTS_DISALLOW, sitemap_in_robots: true, seed: "/", must_reach: "/about", must_skip: "/login" } },
+    expected: { sitemap_urls: SITEMAP_PAGES, disallow: ROBOTS_DISALLOW, sitemap_in_robots: true, seed: "/", must_reach: "/about", must_skip: "/login", crawl_pages: 60 } },
   { name: "app", title: "The cost calculator: type, click, rows appear (XHR-backed)", path: "/cost", feature: "interact", browser: true,
     expected: { controls: ["#qty", "#add", "#load"], rows: "#cart li", after_add_rows: 1, after_load_rows: COST.presets.length, api: "/api/cost/presets" } },
   { name: "scroll", title: "The case-study archive: infinite scroll", path: "/case-studies/archive", feature: "interact:scroll", browser: true,

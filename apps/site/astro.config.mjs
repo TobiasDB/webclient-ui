@@ -12,6 +12,12 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   site: process.env.PUBLIC_SITE_URL || "http://localhost:4321",
+  // the Host header the dynamic routes trust (robots.txt / sitemap.xml render absolute URLs from
+  // it): localhost + 127.0.0.1 for the tests and the demos, SITE_HOSTS (comma list) in prod
+  security: { allowedDomains: [
+    { hostname: "localhost" }, { hostname: "127.0.0.1" },
+    ...(process.env.SITE_HOSTS ?? "").split(",").map((h) => h.trim()).filter(Boolean).map((hostname) => ({ hostname })),
+  ] },
   output: "static",
   adapter: node({ mode: "standalone" }),
   integrations: [react()],

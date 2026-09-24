@@ -1,0 +1,18 @@
+---
+import Feature from "../../layouts/Feature.astro";
+import Code from "../../components/Code.astro";
+import { ToolsList } from "../../islands/Catalogues";
+import { LiveDemo } from "../../islands/LiveDemo";
+const MCP = `{ "mcpServers": { "webclient": { "command": "python", "args": ["-m", "webclient.mcp"] } } }`;
+const HTTP = `curl -X POST ${Astro.url.origin.replace("4321", "8000")}/tools/card \\
+  -H 'content-type: application/json' -d '{"url": "${Astro.url.origin}/"}'`;
+---
+<Feature slug="tools" next={["/features/errors", "/docs", "/features/scale"]}>
+  <p class="mb-4 max-w-[820px] text-[15px] leading-7 text-muted">One declaration per tool — its name, its input schema, what it returns, whose story it serves — and three front doors: Python verbs, MCP tools, and <code>POST /tools/{"{name}"}</code>. The list below is <code>GET /tools</code>, live. Every call on this site goes through it.</p>
+  <ToolsList client:only="react" />
+  <div class="mt-8 grid gap-4 md:grid-cols-2">
+    <div><h3 class="mb-2 text-[14px] font-semibold">Wire an agent in one minute (MCP)</h3><Code code={MCP} lang="json" /></div>
+    <div><h3 class="mb-2 text-[14px] font-semibold">…or over HTTP</h3><Code code={HTTP} lang="sh" /></div>
+  </div>
+  <div class="mt-8"><LiveDemo client:only="react" tool="skeleton" args={{ url: "{site}/", collapse: true }} view="text" title="skeleton() — what a model reads instead of the HTML" /></div>
+</Feature>

@@ -1,0 +1,92 @@
+---
+/** Home (stories A1-A4) -- and the `shop` fixture: a static product grid with prices and links. */
+import Base from "../layouts/Base.astro";
+import Code from "../components/Code.astro";
+import Card from "../components/Card.astro";
+import { PRODUCTS } from "../data/products";
+import { HOME_PATHS, TITLES } from "../data/lab";
+import { TransportProof } from "../islands/TransportProof";
+import { LiveDemo } from "../islands/LiveDemo";
+const SNIPPET = `from webclient import WebClient
+
+with WebClient() as wc:
+    page = wc.fetch("${Astro.url.origin}/")                 # this page, cheapest tier that works
+    rows = (page.select_all("div.card")                      # the product grid below
+                .extract(title=".title", price=".price"))
+    print(rows.project())    # [{"title": "Aeropress", "price": "$39"}, ...]`;
+---
+<Base title={TITLES.home}>
+  <section class="mx-auto grid max-w-[1100px] gap-8 px-5 pt-14 md:grid-cols-[1.1fr_1fr]">
+    <div>
+      <h1 class="text-[40px] font-semibold leading-[1.05] tracking-tight">A declarative web client.<br />One plan, run anywhere.</h1>
+      <p class="mt-4 max-w-[520px] text-[17px] leading-7 text-muted">Fetch a page over the cheapest transport that works, select and extract typed rows, hand a model the token-lean view — and run the same plan sync, async, or against a remote service. Every claim on this site runs against this site.</p>
+      <div class="mt-6 flex flex-wrap gap-2 text-[14px]">
+        <a href="/docs" class="rounded-md bg-accent px-3 py-2 font-medium text-white">Five minutes to rows</a>
+        <a href="/why" class="rounded-md border border-line px-3 py-2">Why not Playwright / a SaaS / a model per run</a>
+      </div>
+    </div>
+    <div>
+      <Code code={SNIPPET} />
+      <p class="mt-2 text-[12px] text-muted">Copy-pastable. The result below is produced live by the service, against this page.</p>
+      <LiveDemo client:only="react" tool="extract" args={{ url: "{site}/", result: "div.card", fields: { title: ".title", price: ".price" } }} view="rows" title="extract() — this page" />
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-[1100px] px-5 pt-16">
+    <div class="mb-1 font-mono text-[11px] uppercase tracking-wider text-accent">the idea</div>
+    <div class="grid gap-6 md:grid-cols-[1fr_1fr]">
+      <svg viewBox="0 0 520 200" class="w-full max-w-[520px]" role="img" aria-label="A plan is data; it runs sync, async, remote or lazily, and replays from its trace">
+        <rect x="10" y="70" width="130" height="60" rx="8" class="fill-accent-soft stroke-accent" />
+        <text x="75" y="96" text-anchor="middle" class="fill-ink text-[13px] font-semibold">the plan</text>
+        <text x="75" y="114" text-anchor="middle" class="fill-muted text-[11px]">a query, as data</text>
+        <g class="stroke-line" stroke-width="1.5">
+          <line x1="140" y1="100" x2="220" y2="40" /><line x1="140" y1="100" x2="220" y2="80" /><line x1="140" y1="100" x2="220" y2="120" /><line x1="140" y1="100" x2="220" y2="160" />
+        </g>
+        {["sync", "async", "remote", "lazy"].map((r, i) => (
+          <g><rect x="220" y={22 + i * 40} width="90" height="34" rx="6" class="fill-surface stroke-line" /><text x="265" y={44 + i * 40} text-anchor="middle" class="fill-ink text-[12px]">{r}</text></g>
+        ))}
+        <line x1="310" y1="100" x2="380" y2="100" class="stroke-line" stroke-width="1.5" />
+        <rect x="380" y="70" width="130" height="60" rx="8" class="fill-surface stroke-line" />
+        <text x="445" y="96" text-anchor="middle" class="fill-ink text-[13px] font-semibold">the trace</text>
+        <text x="445" y="114" text-anchor="middle" class="fill-muted text-[11px]">one stream · replays</text>
+      </svg>
+      <ul class="flex flex-col gap-3 self-center text-[16px]">
+        <li><b>Cheaper.</b> Author a query once, with or without a model; every later run is the plan, not a conversation.</li>
+        <li><b>Deterministic.</b> The same plan gives the same rows, and re-runs offline from what it recorded.</li>
+        <li><b>Auditable.</b> Everything the engine did is one event stream you can read, replay and hand to someone.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-[1100px] px-5 pt-16">
+    <div class="mb-1 font-mono text-[11px] uppercase tracking-wider text-accent">live proof</div>
+    <h2 class="mb-3 text-[22px] font-semibold tracking-tight">The cheapest tier that works — chosen for three of this site's pages</h2>
+    <TransportProof client:only="react" pages={[
+      { path: "/about", label: "A plain page", expect: "static — one request, no browser" },
+      { path: "/changelog", label: "The changelog (JS-rendered)", expect: "flagged spa, escalated once to a browser" },
+      { path: "/api/products", label: "The products API", expect: "static — the JSON is the document" },
+    ]} />
+  </section>
+
+  <section class="mx-auto max-w-[1100px] px-5 pt-16">
+    <div class="mb-1 font-mono text-[11px] uppercase tracking-wider text-accent">pick your path</div>
+    <div class="grid gap-3 md:grid-cols-3">
+      {HOME_PATHS.map(([href, title, text]) => <Card href={href} title={title}>{text}</Card>)}
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-[1100px] px-5 pt-16">
+    <div class="mb-1 font-mono text-[11px] uppercase tracking-wider text-accent">featured</div>
+    <h2 class="mb-1 text-[22px] font-semibold tracking-tight">Three pages, three transports</h2>
+    <p class="mb-4 max-w-[760px] text-[14px] text-muted">The product grid every extraction demo on this site reads (the lab's <code>shop</code> fixture). Each card links to its JSON item.</p>
+    <main class="grid gap-3 md:grid-cols-3">
+      {PRODUCTS.map((p) => (
+        <div class="card rounded-lg border border-line p-4" data-rank={p.id}>
+          <h2 class="title text-[16px] font-semibold">{p.name}</h2>
+          <p class="text-[13px] text-muted">{p.blurb}</p>
+          <div class="mt-2 flex items-center justify-between"><a class="link text-[13px] text-accent" href={`/api/products/${p.id}`}>view</a><span class="price font-mono text-[14px]" data-price={p.price}>${p.price.split(".")[0]}</span></div>
+        </div>
+      ))}
+    </main>
+  </section>
+</Base>

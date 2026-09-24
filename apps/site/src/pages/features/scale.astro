@@ -1,0 +1,27 @@
+---
+import Feature from "../../layouts/Feature.astro";
+import Code from "../../components/Code.astro";
+import { HealthWidget } from "../../islands/Catalogues";
+const K8S = `# one pod = one service: N http clients + M browser pages (BrowserConfig.pool_pages)
+# size by pages: a headless page is ~150 MB RSS; 4 pages per 1 GB pod is a safe start
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: webclient }
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: webclient
+          image: ghcr.io/you/webclient:browser
+          env: [{ name: WEBCLIENT_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: wc, key: token } } },
+                { name: WEBCLIENT_SERVICE_SSRF_GUARD, value: "1" }]
+          resources: { requests: { memory: 1Gi, cpu: 500m }, limits: { memory: 2Gi } }
+          readinessProbe: { httpGet: { path: /health, port: 8000 } }`;
+---
+<Feature slug="scale" next={["/cost", "/features/traces", "/docs"]}>
+  <p class="mb-4 max-w-[820px] text-[15px] leading-7 text-muted">Self-hosted: the service is a container; your data never leaves it; there is no per-page fee. The engine owns a pool (http clients, browser pages) with per-session quotas and fairness, and reports what it holds as resource events. This is the live <code>/health</code> of the service powering every demo on this site:</p>
+  <HealthWidget client:only="react" />
+  <h3 class="mt-10 mb-2 text-[16px] font-semibold">A k8s recipe (the cost of running it)</h3>
+  <Code code={K8S} lang="yaml" />
+</Feature>

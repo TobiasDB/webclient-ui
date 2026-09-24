@@ -1,0 +1,18 @@
+---
+import Feature from "../../layouts/Feature.astro";
+import Code from "../../components/Code.astro";
+import { PlanDemo } from "../../islands/PlanDemo";
+const BLOB = `from webclient import WebClient, from_blob
+
+blob = open("case-studies.blob").read()        # authored once; a string
+with WebClient() as wc:
+    rows = from_blob(blob, wc).collect()          # sync here...
+    # await wc.async_().execute(blob)             # ...async there...
+    # WebClient.remote("https://your-service")    # ...or remote, same blob`;
+---
+<Feature slug="plans" next={["/features/transport", "/features/onboarding", "/why#playwright"]}>
+  <p class="mb-4 max-w-[820px] text-[15px] leading-7 text-muted">A plan is the query as data: a root, a list of steps, each argument a value or a sub-plan. The service renders it three ways — the <b>explain</b> tree, a <b>wireframe</b> (what each step yields), the <b>blob</b> you ship — and executes it. Below: the case-studies listing, paginated to the end, three fields per row.</p>
+  <PlanDemo client:only="react" record="article.row" fields={{ title: ".name", sector: ".sector", when: "time" }} path="/case-studies" paginate />
+  <h3 class="mt-10 mb-2 text-[16px] font-semibold">Ship the blob</h3>
+  <Code code={BLOB} />
+</Feature>

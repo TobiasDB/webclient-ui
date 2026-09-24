@@ -1,0 +1,7 @@
+---
+import { FEATURES } from "../data/features";
+const path = Astro.url.pathname;
+---
+<nav class="mx-auto flex max-w-[1100px] flex-wrap gap-1 px-5 pt-6 text-[13px]">
+  {FEATURES.map((f) => <a href={`/features/${f.slug}`} class={`rounded px-2 py-1 ${path.endsWith(f.slug) ? "bg-accent-soft font-medium text-ink" : "text-muted hover:text-ink"}`}>{f.title}</a>)}
+</nav>

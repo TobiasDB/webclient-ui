@@ -1,0 +1,56 @@
+---
+/** Why (stories B1-B4): the objections, answered with running code. */
+import Base from "../layouts/Base.astro";
+import Section from "../components/Section.astro";
+import Code from "../components/Code.astro";
+import { PlanDemo } from "../islands/PlanDemo";
+const PW = `from playwright.sync_api import sync_playwright
+
+with sync_playwright() as p:
+    b = p.chromium.launch(); page = b.new_page()
+    page.goto("${Astro.url.origin}/case-studies")
+    rows = []
+    while True:
+        for a in page.query_selector_all("article.row"):
+            rows.append({"title": a.query_selector(".name").inner_text(),
+                         "when": a.query_selector("time").inner_text()})
+        nxt = page.query_selector("a[rel=next]")
+        if not nxt: break
+        nxt.click(); page.wait_for_load_state()
+    b.close()
+# a browser for a static page; imperative; nothing to replay`;
+const WC = `from webclient import WebClient
+
+with WebClient() as wc:
+    rows = (wc.ref("${Astro.url.origin}/case-studies")
+              .resolve()                       # static tier: no browser needed
+              .paginate(by="link")             # rel=next, to the end
+              .select_all("article.row")
+              .extract(title=".name", when="time")
+              .project())
+# a plan: data, replayable, runs sync / async / remote`;
+---
+<Base title="Why · WebClient">
+  <Section kicker="the objections" title="Why not just…">
+    <div class="prose max-w-[820px]"><p>Three fair questions an engineer asks in the first five minutes. Each answer is running code against this site, not a comparison table.</p></div>
+  </Section>
+  <Section id="playwright" title="…Playwright?">
+    <p class="mb-4 max-w-[820px] text-[15px] leading-7 text-muted">Playwright is the browser. WebClient decides <em>whether</em> a browser is needed, and turns the task into a plan. Same task — the case-studies listing, followed to the end — both columns real:</p>
+    <div class="grid gap-4 md:grid-cols-2"><div><div class="mb-1 text-[12px] font-semibold">the script</div><Code code={PW} /></div><div><div class="mb-1 text-[12px] font-semibold">the plan</div><Code code={WC} /></div></div>
+    <p class="mt-4 mb-2 text-[13px] text-muted">The plan column, as the service sees it — its explain tree, its wireframe, its blob — and the rows it produces here:</p>
+    <PlanDemo client:only="react" record="article.row" fields={{ title: ".name", when: "time" }} path="/case-studies" paginate />
+  </Section>
+  <Section id="model" title="…a model session per run?">
+    <p class="mb-4 max-w-[820px] text-[15px] leading-7 text-muted">A model is great at <em>authoring</em> a query (see <a class="text-accent" href="/features/onboarding">onboarding</a>) and wasteful at <em>running</em> one. Author once — the output is a plan blob — then every run is the plan: no tokens, no drift. Press "run again" above: the rows are identical, the cost is zero. The numbers are on <a class="text-accent" href="/cost">the cost page</a>.</p>
+    <table class="prose w-full max-w-[820px]"><thead><tr><th></th><th>a session per run</th><th>author once, run the plan</th></tr></thead>
+      <tbody><tr><td>tokens per run</td><td>the page, every time</td><td>0</td></tr><tr><td>determinism</td><td>best effort</td><td>the same rows, replayable from the trace</td></tr><tr><td>a broken selector</td><td>a silent guess</td><td>a typed error with a remedy</td></tr><tr><td>audit</td><td>a transcript</td><td>one event stream, one plan</td></tr></tbody></table>
+  </Section>
+  <Section id="saas" title="…a scraping SaaS?">
+    <div class="prose max-w-[820px]">
+      <p>They do some things better: managed proxy networks, CAPTCHA farms, elastic scale you never operate. If you need those, use them.</p>
+      <p>What is different here: self-hosted (your data never leaves), one plan IR that runs in-process or against your own service, typed errors with remedies an agent can act on, and a trace that replays offline. No per-page fee; the cost is the infrastructure you run it on.</p>
+      <h3>What it does not do</h3>
+      <ul><li>No CAPTCHA solving. An anti-bot interstitial is flagged (<code>anti_bot_triggered</code>, remedy <code>stealth</code>) — see <a href="/blocked">/blocked</a>.</li><li>No managed proxy network. Bring a proxy URL; the ladder uses it as a tier.</li><li>The browser tier has the limits of a headless browser: a page that needs a real user still needs a real user.</li></ul>
+    </div>
+  </Section>
+</Base>

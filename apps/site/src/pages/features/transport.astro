@@ -1,0 +1,18 @@
+---
+import Feature from "../../layouts/Feature.astro";
+import { LiveDemo } from "../../islands/LiveDemo";
+import { TransportProof } from "../../islands/TransportProof";
+---
+<Feature slug="transport" next={["/features/signals", "/features/errors", "/cost"]}>
+  <p class="mb-4 max-w-[820px] text-[15px] leading-7 text-muted">Three tiers — static, proxy, browser. <code>browser="auto"</code> starts at the cheapest, reads the flags on what came back (an empty SPA shell, a login wall, an anti-bot interstitial), and escalates one rung with a reason. The changelog is a JS shell: static sees nothing, the browser sees the releases.</p>
+  <TransportProof client:only="react" pages={[
+    { path: "/changelog", label: "The changelog", expect: "spa flagged → escalated to the browser" },
+    { path: "/news", label: "The newsroom", expect: "XHR-backed: the browser finds the API; next time skip it" },
+    { path: "/login", label: "Sign in", expect: "login_required: not escalated — a browser would not help" },
+  ]} />
+  <div class="mt-8 grid gap-4 md:grid-cols-2">
+    <LiveDemo client:only="react" tool="card" args={{ url: "{site}/changelog", browser: "auto" }} title="card() — auto, the escalation trail" />
+    <LiveDemo client:only="react" tool="flags" args={{ url: "{site}/changelog" }} title="flags() — the evidence" />
+  </div>
+  <p class="mt-6 text-[13px] text-muted">Token efficiency, inline (story F2): the static shell of the changelog is a few hundred characters; the rendered page's skeleton is still ~1 KB where the raw HTML is ~7 KB. See <a class="text-accent" href="/cost">/cost</a> for the measured table.</p>
+</Feature>

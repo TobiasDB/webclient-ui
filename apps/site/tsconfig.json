@@ -4,8 +4,26 @@
     "jsx": "react-jsx",
     "jsxImportSource": "react",
     "baseUrl": ".",
-    "paths": { "@webclient/ui": ["../../packages/ui/src/index.ts"], "@webclient/ui/*": ["../../packages/ui/src/*"], "~/*": ["src/*"] }
+    "paths": {
+      "@webclient/ui": [
+        "../../packages/ui/src/index.ts"
+      ],
+      "@webclient/ui/*": [
+        "../../packages/ui/src/*"
+      ],
+      "~/*": [
+        "src/*"
+      ]
+    },
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", ".astro/types.d.ts"],
-  "exclude": ["dist"]
+  "include": [
+    "src",
+    ".astro/types.d.ts"
+  ],
+  "exclude": [
+    "dist"
+  ]
 }

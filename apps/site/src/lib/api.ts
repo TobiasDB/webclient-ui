@@ -30,6 +30,6 @@ export const api = {
   execute: (body: Record<string, unknown>) => call<{ rows: unknown }>("/execute", { method: "POST", body: JSON.stringify(body) }),
   traces: () => call<{ id: string; events: number; started?: number; finished?: number }[]>("/traces"),
   traceEvents: (id: string) => call<import("@webclient/ui").Event[]>(`/traces/${id}/events`),
-  traceRrweb: (id: string) => call<unknown[]>(`/traces/${id}/rrweb`),
+  traceRrweb: (id: string) => call<Record<string, unknown>[]>(`/traces/${id}/rrweb`),
   traceAsset: async (id: string, p: string) => { const r = await fetch(`${API_URL}/traces/${id}/asset/${p}`); return r.ok ? r.text() : null; },
 };

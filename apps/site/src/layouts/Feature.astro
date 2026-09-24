@@ -1,0 +1,16 @@
+---
+/** A feature page's skeleton (Epic C): the claim in one line · the live demo · what to read next. */
+import Base from "./Base.astro";
+import Claim from "../components/Claim.astro";
+import FeatureNav from "../components/FeatureNav.astro";
+import { FEATURES } from "../data/features";
+interface Props { slug: string; next?: string[] }
+const { slug, next = [] } = Astro.props;
+const f = FEATURES.find((x) => x.slug === slug)!;
+---
+<Base title={`${f.title} · WebClient`} description={f.claim}>
+  <FeatureNav />
+  <Claim claim={f.claim} proof={f.proof} />
+  <div class="mx-auto max-w-[1100px] px-5 pt-8"><slot /></div>
+  {next.length > 0 && <div class="mx-auto max-w-[1100px] px-5 pt-12 text-[14px]"><span class="text-muted">read next:</span> {next.map((n) => <a class="mr-3 text-accent" href={n}>{n}</a>)}</div>}
+</Base>

@@ -1,7 +1,7 @@
 import * as React from "react";
-import rrwebPlayer from "rrweb-player";
-import "rrweb-player/dist/style.css";
 import { topicColorVar } from "./TopicChip";
+// rrweb-player touches window/requestAnimationFrame at import time: load it in the browser only
+// (the site server-renders these components; the Playground and Storybook are client-only).
 
 export type ReplayPlayerProps = {
   /** The trace as rrweb events (`/traces/{id}/rrweb`): the DOM -- recorded, or synthesised
@@ -30,16 +30,22 @@ export function ReplayPlayer({ events, seekTo, onTime, onEvent, width = 800, hei
   cbs.current = { onTime, onEvent };
   React.useEffect(() => {
     if (!host.current || events.length < 2) return;
-    host.current.innerHTML = "";
+    let cancelled = false;
+    const target = host.current;
+    target.innerHTML = "";
     const tags: Record<string, string> = {};
     for (const e of events) if (e.type === 5) { const tag = String((e.data as any)?.tag ?? ""); if (tag && !tags[tag]) tags[tag] = cssColour(topicColorVar(tag)); }
-    const p: any = new rrwebPlayer({ target: host.current, props: { events: events as any, width, height, autoPlay: false, showController: true, speedOption: [1, 2, 4, 8], tags } as any });
-    player.current = p;
-    try {
-      p.addEventListener("ui-update-current-time", (ev: any) => cbs.current.onTime?.(start + Number(ev?.payload ?? 0)));
-      p.getReplayer?.().on("custom-event", (ev: any) => cbs.current.onEvent?.(String(ev?.data?.tag ?? ""), (ev?.data?.payload ?? {}) as Record<string, unknown>));
-    } catch { /* an older player without these hooks */ }
-    return () => { try { p.$destroy?.(); } catch { /* already gone */ } player.current = null; };
+    Promise.all([import("rrweb-player"), import("rrweb-player/dist/style.css")]).then(([mod]) => {
+      if (cancelled) return;
+      const Player: any = (mod as any).default ?? mod;
+      const p: any = new Player({ target, props: { events: events as any, width, height, autoPlay: false, showController: true, speedOption: [1, 2, 4, 8], tags } });
+      player.current = p;
+      try {
+        p.addEventListener("ui-update-current-time", (ev: any) => cbs.current.onTime?.(start + Number(ev?.payload ?? 0)));
+        p.getReplayer?.().on("custom-event", (ev: any) => cbs.current.onEvent?.(String(ev?.data?.tag ?? ""), (ev?.data?.payload ?? {}) as Record<string, unknown>));
+      } catch { /* an older player without these hooks */ }
+    });
+    return () => { cancelled = true; try { player.current?.$destroy?.(); } catch { /* already gone */ } player.current = null; };
   }, [events, width, height, start]);
   React.useEffect(() => {
     if (seekTo == null || !player.current || !events.length) return;
