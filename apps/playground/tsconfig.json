@@ -1,0 +1,5 @@
+{
+  "extends": "../../packages/ui/tsconfig.json",
+  "compilerOptions": { "types": ["vite/client"], "paths": { "@webclient/ui": ["../../packages/ui/src/index.ts"], "@webclient/ui/*": ["../../packages/ui/src/*"] } },
+  "include": ["src"]
+}
