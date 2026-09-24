@@ -1,0 +1,6 @@
+---
+/** A code sample without a copy button (the site's chrome adds no buttons/forms of its own). */
+interface Props { code: string; lang?: string; class?: string }
+const { code, lang = "python", class: cls = "" } = Astro.props;
+---
+<pre class={`overflow-auto rounded-md border border-line bg-surface-2 p-3 font-mono text-[12.5px] leading-5 ${cls}`} data-lang={lang}><code set:html={code.replace(/&/g, "&amp;").replace(/</g, "&lt;")} /></pre>

@@ -1,0 +1,14 @@
+---
+/** the `large` fixture: 6000 records (~600 KB) -- the large_document flag and collapse=True */
+import Base from "../layouts/Base.astro";
+import Section from "../components/Section.astro";
+import { BENCH_ROWS } from "../data/lab";
+import { COST } from "../data/cost";
+const rows = Array.from({ length: BENCH_ROWS }, (_, i) => i);
+---
+<Base title="Benchmarks · WebClient">
+  <Section kicker="numbers" title="Benchmarks">
+    <p class="mb-4 max-w-[760px] text-[14px] leading-6 text-muted">This page is deliberately huge: {BENCH_ROWS} rows. The client flags <code>large_document</code>, and <code>skeleton(collapse=True)</code> folds the repetition — measured on {COST.measured}: {COST.pages[3]!.html.toLocaleString()} chars of HTML become {COST.pages[3]!.skeleton.toLocaleString()} of skeleton. The gzip-encoded variant is at <a class="text-accent" href="/benchmarks/data">/benchmarks/data</a>.</p>
+    <main><ul class="font-mono text-[11px] leading-4 text-muted">{rows.map((i) => <li class="item" data-i={i}><span class="k">{i}</span> <span class="v">value {i} of a long, repetitive listing</span></li>)}</ul></main>
+  </Section>
+</Base>

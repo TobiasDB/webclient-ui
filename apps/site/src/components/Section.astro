@@ -1,0 +1,9 @@
+---
+interface Props { title?: string; kicker?: string; id?: string; class?: string; wide?: boolean }
+const { title, kicker, id, class: cls = "", wide = false } = Astro.props;
+---
+<section id={id} class={`mx-auto px-5 py-10 ${wide ? "max-w-[1400px]" : "max-w-[1100px]"} ${cls}`}>
+  {kicker && <div class="mb-1 font-mono text-[11px] uppercase tracking-wider text-accent">{kicker}</div>}
+  {title && <h2 class="mb-4 text-[24px] font-semibold tracking-tight">{title}</h2>}
+  <slot />
+</section>

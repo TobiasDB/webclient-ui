@@ -1,0 +1,28 @@
+---
+/** the `login` fixture: a password wall. POST sets a session cookie; with it, /login shows the account. */
+import Base from "../layouts/Base.astro";
+export const prerender = false;
+let signedIn = false;
+if (Astro.request.method === "POST") {
+  Astro.cookies.set("sid", "abc123", { path: "/" });
+  signedIn = true;
+}
+const hasSession = Astro.cookies.get("sid")?.value === "abc123";
+---
+{signedIn ? (
+  <Base title="Welcome"><main class="mx-auto max-w-[1100px] px-5 py-12"><h1 class="text-[24px] font-semibold">Signed in</h1><p class="mt-2 text-muted"><a class="text-accent" href="/account">Your account</a></p></main></Base>
+) : hasSession ? (
+  <Base title="Account"><main class="mx-auto max-w-[1100px] px-5 py-12"><h1 class="text-[24px] font-semibold">Account</h1><p class="who mt-2">you@example.com</p></main></Base>
+) : (
+  <Base title="Sign in" bare>
+    <main class="mx-auto flex min-h-screen max-w-[360px] flex-col justify-center px-5">
+      <h1 class="mb-1 text-[20px] font-semibold">Sign in</h1>
+      <p class="mb-4 text-[13px] text-muted">The site's account area (and the lab's login-wall fixture). Any email and password work.</p>
+      <form action="/login" method="post" class="flex flex-col gap-2">
+        <input name="email" type="email" placeholder="you@example.com" class="h-9 rounded-md border border-line bg-surface px-2 text-[14px]" />
+        <input name="password" type="password" placeholder="password" class="h-9 rounded-md border border-line bg-surface px-2 text-[14px]" />
+        <button type="submit" class="h-9 rounded-md bg-accent text-[14px] font-medium text-white">Sign in</button>
+      </form>
+    </main>
+  </Base>
+)}

@@ -1,0 +1,18 @@
+---
+/** the `feed` fixture: the list is fetched from /api/news after load (an XHR-backed page) */
+import Base from "../layouts/Base.astro";
+import Section from "../components/Section.astro";
+---
+<Base title="News · WebClient">
+  <Section kicker="newsroom" title="News">
+    <p class="mb-4 max-w-[760px] text-[14px] leading-6 text-muted">The stories arrive by XHR from <a class="text-accent" href="/api/news">/api/news</a>. A browser tier renders them; the client also reports the XHR endpoints it saw, so the next run can skip the browser and read the API. The RSS is at <a class="text-accent" href="/feed.xml">/feed.xml</a>.</p>
+    <main><ul id="list" class="flex flex-col gap-3"></ul></main>
+    <script is:inline>
+      fetch('/api/news').then(function (r) { return r.json(); }).then(function (items) {
+        document.getElementById('list').innerHTML = items.map(function (it) {
+          return '<li class="item rounded-lg border border-line p-4"><h3 class="text-[15px] font-semibold">' + it.title + '</h3><time datetime="' + it.date + '" class="text-[12px] text-muted">' + it.date + '</time></li>';
+        }).join('');
+      });
+    </script>
+  </Section>
+</Base>

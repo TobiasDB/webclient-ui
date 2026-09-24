@@ -1,0 +1,18 @@
+---
+/** the `shadow` fixture: a web component renders the status list inside a shadow root */
+import Base from "../layouts/Base.astro";
+import Section from "../components/Section.astro";
+---
+<Base title="Status · WebClient">
+  <Section kicker="is it up" title="Status">
+    <main><status-list></status-list></main>
+    <script is:inline>
+      class StatusList extends HTMLElement { connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = '<style>ul{list-style:none;padding:0;display:flex;flex-direction:column;gap:8px}li{border:1px solid #ddd;border-radius:8px;padding:10px;font:14px system-ui}b{color:#1a7f37}</style><ul><li class="p"><b>operational</b> — the API (/health)</li><li class="p"><b>operational</b> — this site</li></ul>';
+      } }
+      customElements.define('status-list', StatusList);
+    </script>
+    <p class="mt-6 text-[13px] text-muted">A shadow root: statically the client flags <code>shadow_dom</code>; a browser tier pierces it. The live pool numbers are on <a class="text-accent" href="/features/scale">Scale</a>. Deliberate error pages: <a class="text-accent" href="/status/404">/status/404</a>, <a class="text-accent" href="/status/500">/status/500</a>, <a class="text-accent" href="/status/503">/status/503</a>; a slow one: <a class="text-accent" href="/slow?delay=1">/slow</a>.</p>
+  </Section>
+</Base>

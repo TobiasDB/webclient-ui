@@ -1,0 +1,7 @@
+---
+/** cookie-gated: without the session cookie it is the sign-in page (E3) */
+import Base from "../layouts/Base.astro";
+export const prerender = false;
+if (Astro.cookies.get("sid")?.value !== "abc123") return Astro.redirect("/login", 302);
+---
+<Base title="Account"><main class="mx-auto max-w-[1100px] px-5 py-12"><h1 class="text-[24px] font-semibold">Account</h1><p class="who mt-2">you@example.com</p><p class="mt-4 text-[14px] text-muted">A cookie-gated page: the client carries the session it was given, and the plan never holds credentials.</p></main></Base>

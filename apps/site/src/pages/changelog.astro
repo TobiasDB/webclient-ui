@@ -1,0 +1,21 @@
+---
+/** the `spa` fixture: the shell is empty; a script renders the releases from embedded JSON */
+import Base from "../layouts/Base.astro";
+import Section from "../components/Section.astro";
+import { RELEASES } from "../data/changelog";
+---
+<Base title="Changelog · WebClient">
+  <Section kicker="releases" title="Changelog">
+    <p class="mb-4 max-w-[760px] text-[14px] leading-6 text-muted">This page is rendered by JavaScript on purpose: statically it is an empty shell, so the client flags <code>spa</code> and, under <code>browser="auto"</code>, escalates once. The data is also at <a class="text-accent" href="/api/changelog">/api/changelog</a>.</p>
+    <div id="app" class="min-h-[120px]"></div>
+    <script id="releases" type="application/json" set:html={JSON.stringify(RELEASES)} />
+    <script is:inline>
+      (function () {
+        var data = JSON.parse(document.getElementById("releases").textContent);
+        document.getElementById("app").innerHTML = '<ul class="news flex flex-col gap-3">' + data.map(function (r) {
+          return '<li class="item rounded-lg border border-line p-4"><h3 class="text-[15px] font-semibold">' + r.version + '</h3><time datetime="' + r.date + '" class="text-[12px] text-muted">' + r.date + '</time><p class="mt-1 text-[14px]">' + r.notes + '</p></li>';
+        }).join('') + '</ul>';
+      })();
+    </script>
+  </Section>
+</Base>

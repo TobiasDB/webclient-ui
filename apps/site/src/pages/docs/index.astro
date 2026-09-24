@@ -1,0 +1,44 @@
+---
+/** Docs: the two quickstarts (D2), the search form (the `forms` fixture), the reference hand-off */
+import Base from "../../layouts/Base.astro";
+import Section from "../../components/Section.astro";
+import Code from "../../components/Code.astro";
+import Card from "../../components/Card.astro";
+export const prerender = false;
+const q = Astro.url.searchParams.get("q");
+const PY = `from webclient import WebClient
+
+with WebClient() as wc:
+    doc = wc.fetch("${Astro.url.origin}/case-studies")
+    rows = (doc.paginate(by="link")            # follows rel=next to the end
+               .select_all("article.row")
+               .extract(title=".name", when="time", outcome=".outcome"))
+    print(rows.collect())                       # 12 typed rows`;
+const MCP = `{ "mcpServers": { "webclient": { "command": "python", "args": ["-m", "webclient.mcp"] } } }
+
+# then, from any MCP client:
+#   extract(url="${Astro.url.origin}/", result="div.card", fields={"title": ".title", "price": ".price"})`;
+---
+<Base title="Docs · WebClient">
+  <Section kicker="reference & guides" title="Docs">
+    <form action="/docs" method="get" class="mb-6 flex max-w-[560px] gap-2">
+      <input name="q" type="search" placeholder="search the docs" value={q ?? ""} class="h-9 flex-1 rounded-md border border-line bg-surface px-2 text-[14px]" />
+      <select name="sort" class="h-9 rounded-md border border-line bg-surface px-2 text-[13px]"><option>new</option><option>old</option></select>
+      <button type="submit" class="h-9 rounded-md bg-accent px-3 text-[14px] font-medium text-white">Go</button>
+    </form>
+    {q ? (
+      <main><h1 class="text-[18px] font-semibold">Results for {q}</h1><ul class="mt-2 list-disc pl-5 text-[14px]"><li class="r"><a class="text-accent" href="/features">Features → the live demos</a></li></ul></main>
+    ) : (
+      <div class="grid gap-6 md:grid-cols-2">
+        <div><h3 class="mb-2 text-[15px] font-semibold">Five minutes to rows</h3><Code code={PY} /></div>
+        <div><h3 class="mb-2 text-[15px] font-semibold">Five minutes to an MCP tool call</h3><Code code={MCP} lang="json" /></div>
+      </div>
+    )}
+    <button id="more" class="mt-4 rounded-md border border-line px-3 py-1.5 text-[13px]" onclick="this.textContent='Loaded'">Load more</button>
+    <div class="mt-10 grid gap-3 md:grid-cols-3">
+      <Card href="/reference/" title="Reference">The generated API, tools, signals and errors reference (mkdocs), mounted here when built.</Card>
+      <Card href="/features" title="Guides by feature">Every feature page ends with what to read next.</Card>
+      <Card href="/lab" title="The lab">The pages the docs run against, with their expected results.</Card>
+    </div>
+  </Section>
+</Base>

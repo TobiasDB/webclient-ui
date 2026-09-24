@@ -1,0 +1,14 @@
+---
+import Base from "../layouts/Base.astro";
+import Section from "../components/Section.astro";
+import { TITLES } from "../data/lab";
+---
+<Base title={TITLES.about}>
+  <Section title="About">
+    <div class="prose max-w-[760px]">
+      <p>WebClient is a Python package: a declarative web client that fetches pages over the cheapest transport that works, selects and extracts structured data, renders token-lean views for models, and runs the same plan sync, async or against a remote service.</p>
+      <p>There is no separate brand and no pricing page. It is self-hosted; the cost of running it is your infrastructure, and the <a href="/cost">economics page</a> measures what an extraction costs in tokens.</p>
+      <p>This site is also the package's test suite: every page that strains a feature publishes its expected result — see <a href="/lab">the lab</a>.</p>
+    </div>
+  </Section>
+</Base>

@@ -1,0 +1,34 @@
+---
+/** the `paginated` fixture: rel=next / rel=prev links + a Link header, ?page=N, 4 per page */
+import Base from "../../layouts/Base.astro";
+import Section from "../../components/Section.astro";
+import { PAGES, page } from "../../data/case-studies";
+export const prerender = false;
+const n = Number(Astro.url.searchParams.get("page") ?? 1);
+if (!Number.isInteger(n) || n < 1 || n > PAGES) { Astro.response.status = 404; }
+const rows = n >= 1 && n <= PAGES ? page(n) : [];
+if (n < PAGES && rows.length) Astro.response.headers.set("Link", `</case-studies?page=${n + 1}>; rel="next"`);
+---
+<Base title={rows.length ? `Case studies p${n} · WebClient` : "No such page"}>
+  <Section kicker="scenarios" title="Case studies">
+    {rows.length ? (
+      <main>
+        <p class="mb-4 max-w-[760px] text-[14px] leading-6 text-muted">Twelve scenarios across three pages. The client follows <code>rel=next</code> (and the <code>Link</code> header) to the end; the same dataset is a keyset API at <a class="text-accent" href="/api/case-studies">/api/case-studies?after=</a> and an infinite-scroll <a class="text-accent" href="/case-studies/archive">archive</a>.</p>
+        <div class="flex flex-col gap-3">
+          {rows.map((c) => (
+            <article class="row rounded-lg border border-line p-4">
+              <span class="n mr-2 font-mono text-[12px] text-muted">{c.n}</span>
+              <a class="name text-[15px] font-semibold text-accent" href={`/case-studies/${c.slug}`}>{c.title}</a>
+              <div class="mt-1 text-[13px] text-muted"><span class="sector">{c.sector}</span> · <time datetime={c.date}>{c.date}</time> · <span class="outcome">{c.outcome}</span></div>
+            </article>
+          ))}
+        </div>
+        <nav class="pagination mt-6 flex items-center gap-3 text-[14px]">
+          {n > 1 && <a rel="prev" href={`/case-studies?page=${n - 1}`} class="text-accent">prev</a>}
+          <span class="current">{n} / {PAGES}</span>
+          {n < PAGES && <a rel="next" href={`/case-studies?page=${n + 1}`} class="text-accent">next</a>}
+        </nav>
+      </main>
+    ) : <h1>No such page</h1>}
+  </Section>
+</Base>

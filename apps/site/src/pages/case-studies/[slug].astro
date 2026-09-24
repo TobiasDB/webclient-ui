@@ -1,0 +1,17 @@
+---
+import Base from "../../layouts/Base.astro";
+import Section from "../../components/Section.astro";
+import { CASE_STUDIES } from "../../data/case-studies";
+export function getStaticPaths() { return CASE_STUDIES.map((c) => ({ params: { slug: c.slug }, props: { c } })); }
+const { c } = Astro.props;
+---
+<Base title={`${c.title} · WebClient`}>
+  <Section kicker={`case study · ${c.sector}`} title={c.title}>
+    <div class="prose max-w-[760px]">
+      <p><time datetime={c.date}>{c.date}</time></p>
+      <p>{c.summary}</p>
+      <h3>Outcome</h3><p class="outcome">{c.outcome}</p>
+      <p><a href="/case-studies">← all case studies</a></p>
+    </div>
+  </Section>
+</Base>

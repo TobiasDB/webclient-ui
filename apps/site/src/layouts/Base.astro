@@ -1,0 +1,47 @@
+---
+/** Every page: the nav (links only -- no buttons or forms in the chrome, so a page's flags
+ * are its own), the footer, the theme (follows the OS; the ui tokens key on data-theme). */
+import "../styles/site.css";
+import { SITE } from "../lib/site";
+interface Props { title: string; description?: string; wide?: boolean; bare?: boolean }
+const { title, description = SITE.tagline, wide = false, bare = false } = Astro.props;
+const path = Astro.url.pathname;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="alternate" type="application/rss+xml" title="WebClient news" href="/feed.xml" />
+    <script is:inline>
+      try { if (matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.dataset.theme = "dark"; } catch (e) {}
+    </script>
+  </head>
+  <body class="min-h-screen bg-surface text-ink antialiased">
+    {!bare && (
+      <header class="border-b border-line">
+        <div class={`mx-auto flex h-14 items-center gap-6 px-5 ${wide ? "max-w-[1400px]" : "max-w-[1100px]"}`}>
+          <a href="/" class="text-[15px] font-semibold tracking-tight">WebClient</a>
+          <nav class="flex gap-4 text-[14px]">
+            {SITE.nav.map(([href, label]) => (
+              <a href={href} class={`rounded px-1.5 py-1 hover:text-ink ${path.startsWith(href) ? "text-ink font-medium" : "text-muted"}`}>{label}</a>
+            ))}
+          </nav>
+        </div>
+      </header>
+    )}
+    <slot />
+    {!bare && (
+      <footer class="mt-20 border-t border-line">
+        <div class={`mx-auto flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-8 text-[13px] text-muted ${wide ? "max-w-[1400px]" : "max-w-[1100px]"}`}>
+          <span class="font-medium text-ink">WebClient</span>
+          <span>self-hosted · your data never leaves · no per-page fee</span>
+          <span class="flex-1"></span>
+          {SITE.footer.map(([href, label]) => <a href={href} class="hover:text-ink">{label}</a>)}
+        </div>
+      </footer>
+    )}
+  </body>
+</html>

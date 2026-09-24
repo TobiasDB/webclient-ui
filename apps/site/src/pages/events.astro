@@ -1,0 +1,28 @@
+---
+/** the `tabs` fixture: content split across ARIA tabs (the hidden panel is still in the HTML) */
+import Base from "../layouts/Base.astro";
+import Section from "../components/Section.astro";
+import { EVENTS } from "../data/events";
+const names = Object.keys(EVENTS) as (keyof typeof EVENTS)[];
+---
+<Base title="Events · WebClient">
+  <Section kicker="talks & workshops" title="Events">
+    <main>
+      <div role="tablist" class="mb-3 flex gap-1 border-b border-line">
+        {names.map((n, i) => <button role="tab" aria-selected={i === 0 ? "true" : "false"} data-tab={n} class="px-3 py-2 text-[14px] aria-selected:border-b-2 aria-selected:border-accent aria-selected:font-medium">{n}</button>)}
+      </div>
+      {names.map((n, i) => (
+        <div role="tabpanel" data-panel={n} hidden={i !== 0}>
+          <ul class="flex flex-col gap-2">{EVENTS[n].map((e) => <li class="event rounded-lg border border-line p-3 text-[14px]"><b>{e.name}</b> <time class="text-muted" datetime={e.when}>{e.when}</time></li>)}</ul>
+        </div>
+      ))}
+    </main>
+    <script is:inline>
+      document.querySelectorAll('[role=tab]').forEach(function (t) { t.addEventListener('click', function () {
+        document.querySelectorAll('[role=tab]').forEach(function (x) { x.setAttribute('aria-selected', x === t ? 'true' : 'false'); });
+        document.querySelectorAll('[role=tabpanel]').forEach(function (p) { p.hidden = p.dataset.panel !== t.dataset.tab; });
+      }); });
+    </script>
+    <p class="mt-6 text-[13px] text-muted">The client flags <code>tabbed</code>: every panel is in the served HTML, so no clicking is needed to read the past events.</p>
+  </Section>
+</Base>

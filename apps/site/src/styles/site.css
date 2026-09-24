@@ -1,0 +1,16 @@
+@import "@webclient/ui/styles.css";
+@source "../";
+
+/* the site reads long-form; the components keep their compact scale */
+html { scroll-behavior: smooth; }
+body { font-family: var(--font-sans); background: var(--color-surface); color: var(--color-ink); }
+.prose h2 { @apply mt-10 mb-3 text-[22px] font-semibold tracking-tight; }
+.prose h3 { @apply mt-6 mb-2 text-[16px] font-semibold; }
+.prose p { @apply my-3 text-[15px] leading-7 text-ink; }
+.prose ul { @apply my-3 list-disc pl-6 text-[15px] leading-7; }
+.prose a { @apply text-accent underline-offset-2 hover:underline; }
+.prose code { @apply rounded bg-surface-2 px-1 py-0.5 font-mono text-[13px]; }
+.prose pre code { @apply bg-transparent p-0; }
+.prose table { @apply my-4 w-full border-collapse text-[14px]; }
+.prose th { @apply border-b border-line py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted; }
+.prose td { @apply border-b border-line/60 py-1.5 align-top; }

@@ -1,5 +1,25 @@
 {
   "name": "@webclient/site",
   "private": true,
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro check && astro build",
+    "preview": "node dist/server/entry.mjs",
+    "typecheck": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/node": "^9.2.0",
+    "@astrojs/react": "^4.2.0",
+    "@webclient/ui": "*",
+    "astro": "^5.7.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@tailwindcss/vite": "^4.1.0",
+    "typescript": "^5.8.0"
+  }
 }

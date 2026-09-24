@@ -1,0 +1,11 @@
+---
+/** the `antibot` fixture: a Cloudflare-style interstitial with the vendor headers, 403 */
+export const prerender = false;
+Astro.response.status = 403;
+Astro.response.headers.set("cf-ray", "8f0c1234abcd-LHR");
+Astro.response.headers.set("cf-mitigated", "challenge");
+Astro.response.headers.set("set-cookie", "__cf_bm=x; Path=/");
+---
+<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>Just a moment...</title></head>
+<body><div id="cf-browser-verification"><h1>Just a moment...</h1><p>Checking your browser before accessing the site.</p>
+<p>This is the site's demo of an anti-bot interstitial: the client flags <code>anti_bot_triggered</code> with the remedy <code>stealth</code>, and never pretends to solve a challenge.</p></div></body></html>

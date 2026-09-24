@@ -1,0 +1,28 @@
+---
+import Base from "../../layouts/Base.astro";
+import Section from "../../components/Section.astro";
+import { FIXTURES } from "../../data/lab";
+---
+<Base title="The lab · WebClient" description="Every page of this site that strains a feature, with its published expected result.">
+  <Section kicker="the site is the test suite" title="The lab">
+    <p class="mb-6 max-w-[760px] text-[15px] leading-7 text-muted">
+      Every feature on this site is demonstrated against this site. Each page below is a fixture: it publishes the
+      result the client must find as JSON, generated from the same data the page renders. The package's test suite
+      asserts against these facts; the index is at <a class="text-accent" href="/lab/index.json"><code>/lab/index.json</code></a>.
+    </p>
+    <table class="w-full text-[14px]">
+      <thead><tr class="text-left text-[11px] uppercase tracking-wide text-muted"><th class="py-1">page</th><th>strains</th><th>feature</th><th>tier</th><th>expected</th></tr></thead>
+      <tbody>
+        {FIXTURES.map((f) => (
+          <tr class="border-t border-line/60">
+            <td class="py-2 font-mono"><a class="text-accent" href={f.path}>{f.path}</a></td>
+            <td>{f.title}</td>
+            <td class="font-mono text-[12px] text-muted">{f.feature}</td>
+            <td class="text-[12px]">{f.browser ? "browser" : "static"}</td>
+            <td class="font-mono text-[12px]"><a class="text-accent" href={`/lab/${f.name}.json`}>{f.name}.json</a></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </Section>
+</Base>

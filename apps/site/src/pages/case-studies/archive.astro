@@ -1,0 +1,28 @@
+---
+/** the `scroll` fixture: 5 rows, 5 more when the reader reaches the bottom */
+import Base from "../../layouts/Base.astro";
+import Section from "../../components/Section.astro";
+import { CASE_STUDIES, SCROLL_AFTER, SCROLL_INITIAL } from "../../data/case-studies";
+const first = CASE_STUDIES.slice(0, SCROLL_INITIAL);
+const more = CASE_STUDIES.slice(SCROLL_INITIAL, SCROLL_AFTER);
+---
+<Base title="Case-study archive · WebClient">
+  <Section kicker="archive" title="All case studies">
+    <p class="mb-4 text-[14px] text-muted">An infinite-scroll listing: more rows load as you scroll. The client's scroll driver reads it to the end.</p>
+    <main><ul id="rows" class="flex flex-col gap-3">{first.map((c) => <li class="r rounded-lg border border-line p-4" style="min-height:400px"><b>{c.title}</b><div class="text-[13px] text-muted">{c.outcome}</div></li>)}</ul></main>
+    <script id="more" type="application/json" set:html={JSON.stringify(more.map((c) => ({ title: c.title, outcome: c.outcome })))} />
+    <script is:inline>
+      (function () {
+        var more = JSON.parse(document.getElementById('more').textContent), done = false;
+        window.addEventListener('scroll', function () {
+          if (done) return;
+          if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 50) {
+            done = true;
+            var ul = document.getElementById('rows');
+            more.forEach(function (c) { var li = document.createElement('li'); li.className = 'r rounded-lg border border-line p-4'; li.style.minHeight = '400px'; li.innerHTML = '<b></b><div class="text-[13px] text-muted"></div>'; li.querySelector('b').textContent = c.title; li.querySelector('div').textContent = c.outcome; ul.appendChild(li); });
+          }
+        });
+      })();
+    </script>
+  </Section>
+</Base>
