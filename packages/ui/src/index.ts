@@ -26,7 +26,7 @@ export { PlanView } from "./domain/PlanView";
 export { ElementMenu, pagerFor } from "./domain/ElementMenu";
 export { ElementInspector } from "./domain/ElementInspector";
 export type { InspectAdd, InspectRead } from "./domain/ElementInspector";
-export { GraphView, TYPE_COLOUR, needsArg } from "./domain/GraphView";
+export { GraphView, TYPE_COLOUR, needsArg, outputName } from "./domain/GraphView";
 export type { Edge } from "./domain/GraphView";
 export { PageFrame, withAgent } from "./domain/PageFrame";
 export type { ElPath, FrameAction, FrameHighlight, FramePick } from "./domain/PageFrame";

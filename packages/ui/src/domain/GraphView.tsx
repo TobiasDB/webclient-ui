@@ -37,13 +37,10 @@ export function GraphView({ graph, selected, onSelect, onChange, samples = {}, l
   const render = (n: GNode): React.ReactNode => (
     <li key={n.id}>
       <Line n={n} graph={graph} selected={selected === n.id} editing={selected === n.id && !!editing} onSelect={() => onSelect(n.id)} onChange={readOnly ? undefined : onChange} onEditArg={onEditArg} sample={samples[n.id]} live={!!live?.has(n.id)} colour={outs.includes(n.id) ? fieldColour(outs.indexOf(n.id)) : undefined} />
-      {selected === n.id && edges.length > 0 && !readOnly && (
-        <div className="my-0.5 ml-4 flex flex-wrap gap-0.5 rounded border border-dashed border-line p-1">{edges.map((e) => <button key={e.label} type="button" title={e.hint} onClick={e.onAdd} className={cn("rounded px-1 font-mono text-[10px] hover:bg-surface-2", e.tone === "io" ? "text-topic-network" : "text-accent")}>+ {e.label}</button>)}</div>
-      )}
       {children(graph, n.id).length > 0 && <ul className="ml-3 border-l border-line/70 pl-1">{children(graph, n.id).map(render)}</ul>}
     </li>
   );
-  return <ul className={cn("wc-graph flex flex-col font-mono text-[11px]", className)}>{render(graph.nodes[graph.root]!)}</ul>;
+  return <ul className={cn("wc-graph flex flex-col font-mono text-[10.5px] leading-[18px]", className)}>{render(graph.nodes[graph.root]!)}</ul>;
 }
 
 function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, sample, live, colour }: { n: GNode; graph: Graph; selected: boolean; editing: boolean; onSelect: () => void; onChange?: (g: Graph) => void; onEditArg?: (id: string) => void; sample?: string; live: boolean; colour?: string }) {
@@ -53,8 +50,8 @@ function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, samp
   const pager = n.mods?.find((m) => m.name === "paginate"); const limit = n.mods?.find((m) => m.name === "limit");
   const kw = n.op ? Object.entries(n.op.kwargs) : [];
   return (
-    <div className={cn("group flex cursor-pointer flex-wrap items-center gap-x-1 rounded px-1 py-0.5", selected ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-surface-2", missing && "ring-1 ring-bad/50")} onClick={(e) => { stop(e); onSelect(); }} style={colour ? { boxShadow: `inset 3px 0 0 ${colour}` } : undefined}>
-      {!n.op ? <span>Reference(<Str v={graph.url} onChange={onChange ? (v) => onChange({ ...graph, url: v }) : undefined} />)</span> : <span className="whitespace-nowrap">
+    <div className={cn("group flex cursor-pointer items-center gap-x-1 overflow-hidden whitespace-nowrap rounded px-1 py-px", selected ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-surface-2", missing && "ring-1 ring-bad/50")} onClick={(e) => { stop(e); onSelect(); }} style={colour ? { boxShadow: `inset 3px 0 0 ${colour}` } : undefined}>
+      {!n.op ? <span className="min-w-0 truncate">Reference(<Str v={graph.url} onChange={onChange ? (v) => onChange({ ...graph, url: v }) : undefined} />)</span> : <span className="min-w-0 truncate">
         .{n.op.name}(
         {n.op.args.map((a, i) => <React.Fragment key={i}>{i > 0 && ", "}{a.plan ? "…" : typeof a.value === "string" ? <Str v={a.value} placeholder={missing && i === 0 ? "click the page" : i === 1 && n.op!.name === "attr" ? "pattern" : ""} bad={missing && i === 0} editing={editing && i === 0} onFocus={() => onEditArg?.(n.id)} onChange={onChange ? (v) => setArg(i, v) : undefined} /> : a.value && typeof a.value === "object" ? <button type="button" className="text-topic-network underline decoration-dotted" title="edit (JSON)" onClick={(e) => { stop(e); const t = window.prompt("the mapping, as JSON", JSON.stringify(a.value)); if (t) { try { setArg(i, JSON.parse(t)); } catch { window.alert("not JSON"); } } }}>{JSON.stringify(a.value).slice(0, 40)}</button> : <span className="text-topic-network">{JSON.stringify(a.value)}</span>}</React.Fragment>)}
         {n.op.name === "attr" && n.op.args.length < 2 && onChange && <button type="button" className="hidden text-[10px] text-muted group-hover:inline hover:text-accent" onClick={(e) => { stop(e); onChange(updateNode(graph, n.id, { op: { ...n.op!, args: [...n.op!.args, lit("(\\d+)")] } })); }} title="read the value through a regex (its first group)">, +pattern</button>}
@@ -64,13 +61,9 @@ function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, samp
       {pager && <span className="text-topic-network">.paginate({pager.kwargs.next?.value ? `next="${String(pager.kwargs.next.value)}", ` : ""}max_pages={String(pager.kwargs.max_pages?.value ?? 20)}){onChange && <button type="button" className="ml-0.5 text-muted hover:text-bad" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "paginate")); }}>×</button>}</span>}
       {limit && <span className="text-topic-network">.limit({String(limit.args[0]?.value)}){onChange && <button type="button" className="ml-0.5 text-muted hover:text-bad" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "limit")); }}>×</button>}</span>}
       <span className="flex-1" />
-      <span className="rounded px-1 font-sans text-[9px] font-semibold text-white" style={{ background: TYPE_COLOUR[n.type] }}>{n.type}</span>
       {live && <span className="rounded bg-ok-soft px-1 font-sans text-[9px] text-ok">live</span>}
-      {sample && <span className="max-w-[120px] truncate text-[10px] text-muted" title={sample}>{sample}</span>}
-      {(n.output !== undefined || n.alias) ? (
-        n.alias ? <span className="rounded px-1 font-sans text-[10px] text-white" style={{ background: colour }} title="named from the page">→ name from page</span>
-          : <span className="inline-flex items-center rounded px-1 font-sans text-[10px] text-white" style={{ background: colour }}>→<input className="h-4 w-16 bg-transparent text-[10px] text-white outline-none" value={n.output} onChange={(e) => onChange?.(updateNode(graph, n.id, { output: e.target.value }))} onClick={stop} readOnly={!onChange} /><button type="button" className="ml-0.5" onClick={(e) => { stop(e); onChange?.(updateNode(graph, n.id, { output: undefined })); }}>×</button></span>
-      ) : onChange && n.op && <button type="button" className="hidden rounded border border-line px-1 font-sans text-[10px] text-muted group-hover:inline hover:text-ink" onClick={(e) => { stop(e); onChange(updateNode(graph, n.id, { output: suggest(n) })); }} title="project this object's value as an output column">→ output</button>}
+      {sample && <span className="max-w-[80px] truncate text-[9.5px] text-muted" title={sample}>{sample}</span>}
+      {(n.output !== undefined || n.alias) && <span className="max-w-[90px] truncate rounded px-1 font-sans text-[10px] text-white" style={{ background: colour }} title={n.alias ? "an output, named from the page / a column" : `the output "${n.output}"`}>→ {n.alias ? "(named)" : n.output}</span>}
       {onChange && n.op && <button type="button" className="text-muted opacity-0 group-hover:opacity-100 hover:text-bad" onClick={(e) => { stop(e); onChange(removeNode(graph, n.id)); }} title="remove this and what hangs off it"><X size={11} /></button>}
     </div>
   );
@@ -79,7 +72,8 @@ function Str({ v, onChange, placeholder, bad, editing, onFocus }: { v: string; o
   if (!onChange) return <span className="text-ok">"{v}"</span>;
   return <span className={cn(bad ? "text-bad" : "text-ok")}>"<input className={cn("bg-transparent outline-none", editing && "rounded bg-warn-soft")} size={Math.max(2, Math.min(34, (v || placeholder || "").length))} style={{ fieldSizing: "content", maxWidth: "26ch" } as React.CSSProperties} value={v} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} onClick={(e) => e.stopPropagation()} onFocus={onFocus} title={v} />"</span>;
 }
-function suggest(n: GNode): string {
+/** a default output name for a node (from its selector / attribute) */
+export function outputName(n: GNode): string {
   if (n.op?.name === "resolve") return "detail";
   if (n.op?.name === "attr") return String(n.op.args[0]?.value ?? "value").replace(/[^a-z0-9]+/gi, "_");
   const a = String(n.op?.args[0]?.value ?? n.op?.name ?? "field"); const leaf = a.split(/\s*[> ~+]\s*/).filter(Boolean).pop() ?? a;

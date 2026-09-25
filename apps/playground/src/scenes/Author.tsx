@@ -2,8 +2,8 @@ import * as React from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, ElementTable, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, PlanView, Player, Select, SkeletonPane,
-  TabPanel, Tabs, Toolbar, ToolbarSpacer, describe, fieldColour, graphLib, needsArg, planLib, selectors, toolAsCode, usePlayerController,
+  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, Player, Select, SkeletonPane,
+  TabPanel, Tabs, Toolbar, ToolbarSpacer, cn, describe, fieldColour, graphLib, needsArg, outputName, planLib, selectors, toolAsCode, usePlayerController,
   type Edge, type FrameAction, type FrameHighlight, type Graph, type Highlight, type InspectAdd, type InspectRead, type Pick, type Plan, type RREvent,
 } from "@webclient/ui";
 import { API_URL, api, ApiError } from "../lib/api";
@@ -167,6 +167,13 @@ export function Author() {
     return elementsOf(values[src.id]);
   }, [graph, node, doc, selfMode, values]);
   const root: Element | null = roots[0] ?? null;
+  /** what the page SHOWS: the records of the nearest collection at or above the focus (so a value or
+   * an element is seen in its record), else the page -- the selector roots above stay as they are */
+  const shownRoots: Element[] = React.useMemo(() => {
+    if (!graph || !node || !doc) return [];
+    for (const n of graphLib.ancestors(graph, node.id).reverse()) { if (n.type === "Document" && n.op?.name === "resolve") return []; if (n.type === "Collection") return elementsOf(values[n.id]); }
+    return roots;
+  }, [graph, node, doc, values, roots]);
   const rootFor = (el: Element | null): Element | null => (el ? roots.find((r) => r === el || r.contains(el)) ?? null : null);
   const inRoots = (el: Element) => !roots.length || roots.some((r) => r === el || r.contains(el));
   const scope = graph && node ? scopeOf(graph, node.id) : null;
@@ -262,6 +269,7 @@ export function Author() {
     if (!graph || !node?.op) return;
     let g = updateNode(graph, node.id, { op: { ...node.op, args: node.op.args.map((a, i) => (i === 0 ? { value: selector } : a)) } });
     g = addReads(g, node.id, reads, selector);
+    if (ACTION_OPS.includes(node.op.name)) g = needBrowser(g);  // an action replays in a browser
     setGraph(() => g); select(node.id);
   };
   /** an op on the picked element, added under the focus */
@@ -342,10 +350,10 @@ export function Author() {
     }
     setGraph((g) => updateNode(g, node.id, { op: { ...node.op!, args: node.op!.args.map((a, i) => (i === 0 ? { value } : a)) } })); setEditing(false); setBuilding(null); if (node.op.name === "click" || node.op.name === "write" || node.op.name === "wait_for") { const args = node.op.name === "write" ? [value, String(node.op.args[1]?.value ?? "")] : [value]; runAction(node.op.name, args, false); } };
   React.useEffect(() => {  // Esc: the inspector, then the edit, then up to the parent
-    const h = (e: KeyboardEvent) => { if (!active || e.target instanceof HTMLInputElement) return; if ((e.metaKey || e.ctrlKey) && e.key === "z") { e.preventDefault(); undo(); } else if (e.key === "Escape") { if (pickEl) { setPickEl(null); setBuilding(null); } else if (editing) setEditing(false); else if (node?.parent) select(node.parent); } };
+    const h = (e: KeyboardEvent) => { if (!active || e.target instanceof HTMLInputElement) return; if ((e.metaKey || e.ctrlKey) && e.key === "z") { e.preventDefault(); undo(); } else if (e.key === "Escape") { if (pickEl) { setPickEl(null); setBuilding(null); } else if (node && needsArg(node)) cancelPick(); else if (editing) setEditing(false); else if (node?.parent) select(node.parent); } };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, pickEl, editing, node?.parent]);
+  }, [active, pickEl, editing, node?.parent, node?.id]);
 
   // -- the plan: compile, preview, run, save / export / import ---------------------------------------
   const plan = React.useMemo<Plan | null>(() => (graph ? compile(graph) : null), [graph]);
@@ -397,100 +405,136 @@ export function Author() {
   const stripScripts = (views.data?.tiers ?? []).slice(-1)[0] === "browser";
   const nodeEl = node ? elementsOf(values[node.id])[0] : undefined;
 
+  // the page gets the height the window has (the app header, the toolbar and the action bar aside)
+  const [vh, setVh] = React.useState(() => (typeof window !== "undefined" ? window.innerHeight : 900));
+  React.useEffect(() => { const h = () => setVh(window.innerHeight); window.addEventListener("resize", h); return () => window.removeEventListener("resize", h); }, []);
+  const pageH = Math.max(420, vh - 44 - 38 - 64 - 16);
+  const cancelPick = () => { setPickEl(null); setBuilding(null); if (node && needsArg(node) && node.parent) { const parent = node.parent; setGraph((g) => graphLib.removeNode(g, node.id)); select(parent); } else setEditing(false); };
+  /** the outputs worth adding off the focused object (the "+ output" menu) */
+  const fieldMenu = React.useMemo(() => {
+    if (!graph || !node) return [] as { label: string; sample: string; add: () => void }[];
+    const els = elementsOf(values[node.id]);
+    if (node.type === "Collection") return selectors.suggestFields(els, 16).map((f) => ({ label: `${f.selector} · ${f.attr}${f.number ? " → number" : ""}`, sample: f.sample, add: () => { const s1 = addNode(graph, node.id, opOf("select", [f.selector]), returns); setGraph(() => addRead(s1.graph, s1.id, f.attr, { output: f.name }, f.pattern, f.number).graph); } }));
+    if (node.type === "Element") return selectors.attributesOfAll(els).map((a) => ({ label: a.number ? `${a.attr} → number` : a.attr, sample: a.label ?? a.value, add: () => { const nm = a.attr === "text" ? selectors.nameFromSelector(String(node.op?.args[0]?.value ?? ""), els[0]?.tagName.toLowerCase() ?? "") : a.attr.replace(/[^a-z0-9]+/gi, "_"); setGraph(() => addRead(graph, node.id, a.attr, { output: a.number ? `${nm}_number` : nm }, a.pattern, a.number).graph); } }));
+    return [];
+  }, [graph, node, values]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const isOutput = !!node && (node.output !== undefined || !!node.alias);
+  const siblingCols = graph && node ? outputs(graph).filter((o) => o.id !== node.id && o.output && graphLib.eachOf(graph, o.id)?.id === graphLib.eachOf(graph, node.id)?.id) : [];
+  const namedBy = node?.alias ? (graphLib.aliasField(node.alias) ? "column" : "page") : "name";
+  const setNaming = (mode: string, value: string) => { if (!node) return; setGraph((g) => updateNode(g, node.id, mode === "name" ? { output: value || outputName(node), alias: undefined } : mode === "column" ? { alias: graphLib.fieldAlias(value), output: undefined } : { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }], output: undefined })); };
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <Toolbar>
-        <form onSubmit={(e) => { e.preventDefault(); if (draft) start(draft, tier); }} className="flex min-w-[280px] flex-1 items-center gap-2">
-          <Input mono value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="a URL: the plan starts with its Reference" className="w-full" />
-          <Select value={tier} onChange={(e) => setStateRaw((s) => (s ? { ...s, tier: e.target.value as Tier } : s))} title="the tier new pages open with"><option value="false">static</option><option value="auto">auto</option><option value="always">browser</option></Select>
+    <div className="flex h-full min-h-0 flex-col text-[12px]">
+      <Toolbar className="!h-9 !py-1">
+        <form onSubmit={(e) => { e.preventDefault(); if (draft) start(draft, tier); }} className="flex min-w-[280px] flex-1 items-center gap-1.5">
+          <Input mono value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="a URL -- the plan starts from it" className="h-7 w-full text-[12px]" />
+          <Select value={tier} onChange={(e) => setStateRaw((s) => (s ? { ...s, tier: e.target.value as Tier } : s))} title="the tier new pages open with" className="h-7 text-[12px]"><option value="false">static</option><option value="auto">auto</option><option value="always">browser</option></Select>
           <Button variant="primary" type="submit" size="sm" disabled={!sessionId}>Start</Button>
         </form>
         <ToolbarSpacer />
         {history.current.length > 0 && <Button size="sm" variant="ghost" onClick={undo} title="undo (⌘Z)">undo</Button>}
-        {state && <><Button size="sm" variant="secondary" onClick={save}>Save</Button><Button size="sm" variant="secondary" onClick={exportPlan}>Export</Button></>}
+        {state && <><Button size="sm" variant="ghost" onClick={save}>Save</Button><Button size="sm" variant="ghost" onClick={exportPlan}>Export</Button></>}
         <Button size="sm" variant="ghost" onClick={importPlan}>Import</Button>
-        {saved.data && saved.data.length > 0 && <Select value="" onChange={(e) => { if (e.target.value) load(e.target.value); }}><option value="">— saved —</option>{saved.data.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}</Select>}
-        {outs.length > 0 && <Button variant="primary" size="sm" onClick={runServer} disabled={run.busy || missing.length > 0} title={missing.length ? `${missing.length} op(s) still need an argument` : undefined}>{run.busy ? "running…" : `Run ▶ (${outs.length} outputs)`}</Button>}
+        {saved.data && saved.data.length > 0 && <Select value="" onChange={(e) => { if (e.target.value) load(e.target.value); }} className="h-7 text-[12px]"><option value="">saved…</option>{saved.data.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}</Select>}
+        {outs.length > 0 && <Button variant="primary" size="sm" onClick={runServer} disabled={run.busy || missing.length > 0} title={missing.length ? `${missing.length} op(s) still need an argument` : undefined}>{run.busy ? "running…" : `Run ▶ ${outs.length} outputs`}</Button>}
       </Toolbar>
-      {!state || !graph ? <EmptyState title="Start from a URL" hint="The plan starts with its Reference. Open it as a Document; click any line of the plan to focus it -- the page renders that object and new selectors root there. Shift-click the page to build a selector; the suggestions offer records, fields and attributes." /> :
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto p-3 xl:grid-cols-[400px_minmax(0,1fr)_400px]">
+      {!state || !graph ? <EmptyState title="Start from a URL" hint="The plan starts with its Reference. Open it; then choose an op above the page (select_all, select, attr…) and click the page, or a suggestion. Clicking something the plan already has jumps to it; shift-click records a link, a click or typing." /> :
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 overflow-hidden p-2 xl:grid-cols-[280px_minmax(0,1fr)_340px]">
         {/* the plan */}
-        <section className="flex min-h-0 flex-col gap-1 rounded-lg border border-line p-2">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">The plan · click a line to focus it</div>
-          <GraphView graph={graph} selected={node?.id ?? graph.root} onSelect={(id) => select(id)} onChange={(g) => setGraph(() => g)} samples={samples} live={liveSet} edges={edges} editing={selfMode} onEditArg={(id) => { if (id !== selected) setSelectedRaw(id); setEditing(true); }} className="min-h-0 flex-1 overflow-auto" />
-          {missing.length > 0 && <div className="text-[10px] text-bad">{missing.length} op(s) still need an argument: shift-click the page or pick a suggestion.</div>}
-          <div className="text-[10px] text-muted">Esc: close / stop editing / up. Hover a line: → output · ×.</div>
+        <section className="flex min-h-0 flex-col rounded-md border border-line">
+          <div className="border-b border-line px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Plan</div>
+          <GraphView graph={graph} selected={node?.id ?? graph.root} onSelect={(id) => select(id)} onChange={(g) => setGraph(() => g)} samples={samples} live={liveSet} editing={selfMode} onEditArg={(id) => { if (id !== selected) setSelectedRaw(id); setEditing(true); }} className="min-h-0 flex-1 overflow-auto p-1" />
+          {missing.length > 0 && <div className="border-t border-line px-2 py-1 text-[10px] text-bad">{missing.length} op(s) still need an argument</div>}
         </section>
-        {/* the focused object, rendered */}
-        <div className="relative flex min-w-0 flex-col gap-2">
-          <div className="flex h-7 items-center gap-2 overflow-hidden whitespace-nowrap text-[12px]">
-            <Chip tone={selfMode ? "warn" : "accent"}>{selfMode ? `click the page to pick .${node?.op?.name}() in ${rootLabel}` : `focus: ${rootLabel} · interactive · shift-click records · clicking something in the plan jumps to it`}</Chip>
-            <span className="flex-1" />
-            {pageNode && <><span className="truncate font-mono text-[11px] text-muted" title={page?.url}>{page?.url ?? "…"}</span>{page?.docId && <Button size="sm" variant="ghost" onClick={reload} title="reload the page">⟳</Button>}{!page?.live ? <Button size="sm" variant="ghost" onClick={goLive}>go live</Button> : <><Chip tone="ok" dot>live</Chip><label className="flex items-center gap-1 text-[11px]" title="shift-click records a click on the live page"><input type="checkbox" checked={recordActions} onChange={(e) => setRecordActions(e.target.checked)} />shift-click records</label></>}</>}
-            {patternGroups.length > 0 && <Chip tone={showGroups ? "accent" : "neutral"} interactive onClick={() => setShowGroups(!showGroups)}>{patternGroups.length} groups</Chip>}
-          </div>
+
+        {/* the action bar, then the page */}
+        <div className="flex min-h-0 min-w-0 flex-col gap-1">
+          <section className={cn("rounded-md border px-2 py-1", selfMode ? "border-warn/60 bg-warn-soft/40" : "border-line")}>
+            <div className="flex h-6 items-center gap-2 overflow-hidden whitespace-nowrap">
+              <code className="truncate font-mono text-[11px] text-ink">{node?.op ? graphLib.describeOp(node) : `Reference("${graph.url}")`}</code>
+              {node && samples[node.id] && <span className="text-[10px] text-muted">{samples[node.id]}</span>}
+              <span className="text-[10px] text-muted">· {selfMode ? `picking in ${rootLabel}` : `showing ${rootLabel}`}</span>
+              <span className="flex-1" />
+              {pageNode && <><span className="max-w-[240px] truncate font-mono text-[10px] text-muted" title={page?.url}>{page?.url ?? "…"}</span>
+                {page?.docId && <button type="button" className="text-muted hover:text-ink" onClick={reload} title="reload the page">⟳</button>}
+                {!page?.live ? <button type="button" className="text-[11px] text-muted hover:text-ink" onClick={goLive}>go live</button> : <span className="rounded bg-ok-soft px-1 text-[10px] text-ok">live</span>}</>}
+              {patternGroups.length > 0 && <button type="button" className={cn("rounded px-1 text-[10px]", showGroups ? "bg-accent-soft text-accent" : "text-muted hover:text-ink")} onClick={() => setShowGroups(!showGroups)}>{patternGroups.length} groups</button>}
+            </div>
+            <div className="flex min-h-6 flex-wrap items-center gap-1">
+              {selfMode && node?.op ? <>
+                <span className="text-[11px] font-medium text-warn">Choose the selector for .{node.op.name}(): click the page, or a suggestion on the right</span>
+                <span className="flex-1" />
+                <button type="button" className="rounded px-1.5 text-[11px] text-muted hover:text-ink" onClick={cancelPick}>cancel</button>
+              </> : <>
+                {edges.map((e) => <button key={e.label} type="button" title={e.hint} onClick={e.onAdd} className={cn("rounded border border-line px-1.5 py-px font-mono text-[10.5px] hover:bg-surface-2", e.tone === "io" ? "text-topic-network" : "text-accent")}>+ {e.label}</button>)}
+                {fieldMenu.length > 0 && <div className="relative">
+                  <button type="button" onClick={() => setMenuOpen(!menuOpen)} className="rounded border border-line px-1.5 py-px text-[10.5px] text-accent hover:bg-surface-2">+ output ▾</button>
+                  {menuOpen && <div className="absolute left-0 top-6 z-30 max-h-72 w-96 overflow-auto rounded-md border border-line bg-surface p-1 shadow-lg" onMouseLeave={() => setMenuOpen(false)}>
+                    {fieldMenu.map((f) => <button key={f.label} type="button" onClick={() => { f.add(); setMenuOpen(false); }} className="flex w-full items-center gap-1 rounded px-1 py-px text-left hover:bg-surface-2"><code className="shrink-0 font-mono text-[10px]">{f.label}</code><span className="min-w-0 flex-1 truncate text-[10px] text-muted">{f.sample}</span></button>)}
+                  </div>}
+                </div>}
+                <span className="flex-1" />
+                {node?.op && node.id !== pageNode?.id && <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={isOutput} onChange={(e) => setGraph((g) => updateNode(g, node.id, e.target.checked ? { output: outputName(node) } : { output: undefined, alias: undefined }))} />output</label>}
+                {isOutput && node && <>
+                  <select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={namedBy} onChange={(e) => setNaming(e.target.value, e.target.value === "column" ? (siblingCols[0]?.output ?? "") : e.target.value === "page" ? "th" : (node.output ?? ""))} title="how the column is named">
+                    <option value="name">named</option>{siblingCols.length > 0 && <option value="column">named by a column</option>}<option value="page">named from the page</option>
+                  </select>
+                  {namedBy === "name" && <input className="h-6 w-28 rounded border border-line bg-surface px-1 text-[11px]" value={node.output ?? ""} onChange={(e) => setGraph((g) => updateNode(g, node.id, { output: e.target.value }))} />}
+                  {namedBy === "column" && <select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={graphLib.aliasField(node.alias) ?? ""} onChange={(e) => setNaming("column", e.target.value)}>{siblingCols.map((o) => <option key={o.id} value={o.output}>{o.output}</option>)}</select>}
+                  {namedBy === "page" && <input className="h-6 w-24 rounded border border-line bg-surface px-1 font-mono text-[10px]" defaultValue={String(node.alias?.[1]?.args?.[0]?.value ?? "")} onBlur={(e) => e.target.value.trim() && setNaming("page", e.target.value.trim())} title="a selector (relative to the record) whose text names the column" />}
+                </>}
+                {node?.type === "Document" && node.op?.name === "resolve" && <Pager n={node} onChange={(mod) => setGraph((g) => setMod(g, node.id, mod, "paginate"))} />}
+              </>}
+            </div>
+          </section>
           {!pageNode ? (
-            <section className="rounded-lg border border-line p-3 text-[12px]">
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Reference</div>
+            <section className="rounded-md border border-line p-3 text-[12px]">
               <Input mono value={graph.url} onChange={(e) => setGraph((g) => ({ ...g, url: e.target.value }))} className="mb-2 w-full" />
-              <div className="text-muted">Open it with one of the <b>.resolve()</b> edges on the left.</div>
+              <div className="text-muted">Open it with a <b>.resolve()</b> above.</div>
             </section>
           ) : err && !views.data ? (
             <EmptyState title={`Could not open the page · ${err.code ?? err.status}`} hint={err.hint ?? err.message} action={<Button onClick={() => setPages((ps) => ({ ...ps, [pageKey]: { url: ps[pageKey]?.url ?? "" } }))}>Retry</Button>} />
           ) : page?.live ? (
-            <Player events={stream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={roots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const par = actionParent(); const hitNode = p.el ? matchOf({ op: "click", pick: { path: [], tag: p.tag, classes: p.classes, text: p.text }, shift: m.shift }, p.el) : null; if (hitNode) select(hitNode.id); runAction("click", [p.el ? selFor(p.el) : p.path], recordActions && m.shift && !hitNode, par?.id); }} onDocument={(d) => setDocs((ds) => (ds[pageKey] === d ? ds : { ...ds, [pageKey]: d }))} controls={false} controller={controller} maxHeight={760} />
+            <Player events={stream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={shownRoots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const par = actionParent(); const hitNode = p.el ? matchOf({ op: "click", pick: { path: [], tag: p.tag, classes: p.classes, text: p.text }, shift: m.shift }, p.el) : null; if (hitNode) select(hitNode.id); runAction("click", [p.el ? selFor(p.el) : p.path], recordActions && m.shift && !hitNode, par?.id); }} onDocument={(d) => setDocs((ds) => (ds[pageKey] === d ? ds : { ...ds, [pageKey]: d }))} controls={false} controller={controller} maxHeight={pageH} />
           ) : card && card.kind === "binary" ? (
-            <EmptyState title={`A file · ${(views.data as { card?: { content_type?: string } } | undefined)?.card?.content_type ?? "binary"}`} hint="Not a page to render: add the .download() edge to return its bytes (a file value: url, filename, content type, size, base64)." action={<Button onClick={() => node && addEdge("download", [], {}, { output: "file" })}>.download()</Button>} />
+            <EmptyState title="A file" hint="Not a page to render: add .download() above to return its bytes (url, filename, content type, size, base64)." action={<Button onClick={() => node && addEdge("download", [], {}, { output: "file" })}>.download()</Button>} />
           ) : views.data?.content ? (
-            <PageFrame html={views.data.content} base={views.data.url ?? page?.url ?? graph.url} stripScripts={stripScripts} focusPaths={roots.length ? roots.map(pathOf) : null} highlights={frameHls} picking={selfMode} onPick={onFramePick} onAction={onFrameAction} maxHeight={760} />
+            <PageFrame html={views.data.content} base={views.data.url ?? page?.url ?? graph.url} stripScripts={stripScripts} focusPaths={shownRoots.length ? shownRoots.map(pathOf) : null} highlights={frameHls} picking={selfMode} onPick={onFramePick} onAction={onFrameAction} maxHeight={pageH} width={1180} />
           ) : <EmptyState title={pageUrl(pageKey) || page?.url ? "Opening the page into your session…" : "This page's URL comes from the page before it: open that first"} />}
-          {actError && <div className="text-[12px]"><Chip tone="bad">{actError.detail?.code ?? actError.status}</Chip> {actError.detail?.hint ?? actError.message}</div>}
-          {busy && <div className="text-[12px] text-muted">{busy}…</div>}
+          {actError && <div className="text-[11px]"><Chip tone="bad">{actError.detail?.code ?? actError.status}</Chip> {actError.detail?.hint ?? actError.message}</div>}
+          {busy && <div className="text-[11px] text-muted">{busy}…</div>}
         </div>
-        {/* the inspector / suggestions / the object, then the output */}
-        <div className="flex min-w-0 flex-col gap-3">
-          {pick && doc ? (
-            <ElementInspector pick={pick} scopeEl={rootFor(pickEl)} scopeLabel={rootLabel} ops={opsQ.data?.Document ?? []} groups={pickGroups} live={!!page?.live} onSelector={(s) => setBuilding(s || null)} onAdd={onAdd} applyTo={selfMode && node?.op ? { label: `.${node.op.name}()` } : null} onApply={onApply} onClose={() => { setPickEl(null); setBuilding(null); }} />
-          ) : (selfMode || attrMode) && node?.op ? (
-            <section className="rounded-lg border border-warn/50 p-2 text-[12px]">
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{node.op.name === "attr" ? "read: every attribute of the elements (as a number where it holds one) -- pick one" : `.${node.op.name}() needs a selector -- click the page, or:`}</div>
-              <div className="flex flex-col gap-0.5">{suggestions.map((s) => <button key={s.value + (s.number ? "#n" : "") + (s.pattern ?? "")} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => applySuggestion(s.value, s)} onMouseEnter={() => node.op?.name !== "attr" && setBuilding(s.value)} onMouseLeave={() => setBuilding(null)}><code className="shrink-0 font-mono text-[11px] text-accent">{s.value}</code>{s.count != null && <span className="rounded bg-surface-2 px-1 text-[10px]">×{s.count}</span>}<span className="text-[10px] text-muted">{s.label}</span><span className="min-w-0 flex-1 truncate text-[11px] text-muted">{s.sample}</span></button>)}{!suggestions.length && <span className="text-muted">no suggestions here</span>}</div>
-            </section>
-          ) : node && node.op && (
-            <section className="rounded-lg border border-line p-2 text-[12px]">
-              <div className="mb-1 flex items-center gap-2"><span className="text-[11px] font-semibold uppercase tracking-wide text-muted">{node.type}</span><span className="text-muted">{samples[node.id]}</span><span className="flex-1" />{takesSelector && <button type="button" className="text-[11px] text-accent underline" onClick={() => setEditing(true)}>re-pick its selector</button>}</div>
-              {node.type === "Collection" && <div className="flex flex-col gap-0.5"><div className="text-[11px] text-muted">All {elementsOf(values[node.id]).length} shown. Add an edge (select, attr…) and click inside any of them: it is read off EACH. The fields they share:</div>{selectors.suggestFields(elementsOf(values[node.id]), 14).map((f) => <button key={f.selector + f.attr + (f.number ? "#n" : "")} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => { const s = addNode(graph, node.id, opOf("select", [f.selector]), returns); setGraph(() => addRead(s.graph, s.id, f.attr, { output: f.name }, f.pattern, f.number).graph); }}><span className="text-accent">+</span><code className="font-mono text-[10px]">{f.selector} · {f.attr}{f.number ? " → number" : ""}</code><span className="truncate text-[11px] text-muted">{f.sample}</span></button>)}</div>}
-              {node.type === "Element" && nodeEl && <div className="flex flex-col gap-0.5"><div className="text-[11px] text-muted">Read off it (text, count, label, href, data-*, aria-*…):</div>{selectors.attributesOfAll(elementsOf(values[node.id])).map((a) => <button key={a.attr + (a.number ? "#n" : "")} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => { const name = a.attr === "text" ? selectors.nameFromSelector(String(node.op?.args[0]?.value ?? ""), nodeEl.tagName.toLowerCase()) : a.attr.replace(/[^a-z0-9]+/gi, "_"); const r = addRead(graph, node.id, a.attr, { output: a.number ? `${name}_number` : name }, a.pattern, a.number); setGraph(() => r.graph); select(r.id); }}><span className="text-accent">+</span><code className="w-28 shrink-0 font-mono text-[10px]">{a.number ? `${a.attr} → number` : a.attr}</code><span className="truncate text-[11px] text-muted">{a.label ?? a.value}</span></button>)}</div>}
-              {node.type === "Document" && <div className="text-[11px] text-muted">The page is interactive. Clicking something the plan already has jumps to it (a link opens that page); SHIFT-click records a link, a control or a field you type into as nodes. To select, add an edge on the left, then click the page or a suggestion.{node.op?.name === "resolve" && <Pager n={node} onChange={(mod) => setGraph((g) => setMod(g, node.id, mod, "paginate"))} />}</div>}
-              {(node.type === "Value" || node.type === "Reference" || node.type === "Element") && node.op && (
-                <div className="mb-1 flex flex-wrap items-center gap-1 text-[11px]">
-                  <span className="text-muted">column name:</span>
-                  <input className="h-6 w-28 rounded border border-line bg-surface px-1" value={node.output ?? ""} placeholder="a name" onChange={(e) => setGraph((g) => updateNode(g, node.id, { output: e.target.value || undefined, alias: undefined }))} />
-                  {(() => { const enc = graphLib.eachOf(graph, node.id) ?? pageNode; const sibs = enc ? outputs(graph).filter((o) => o.id !== node.id && o.output && graphLib.eachOf(graph, o.id)?.id === (graphLib.eachOf(graph, node.id)?.id)) : []; const cur = graphLib.aliasField(node.alias); return sibs.length ? <><span className="text-muted">or by a column:</span><select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={cur ?? ""} onChange={(e) => setGraph((g) => updateNode(g, node.id, e.target.value ? { alias: graphLib.fieldAlias(e.target.value), output: undefined } : { alias: undefined }))}><option value="">—</option>{sibs.map((o) => <option key={o.id} value={o.output}>{o.output}</option>)}</select></> : null; })()}
-                  <span className="text-muted">or from the page:</span>
-                  <input className="h-6 w-24 rounded border border-line bg-surface px-1 font-mono text-[10px]" placeholder="e.g. th" defaultValue={graphLib.aliasField(node.alias) ? "" : String(node.alias?.[1]?.args?.[0]?.value ?? "")} onBlur={(e) => { const v = e.target.value.trim(); if (!v && graphLib.aliasField(node.alias)) return; setGraph((g) => updateNode(g, node.id, v ? { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: v }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }], output: undefined } : { alias: undefined })); }} title="a selector (relative to the record) whose text names this column: .alias(select(…).attr('text'))" />
-                </div>
-              )}
-              {node.type === "Value" && <div className="flex flex-col gap-0.5">{(Array.isArray(values[node.id]) ? (values[node.id] as unknown[]).flat(3).slice(0, 12) : [values[node.id]]).map((x, i) => <div key={i} className="truncate font-mono text-[11px]">{isEl(x) ? `<${x.tagName.toLowerCase()}>` : String(x ?? "∅")}</div>)}</div>}
-            </section>
-          )}
-          <section className="flex min-h-0 flex-1 flex-col rounded-lg border border-line">
-            <Tabs items={[{ value: "rows", label: "Rows", count: shown.rows.length }, { value: "server", label: "Server run", count: run.rows?.length }, { value: "plan", label: "Compiled" }, { value: "page", label: "Page" }, { value: "skeleton", label: "Skeleton" }, { value: "markdown", label: "Markdown" }, { value: "elements", label: "Elements" }, { value: "code", label: "As code" }]} value={tab} onValueChange={setTab} className="min-h-0 flex-1">
-              <TabPanel value="rows">{!outs.length ? <EmptyState title="No outputs yet" hint="Hover a line of the plan → output, or tick reads in the inspector." /> : <><div className="px-2 pt-1 text-[11px] text-muted">{shown.nested ? "The rows whose page is open here, with their parent row's columns -- the server run fetches every page." : "Preview on this page, nested values exploded into columns; the server run returns the nested JSON."}</div><DataFrame rows={shown.rows} className="max-h-[400px]" emptyHint="The outputs matched nothing on the page yet." /></>}</TabPanel>
-              <TabPanel value="server">{run.error ? <div className="p-3 text-[12px]"><Chip tone="bad">{run.error.detail?.code ?? run.error.status}</Chip> {run.error.detail?.hint ?? run.error.message}</div> : run.rows ? <><div className="flex items-center gap-2 px-2 pt-1 text-[11px] text-muted">{run.rows.length} rows from the server in {run.ms} ms<span className="flex-1" /><label className="flex items-center gap-1"><input type="checkbox" checked={asJson} onChange={(e) => setAsJson(e.target.checked)} />JSON</label></div>{asJson ? <CodeBlock lang="json" code={JSON.stringify(run.rows, null, 2)} className="m-2 max-h-[400px] overflow-auto" /> : <DataFrame rows={run.rows} className="max-h-[400px]" />}</> : <EmptyState title="Not run yet" />}</TabPanel>
-              <TabPanel value="plan" className="max-h-[460px] overflow-auto p-2">{plan && <><CodeBlock lang="describe" code={planLib.describe(plan)} wrap /><PlanView plan={plan} url={graph.url} readOnly className="mt-2" /></>}</TabPanel>
-              <TabPanel value="page" className="p-2 text-[12px]">
+
+        {/* the right column: picking tools while an op waits for its selector, else the output */}
+        <aside className="flex min-h-0 min-w-0 flex-col rounded-md border border-line">
+          {selfMode && node?.op ? (pick && doc ? (
+            <div className="flex min-h-0 flex-col overflow-auto p-2">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Selector for .{node.op.name}()</div>
+              <ElementInspector pick={pick} scopeEl={rootFor(pickEl)} scopeLabel={rootLabel} op={node.op.name} groups={pickGroups} onSelector={(sel) => setBuilding(sel || null)} onAdd={onApply} onCancel={() => { setPickEl(null); setBuilding(null); }} />
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-col overflow-auto p-2">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">{node.op.name === "attr" ? "What to read" : `Suggestions for .${node.op.name}()`}</div>
+              <div className="mb-1 text-[10px] text-muted">{node.op.name === "attr" ? "every attribute of the elements, as a number where it holds one" : "or click the page"}</div>
+              <div className="flex flex-col">{suggestions.map((sg) => <button key={sg.value + (sg.number ? "#n" : "") + (sg.pattern ?? "")} type="button" className="flex items-center gap-1 rounded px-1 py-px text-left hover:bg-surface-2" onClick={() => applySuggestion(sg.value, sg)} onMouseEnter={() => node.op?.name !== "attr" && setBuilding(sg.value)} onMouseLeave={() => setBuilding(null)}><code className="shrink-0 font-mono text-[10.5px] text-accent">{sg.value}</code>{sg.count != null && <span className="rounded bg-surface-2 px-0.5 text-[9.5px]">×{sg.count}</span>}<span className="text-[9.5px] text-muted">{sg.label}</span><span className="min-w-0 flex-1 truncate text-[10px] text-muted">{sg.sample}</span></button>)}{!suggestions.length && <span className="text-muted">no suggestions here</span>}</div>
+            </div>
+          )) : (
+            <Tabs items={[{ value: "rows", label: "Rows", count: shown.rows.length }, { value: "server", label: "Run", count: run.rows?.length }, { value: "plan", label: "Plan" }, { value: "page", label: "Page" }, { value: "skeleton", label: "Skeleton" }, { value: "markdown", label: "MD" }, { value: "code", label: "Code" }]} value={tab} onValueChange={setTab} className="min-h-0 flex-1 text-[11px]">
+              <TabPanel value="rows" className="min-h-0 overflow-auto">{!outs.length ? <EmptyState title="No outputs yet" hint="Tick “output” above for a node, or use + output ▾." /> : <><div className="px-2 pt-1 text-[10px] text-muted">{shown.nested ? "rows whose page is open here, with the parent row's columns" : "preview on this page; nested values as columns"}</div><DataFrame rows={shown.rows} className="max-h-[calc(100vh-220px)]" emptyHint="Nothing matched on this page yet." /></>}</TabPanel>
+              <TabPanel value="server" className="min-h-0 overflow-auto">{run.error ? <div className="p-2"><Chip tone="bad">{run.error.detail?.code ?? run.error.status}</Chip> {run.error.detail?.hint ?? run.error.message}</div> : run.rows ? <><div className="flex items-center gap-2 px-2 pt-1 text-[10px] text-muted">{run.rows.length} rows in {run.ms} ms<span className="flex-1" /><label className="flex items-center gap-1"><input type="checkbox" checked={asJson} onChange={(e) => setAsJson(e.target.checked)} />JSON</label></div>{asJson ? <CodeBlock lang="json" code={JSON.stringify(run.rows, null, 2)} className="m-1 max-h-[calc(100vh-220px)] overflow-auto" /> : <DataFrame rows={run.rows} className="max-h-[calc(100vh-220px)]" />}</> : <EmptyState title="Not run yet" hint="Run ▶ executes the plan through your session." />}</TabPanel>
+              <TabPanel value="plan" className="min-h-0 overflow-auto p-1">{plan && <CodeBlock lang="describe" code={planLib.describe(plan)} wrap />}</TabPanel>
+              <TabPanel value="page" className="min-h-0 overflow-auto p-2">
                 {card && <div className="mb-1 flex flex-wrap items-center gap-1"><Chip tone="neutral">{card.kind}</Chip><Chip tone={card.status_code && card.status_code < 400 ? "ok" : "bad"}>{card.status_code}</Chip><Chip tone="neutral">{(views.data?.tiers ?? [card.final_tier]).join(" → ")}</Chip><span className="truncate text-muted">{views.data?.title}</span></div>}
                 <FlagRow flags={views.data?.flags ?? []} empty="no signals on this page" />
                 <div className="mt-1 flex flex-wrap gap-1 text-[10px]">{patternGroups.map((g) => <button key={g.selector} type="button" className="inline-flex items-center gap-1 rounded border border-line px-1 hover:bg-surface-2" title={g.why} onClick={() => setShowGroups(true)}><span className="inline-block size-2 rounded-sm" style={{ background: g.colour }} />{g.name} <code className="font-mono">{g.selector}</code> ×{g.count}</button>)}</div>
               </TabPanel>
-              <TabPanel value="skeleton" className="max-h-[460px] overflow-auto p-2">{more.data?.skeleton ? <SkeletonPane skeleton={more.data.skeleton} active={pick ? "<" + pick.tag : null} /> : <span className="text-[12px] text-muted">…</span>}</TabPanel>
-              <TabPanel value="markdown" className="max-h-[460px] overflow-auto p-2">{more.data?.markdown ? <CodeBlock lang="markdown" code={more.data.markdown} wrap /> : <span className="text-[12px] text-muted">…</span>}</TabPanel>
-              <TabPanel value="elements" className="max-h-[460px] overflow-auto">{(more.data?.elements ?? views.data?.controls) && <ElementTable elements={more.data?.elements ?? views.data!.controls!} />}</TabPanel>
-              <TabPanel value="code"><AsCode {...toolAsCode("execute", { url: graph.url }, API_URL)} blob={planQ.data?.blob} python={`from webclient import WebClient, from_blob\n\nwith WebClient() as wc:\n    rows = from_blob(${JSON.stringify(planQ.data?.blob ?? "<the blob appears once the plan has outputs>")}, wc).collect()`} /></TabPanel>
+              <TabPanel value="skeleton" className="min-h-0 overflow-auto p-1">{more.data?.skeleton ? <SkeletonPane skeleton={more.data.skeleton} active={null} /> : <span className="text-muted">…</span>}</TabPanel>
+              <TabPanel value="markdown" className="min-h-0 overflow-auto p-1">{more.data?.markdown ? <CodeBlock lang="markdown" code={more.data.markdown} wrap /> : <span className="text-muted">…</span>}</TabPanel>
+              <TabPanel value="code" className="min-h-0 overflow-auto"><AsCode {...toolAsCode("execute", { url: graph.url }, API_URL)} blob={planQ.data?.blob} python={`from webclient import WebClient, from_blob\n\nwith WebClient() as wc:\n    rows = from_blob(${JSON.stringify(planQ.data?.blob ?? "<the blob appears once the plan has outputs>")}, wc).collect()`} /></TabPanel>
             </Tabs>
-          </section>
-        </div>
+          )}
+        </aside>
       </div>}
       {page?.live && <MediaBar controller={controller} className="shrink-0" />}
     </div>
