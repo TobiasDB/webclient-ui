@@ -50,5 +50,14 @@ export function targetOf(doc: Document, op: string, selector: string | undefined
   }
   if (!selector) return { els: [], how: "page" };
   const els = op === "select_all" ? all(doc, selector) : all(doc, selector).slice(0, 1);
-  return { els, own: els[0], how: "page" };
+  // the one to focus: the first match a reader can SEE -- a hidden / zero-size match (a menu's <li>) has no box,
+  // and its outline and the pointer would land in the page's corner
+  return { els, own: els.find(shown) ?? (els[0] && shown(els[0]) ? els[0] : undefined), how: "page" };
+}
+
+/** whether an element renders a box. A document that is not rendered (DOMParser: no view) can't say: yes. */
+export function shown(el: Element): boolean {
+  const w = el.ownerDocument?.defaultView; if (!w) return true;
+  if (el.closest("head, [hidden], template")) return false;
+  try { const r = el.getBoundingClientRect(); if (r.width > 0 && r.height > 0) return true; const cs = w.getComputedStyle(el); return cs.display === "contents"; } catch { return true; }
 }

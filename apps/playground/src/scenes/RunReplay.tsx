@@ -127,12 +127,43 @@ export function ReplayScreen({ traceId, events, stageOf, stages, stats, at, pick
         </> : <span className="text-muted">nothing on a page yet</span>}
       </div>
       <div className="relative min-h-0 flex-1 overflow-hidden">
+        {ev && traceId && <EventCard key={j} ev={ev} colour={colour} />}
         {!traceId ? <div className="p-2 text-muted">the run is not recorded: no pages to replay</div>
           : useRecording ? (rr.data?.length ? <Player events={rr.data as never} seekTo={ev?.ts ? ev.ts * 1000 : null} controls={false} pulses={false} highlights={pHighlights} scrollTo={pTarget?.own ?? null} onDocument={setPDoc} maxHeight={maxHeight} /> : <div className="p-2 text-muted">{rr.isLoading ? "loading the recording…" : "no recording of this page"}</div>)
           : page.isLoading ? <div className="p-2 text-muted">loading the page…</div>
           : page.data?.content ? <PageFrame html={page.data.content} base={page.data.final_url ?? page.data.url} stripScripts highlights={highlights} scrollTo={scrollTo} maxHeight={maxHeight} width={1180} />
           : <div className="p-2 text-muted">{doc ? "no snapshot of this page in the trace" : "…"}</div>}
       </div>
+    </div>
+  );
+}
+
+/** THE CURRENT EVENT as a card over the page: what the run is doing at this moment (the op and what it
+ * named, the page fetched, the fan-out, the row) -- it slides in anew with every step */
+function EventCard({ ev, colour }: { ev: RunEvent; colour: string }) {
+  const e = ev as RunEvent & { url?: string; final_url?: string; method?: string; status_code?: number; loop?: string; round?: number; action?: string; args?: Record<string, unknown>; error?: { code?: string; message?: string } };
+  const d = (e.detail ?? {}) as Record<string, unknown>;
+  const op = opOf(ev);
+  const kind = e.topic === "plan" ? String(e.phase ?? "") : String(e.topic ?? "");
+  const args = Array.isArray(d.args) ? (d.args as unknown[]).map((a) => (typeof a === "string" ? JSON.stringify(a) : String(a))).join(", ") : "";
+  let main = e.topic === "plan" && d.op ? `${op}(${args})` : e.topic === "action" ? `${e.action ?? "action"} ${String(e.args?.selector ?? "")}` : op;
+  let sub = "";
+  if (e.topic === "snapshot" || String(e.topic ?? "").startsWith("network")) { main = `${String(e.method ?? "GET").toUpperCase()} ${short(String(e.final_url ?? e.url ?? ""))}`; sub = e.status_code ? `→ ${e.status_code}` : String(e.phase ?? ""); }
+  else if (e.phase === "fanout") sub = `→ ${Number(d.n ?? 0).toLocaleString()} item(s)`;
+  else if (e.phase === "parallel") { main = `${d.n} at once`; sub = `limit ${d.limit} · bound by ${d.bound}`; }
+  else if (e.phase === "row") { main = `row ${Number(d.index ?? 0) + 1}`; sub = d.row != null ? JSON.stringify(d.row).slice(0, 140) : ""; }
+  else if (e.phase === "item") sub = String(d.status ?? "");
+  else if (e.topic === "loop") { main = `${e.loop} · ${e.phase}${e.round ? ` (round ${e.round})` : ""}`; sub = String(d.decision ?? d.result ?? d.error ?? ""); }
+  else if (e.topic === "error") { main = String(e.error?.code ?? "error"); sub = String(e.error?.message ?? ""); }
+  return (
+    <div key={(ev as { n?: number }).n ?? main} className="wc-evcard pointer-events-none absolute right-2 top-2 z-20 max-w-[min(340px,70%)] rounded-md px-2 py-1 font-mono text-[10.5px] leading-snug shadow-lg" style={{ ["--c" as never]: colour }}>
+      <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-wide opacity-75">
+        <span className="size-1.5 shrink-0 rounded-full" style={{ background: colour }} /><span>{kind}</span>
+        {(ev.item ?? []).length > 0 && <span>· item {keyOf(ev)}</span>}
+        {(ev as { n?: number }).n != null && <span className="ml-auto">#{(ev as { n?: number }).n}</span>}
+      </div>
+      <div className="break-all font-semibold [overflow-wrap:anywhere]">{main}</div>
+      {sub && <div className="line-clamp-2 break-all opacity-80 [overflow-wrap:anywhere]">{sub}</div>}
     </div>
   );
 }

@@ -104,3 +104,7 @@ html, body { background: var(--color-surface); color: var(--color-ink); font-fam
 /* the replay's SPOTLIGHT: the step's own element, unmistakable */
 .wc-player .wc-spot { box-sizing: border-box; border: 3px solid var(--c); border-radius: 6px; background: color-mix(in srgb, var(--c) 12%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 30%, transparent); animation: wc-spot 1s ease-out 2; }
 @keyframes wc-spot { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 60%, transparent); } 100% { box-shadow: 0 0 0 14px transparent; } }
+
+/* the replay's CURRENT EVENT card (it slides in with each step) */
+.wc-evcard { background: color-mix(in srgb, var(--color-ink) 90%, transparent); color: var(--color-surface); border-left: 3px solid var(--c); animation: wc-evcard-in .22s ease-out; }
+@keyframes wc-evcard-in { from { transform: translateY(-6px); opacity: 0; } to { transform: none; opacity: 1; } }

@@ -114,6 +114,9 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
   // it is drawn at document - scroll
   const [cursor, setCursor] = React.useState<{ x: number; y: number; down: boolean } | null>(lastPointer ? { ...lastPointer, down: false } : null);
   const cursorAnim = React.useRef(0);
+  /** a caller names the element in focus (``scrollTo``): the pointer goes THERE, not to a step's first match */
+  const controlled = React.useRef(false);
+  controlled.current = scrollTo != null || highlights.some((h) => h.spot);
   const liveClock = React.useRef<{ baseline: number; t0: number } | null>(null);
   /** add a live event stamped no later than the replay clock's now (it applies at once, order kept) */
   const liveAdd = (r: { addEvent: (e: unknown) => void }, e: { timestamp: number }) => {
@@ -158,13 +161,16 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
           const args = (payload.args ?? {}) as { selector?: string; from?: number[]; to?: number[] };
           pulse(tag, `${payload.action}${args.selector ? ` ${args.selector}` : ""}`);
           if (args.selector) flashSelector(String(args.selector));
-          if (payload.action === "click" || payload.action === "write") { const w = doc()?.defaultView; const target = (args.selector ? centreOf(String(args.selector)) : undefined) ?? (args.to ? [args.to[0]! + (w?.scrollX ?? 0), args.to[1]! + (w?.scrollY ?? 0)] : undefined); moveCursor(undefined, target, true); }
+          if ((payload.action === "click" || payload.action === "write") && !controlled.current) { const w = doc()?.defaultView; const target = (args.selector ? centreOf(String(args.selector)) : undefined) ?? (args.to ? [args.to[0]! + (w?.scrollX ?? 0), args.to[1]! + (w?.scrollY ?? 0)] : undefined); moveCursor(undefined, target, true); }
         }
-        if (tag === "plan" && payload.phase === "step") {
+        // a step's own element is only known to a caller that tracks the item (``scrollTo``): then the pointer
+        // follows that (below), never the selector's FIRST match -- which, in a select_all, is the first card
+        if (tag === "plan" && payload.phase === "step" && !controlled.current) {
           const d = (payload.detail ?? {}) as { op?: string; selector?: string };
           if (d.selector && ["select", "select_all", "attr", "text_content", "extract", "click", "write", "wait_for", "scroll"].includes(String(d.op))) {
             flashSelector(d.selector, d.op === "attr" || d.op === "text_content" ? "#7c3aed" : "#2457e6", `${d.op} ${d.selector}`);
-            moveCursor(undefined, centreOf(d.selector), false); // the pointer goes wherever the run looked
+            // select_all looks at EVERY match: they are all flashed and the pointer stays put
+            if (d.op !== "select_all") moveCursor(undefined, centreOf(d.selector), false); // the pointer goes wherever the run looked
           }
         }
         if (tag === "error") pulse(tag, String((payload.error as any)?.code ?? "error"));
@@ -218,7 +224,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     for (const h of highlights) {
       let els: Element[] = []; try { els = h.els ? h.els : h.root ? (h.selector === ":scope" ? [h.root] : [...h.root.querySelectorAll(h.selector)]) : [...d.querySelectorAll(h.selector)]; } catch { continue; }
       const colour = h.colour ?? TONE[h.tone ?? "accent"];
-      if (h.spot && els[0]) { out.push({ ...boxFor(els[0], colour, h.label, false), spot: true }); continue; }
+      if (h.spot && els[0]) { const b = boxFor(els[0], colour, h.label, false); if (b.width > 0 && b.height > 0) out.push({ ...b, spot: true }); continue; }  // no box: no spotlight in the corner
       els.forEach((el, i) => out.push(boxFor(el, colour, i === 0 ? (h.label ? `${h.label}${els.length > 1 && !h.label.includes("×") ? ` ×${els.length}` : ""}` : undefined) : undefined, !!h.dashed)));
     }
     setBoxes((prev) => (prev.length === out.length && prev.every((b, i) => b.left === out[i]!.left && b.top === out[i]!.top && b.width === out[i]!.width && b.height === out[i]!.height && b.label === out[i]!.label)) ? prev : out);
@@ -234,6 +240,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     const r = el.getBoundingClientRect(); const w = d.defaultView;
     return [r.left + r.width / 2 + (w?.scrollX ?? 0), r.top + r.height / 2 + (w?.scrollY ?? 0)];  // DOCUMENT coordinates
   };
+  const moveCursorRef = React.useRef<(from: number[] | undefined, to: number[] | undefined, click: boolean) => void>(() => {});
   /** OUR pointer: drawn along the same human path the driver took (from/to on the event, or
    * from where it last was to the target) -- nothing is recorded; both sides compute it. */
   const moveCursor = (_from: number[] | undefined, to: number[] | undefined, click: boolean) => {
@@ -255,6 +262,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     };
     cursorAnim.current = requestAnimationFrame(step);
   };
+  moveCursorRef.current = moveCursor;
   /** the reader scrolls the rebuilt page by hand (rrweb's frame takes no pointer events) */
   // a NATIVE, non-passive wheel listener: the page inside scrolls, and the wheel never
   // reaches the workspace around it (React's synthetic wheel handler is passive, so it
@@ -297,6 +305,12 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     if (!scrollTo) return; const w = scrollTo.ownerDocument.defaultView; if (!w) return;
     scrollWithin(scrollTo, "center");  // the outlined element, CENTRED
     refreshRef.current();
+    // ...and the pointer moves on to it (from wherever it was), once the scroll has landed
+    const t = setTimeout(() => {
+      if (!scrollTo.isConnected) return; const r = scrollTo.getBoundingClientRect(); if (r.width <= 0 && r.height <= 0) return;
+      moveCursorRef.current(undefined, [r.left + r.width / 2 + w.scrollX, r.top + r.height / 2 + w.scrollY], false);
+    }, 80);
+    return () => clearTimeout(t);
   }, [scrollTo]);
 
   // -- transport (the MediaBar drives it through the controller) ----------------------
