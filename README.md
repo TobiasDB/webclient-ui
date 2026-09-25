@@ -14,6 +14,15 @@ Process (see `webclient/docs/product/*.md`): user stories → Storybook (wirefra
 stories, then real components) → the scenes (workspaces / pages) assembled from them.
 
 ```bash
+make install      # npm install (the Makefile puts Homebrew's Node 22 on PATH; NODE_BIN= to override)
+make up           # the API (from ../webclient), the site/lab on :4321 and the Playground on :5173 -- Ctrl-C stops all
+make check        # typecheck every workspace + unit tests + the Storybook build
+make help         # every target: playground, storybook, site, site-serve, api, lab-test, build, clean
+```
+
+Without make:
+
+```bash
 export PATH="/opt/homebrew/opt/node@22/bin:$PATH"   # Node 22 (Homebrew)
 npm install
 npm run storybook
