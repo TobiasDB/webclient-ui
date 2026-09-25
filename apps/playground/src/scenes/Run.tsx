@@ -1,278 +1,180 @@
+/** RUN: a plan, played (docs/product/run.md). The same view for a plan alone (nothing has happened yet), a
+ * live run (the cursor at the end) and a recorded one (scrub it): the plan, folded over its events up to the
+ * cursor. The graph is the plan materialising; the page is the item on screen's; the timeline is everything on
+ * one axis; the rows and events say it in words. */
 import * as React from "react";
-import { useSearchParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ActivityLanes, Chip, DataFrame, EmptyState, PipelineGraph, StagePlan, cn, planLib, stagesLib, type Plan, type RunEvent } from "@webclient/ui";
-import { EventTree, ProcessPanel, ReplayScreen, markLanes, type Pick } from "./RunReplay";
-import { api, type RunState } from "../lib/api";
-import { useActive, useSession } from "../lib/session";
+import { Chip, DataFrame, EmptyState, RunGraph, RunTimeline, cn, planLib, runLib, type RunEvent } from "@webclient/ui";
+import { useActive } from "../lib/session";
+import { PageStage } from "./run/PageStage";
+import { LoadMenu, PlanLoader, TraceList, TracesMenu } from "./run/sources";
+import { useRunSource } from "./run/useRunSource";
 
-type Spec = { plan: Plan; url?: string; name?: string };
-export const encSpec = (s: Spec) => btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const decSpec = (s: string | null): Spec | null => { if (!s) return null; try { const o = JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))))); return o?.plan?.steps ? o : null; } catch { return null; } };
-const remember = (id: string, spec: Spec) => { try { localStorage.setItem(`wc.run.${id}`, JSON.stringify(spec)); } catch { /* fine */ } };
-const recall = (id: string): Spec | null => { try { const t = localStorage.getItem(`wc.run.${id}`); return t ? JSON.parse(t) : null; } catch { return null; } };
+export { encSpec } from "./run/sources";
 
+type Sel = { addr: string | null; item: runLib.ItemKey | null };
 
-/** RUN: a plan executed and watched. Left, the plan as an EXPLAIN tree of stages that realises
- * as the run goes (how many times each ran, which is active, where it failed); right, the rows as
- * they stream in, the errors, and the event log. A timeline steps back and forward through the
- * run (the stages, the rows and the log as they were at that moment); the run is recorded as a
- * trace. Author's Run ▶ opens here. */
 export function Run() {
-  const [params, setParams] = useSearchParams();
   const active = useActive("/run");
-  const sessionId = useSession();
-  const [runId, setRunId] = React.useState<string | null>(params.get("id"));
-  const [spec, setSpec] = React.useState<Spec | null>(() => decSpec(params.get("p")) ?? (params.get("id") ? recall(params.get("id")!) : null));
-  const [data, setData] = React.useState<RunState | null>(null);
+  const src = useRunSource(active);
+  const { events, plan, planId } = src;
+  const model = React.useMemo(() => (plan ? runLib.planModel(plan, planId) : null), [plan, planId]);
+
+  // the cursor: live follows the end; playing advances it; scrubbing sets it
   const [t, setT] = React.useState(0);
   const [live, setLive] = React.useState(true);
-  const [startError, setStartError] = React.useState<string | null>(null);
-  const started = React.useRef<string | null>(null);
-
-  // a plan arrives (?p=, from Author or pasted): it is LOADED, not run -- Run ▶ starts it
-  const start = React.useCallback(async (sp: Spec) => {
-    setStartError(null); setData(null); setT(0); setLive(true);
-    try {
-      const r = await api.runStart({ plan: { ...sp.plan, session_id: sessionId ?? sp.plan.session_id }, url: sp.url, name: sp.name });
-      remember(r.id, sp); setSpec(sp); setRunId(r.id);
-      setParams((q) => { const n = new URLSearchParams(q); n.set("id", r.id); return n; }, { replace: true });
-    } catch (e) { setStartError((e as Error).message); }
-  }, [sessionId, setParams]);
-  React.useEffect(() => {
-    if (!active) return; const p = params.get("p"); if (!p || started.current === p) return;
-    const sp = decSpec(p); if (!sp) return; started.current = p; setSpec(sp);
-    if (!params.get("id")) { setRunId(null); setData(null); setT(0); }
-  }, [active, params]);
-  const openTrace = (id: string) => setParams(() => { const n = new URLSearchParams(); n.set("trace", id); return n; });
-  const load = (sp: Spec) => { setParams(() => { const n = new URLSearchParams(); n.set("p", encSpec(sp)); return n; }); };
-  React.useEffect(() => { if (!active) return; const id = params.get("id"); if (id && id !== runId) { setRunId(id); setData(null); setSpec(recall(id)); setLive(true); } }, [active, params]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // a RECORDED run (?trace=<id>): its events and rows (from the row events), the same views as a live one
-  const traceParam = params.get("trace");
-  React.useEffect(() => {
-    if (!active || !traceParam) return; let on = true;
-    setRunId(null); setSpec(null); setLive(false); setData(null);
-    api.traceEvents(traceParam).then((evs) => {
-      if (!on) return;
-      const events = (evs as Record<string, unknown>[]).filter((e) => e.topic !== "trace");
-      const rows = events.map((e, i) => ({ e, i })).filter(({ e }) => e.topic === "plan" && e.phase === "row" && (e.detail as { row?: unknown } | undefined)?.row !== undefined).map(({ e, i }) => ({ row: (e.detail as { row: unknown }).row, at: i + 1 }));
-      const ts = events.map((e) => Number(e.ts ?? 0)).filter(Boolean);
-      const err = events.find((e) => e.topic === "error" && e.raised !== false) as { error?: RunState["error"] } | undefined;
-      setData({ id: traceParam, status: err ? "error" : "done", error: err?.error ?? null, started: ts[0] ?? 0, finished: ts[ts.length - 1] ?? 0, describe: "", trace: traceParam, n_rows: rows.length, n_events: events.length, rows, events });
-      setT(events.length);
-    }).catch((e) => setStartError((e as Error).message));
-    return () => { on = false; };
-  }, [active, traceParam]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // follow the run: what arrived since the counts held
-  React.useEffect(() => {
-    if (!runId) return; let on = true; let timer: ReturnType<typeof setTimeout> | undefined;
-    const held = { rows: 0, events: 0 };
-    const pull = async () => {
-      try {
-        const r = await api.run(runId, held.rows, held.events); if (!on) return;
-        held.rows += r.rows.length; held.events += r.events.length;
-        setData((d) => (d && d.id === r.id ? { ...r, rows: [...d.rows, ...r.rows], events: [...d.events, ...r.events] } : r));
-        if (r.status === "running") timer = setTimeout(pull, 350);
-      } catch { if (on) timer = setTimeout(pull, 1500); }
-    };
-    pull(); return () => { on = false; if (timer) clearTimeout(timer); };
-  }, [runId]);
-  const events = (data?.events ?? []) as RunEvent[];
+  const [playing, setPlaying] = React.useState(false);
+  const [speed, setSpeed] = React.useState(0);
   React.useEffect(() => { if (live) setT(events.length); }, [live, events.length]);
-  const running = data?.status === "running";
+  React.useEffect(() => { setLive(true); setPlaying(false); setSel({ addr: null, item: null }); }, [src.runId, src.traceId]);
 
-  // the plan's stages (from the spec, else the trace's plan)
-  const tracePlan = useQuery({ queryKey: ["run-plan", data?.trace], queryFn: async () => { const p = await api.tracePlan(data!.trace!); const ir = await api.plan({ blob: p.blob }); return ir.plan as Plan; }, enabled: !spec && !!data?.trace && data.status !== "running" });
-  const plan = spec?.plan ?? tracePlan.data ?? null;
-  const stages = React.useMemo(() => (plan ? stagesLib.stagesOf(plan) : []), [plan]);
-  const stats = React.useMemo(() => stagesLib.stageStats(stages, events, t), [stages, events, t]);
-  const resources = React.useMemo(() => stagesLib.resourcesOf(events, t), [events, t]);
-  const rowsAt = React.useMemo(() => (data?.rows ?? []).filter((r) => r.at <= t || (!running && t >= events.length)).map((r) => (r.row && typeof r.row === "object" && !Array.isArray(r.row) ? (r.row as Record<string, unknown>) : { value: r.row })), [data?.rows, t, running, events.length]);
-  const errors = React.useMemo(() => events.slice(0, t).map((e, i) => ({ e, i })).filter(({ e }) => e.topic === "error"), [events, t]);
-  const [focusStage, setFocusStage] = React.useState<string | null>(null);
-  // REPLAY (docs/product/run-replay.md): every event's stage; what is watched (null = follow the run)
-  const stageOf = React.useMemo(() => (stages.length ? stagesLib.eventStages(stages, events) : []), [stages, events]);
-  const [pick, setPick] = React.useState<Pick>(null);
-  const lanes = React.useMemo(() => stagesLib.flatStages(stages).map((st) => ({ id: st.id, label: `${st.kind} ${st.op}${st.arg ? ` ${st.arg}` : ""}${st.column && st.column !== "(named from the page)" ? ` → ${st.column}` : ""}`, colour: stagesLib.ACTION_COLOUR[stagesLib.actionOf(st.op)] })), [stages]);
-  const traceId = traceParam ?? data?.trace ?? null;
-  const extraLanes = React.useMemo(() => markLanes(events), [events]);
-  // the lanes fold away (remembered): the replay and the rows get the room
-  // the three bottom panels (activity, output, events) are FOLDED by default -- the graph and the replay get the
-  // room -- and remember being opened
-  const usePanel = (key: string): [boolean, (v: boolean) => void] => {
-    const [v, set] = React.useState(() => { try { return localStorage.getItem(`wc.run.${key}`) === "1"; } catch { return false; } });
-    return [v, (x: boolean) => { set(x); try { localStorage.setItem(`wc.run.${key}`, x ? "1" : "0"); } catch { /* fine */ } }];
-  };
-  const [lanesOpen, setLanesOpen] = usePanel("lanes.open");
-  const [outOpen, setOutOpen] = usePanel("output.open");
-  const [evOpen, setEvOpen] = usePanel("events.open");
-  // play: the recorded clock, at a speed
-  // speed 0 = STEP BY STEP: one visible moment (a select, a read, an action, a page fetched) every 0.4s -- a run's
-  // steps are milliseconds apart, so no time speed lets you see each one; otherwise the recorded clock × speed
-  const [playing, setPlaying] = React.useState(false); const [speed, setSpeed] = React.useState(0);
-  const visible = React.useCallback((e: RunEvent) => (e.topic === "plan" && (e.phase === "step" || e.phase === "fanout")) || e.topic === "action" || e.topic === "snapshot" || e.topic === "error", []);
+  const nowF = React.useRef(new runLib.RunFolder()); const fullF = React.useRef(new runLib.RunFolder());
+  const state = React.useMemo(() => nowF.current.at(events, model, t), [events, model, t]);
+  const full = React.useMemo(() => fullF.current.at(events, model, events.length), [events, model]);
+
+  // what is on screen: a picked item / step, else FOLLOW (the oldest item in flight)
+  const [sel, setSel] = React.useState<Sel>({ addr: null, item: null });
+  const item = sel.item ?? (model ? runLib.followItem(state, model) : "");
+  const focusAddr = React.useMemo(() => runLib.latestFor(state, item)?.addr ?? null, [state, item]);
+  const seek = (i: number) => { setLive(false); setPlaying(false); setT(Math.max(0, Math.min(events.length, i))); };
+  // step to the previous / next moment (of the item on screen when one is picked)
+  const moment = React.useCallback((from: number, dir: 1 | -1) => {
+    for (let i = from + (dir > 0 ? 0 : -2); i >= 0 && i < events.length; i += dir) {
+      const e = events[i]!; if (!runLib.MOMENT(e)) continue;
+      if (sel.item != null && sel.item !== "" && !(runLib.keyOf(e.item) === sel.item || runLib.keyOf(e.item).startsWith(`${sel.item}.`))) continue;
+      return i + 1;
+    }
+    return dir > 0 ? events.length : 0;
+  }, [events, sel.item]);
+  // PLAY: step by step (one moment every 0.35s -- a run's steps are ms apart), or the recorded clock × speed
   React.useEffect(() => {
     if (!playing || !events.length) return;
     let i = t;
-    if (speed === 0) {
-      const h = setInterval(() => {
-        let k = i; while (k < events.length && !visible(events[k]!)) k++;
-        i = Math.min(events.length, k + 1); setT(i); if (i >= events.length) setPlaying(false);
-      }, 400);
-      return () => clearInterval(h);
-    }
-    const ts = events.map((e) => Number(e.ts ?? 0)); let clock = ts[Math.max(0, Math.min(t, ts.length) - 1)] || ts.find((x) => x > 0) || 0;
-    const h = setInterval(() => {
-      clock += 0.1 * speed; while (i < ts.length && (ts[i] || clock) <= clock) i++;
-      setT(i); if (i >= ts.length) setPlaying(false);
-    }, 100);
+    if (speed === 0) { const h = setInterval(() => { i = moment(i, 1); setT(i); if (i >= events.length) setPlaying(false); }, 350); return () => clearInterval(h); }
+    const ts = events.map((e) => Number(e.ts ?? 0)); let clock = ts[Math.max(0, i - 1)] || ts.find((x) => x > 0) || 0;
+    const h = setInterval(() => { clock += 0.05 * speed; while (i < ts.length && (ts[i] || clock) <= clock) i++; setT(i); if (i >= ts.length) setPlaying(false); }, 50);
     return () => clearInterval(h);
-  }, [playing, speed, events.length]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [view, setView] = React.useState<"graph" | "tree">("graph");
-  const [big, setBig] = React.useState(false);
-  const runs = useQuery({ queryKey: ["runs", runId, data?.status], queryFn: api.runs, enabled: active });
-  const step = (d: number) => { setLive(false); setT((x) => Math.max(0, Math.min(events.length, x + d))); };
-  const elapsed = data ? ((data.finished ?? Date.now() / 1000) - data.started).toFixed(1) : "";
+  }, [playing, speed, events.length, moment]); // eslint-disable-line react-hooks/exhaustive-deps
+  // keys: space plays / pauses, ← → step a moment
+  React.useEffect(() => {
+    if (!active) return;
+    const k = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.closest?.("input,textarea,select")) return;
+      if (e.key === " ") { e.preventDefault(); setLive(false); if (t >= events.length) setT(0); setPlaying((p) => !p); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); seek(moment(t, 1)); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); seek(moment(t, -1)); }
+    };
+    window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k);
+  }); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!runId && !spec && !data && !traceParam) return <div className="flex h-full flex-col items-center justify-start gap-3 overflow-auto p-6"><EmptyState title="Nothing loaded" hint="Open a plan from Author (Open in Run), paste one below, or replay a recorded run. A plan loads as a pipeline graph; Run ▶ executes it and records it." /><PlanLoader onLoad={load} /><TraceList onOpen={openTrace} /></div>;
+  const usePanel = (key: string, dflt = false): [boolean, (v: boolean) => void] => {
+    const [v, set] = React.useState(() => { try { const x = localStorage.getItem(`wc.run2.${key}`); return x == null ? dflt : x === "1"; } catch { return dflt; } });
+    return [v, (x: boolean) => { set(x); try { localStorage.setItem(`wc.run2.${key}`, x ? "1" : "0"); } catch { /* fine */ } }];
+  };
+  const [timeOpen, setTimeOpen] = usePanel("timeline", true);
+  const [rowsOpen, setRowsOpen] = usePanel("rows");
+  const [evOpen, setEvOpen] = usePanel("events");
+
+  if (src.empty) return <div className="flex h-full flex-col items-center justify-start gap-3 overflow-auto p-6"><EmptyState title="Nothing loaded" hint="Open a plan from Author (Open in Run), paste one below, or replay a recorded run. A plan loads as its graph; Run ▶ executes it and records it." /><PlanLoader onLoad={src.load} /><TraceList onOpen={src.openTrace} /></div>;
+
+  const running = src.status === "running" || src.status === "starting";
+  const errors = state.errors.filter((e) => e.raised);
+  const secs = state.t && state.t0 ? (state.t - state.t0).toFixed(1) : "0.0";
+  const rootUrl = src.url ?? (full.docs.values().next().value as runLib.DocRun | undefined)?.url;
   return (
     <div className="flex h-full min-h-0 flex-col text-[11px]">
-      {/* the run bar: status, time, counts, the timeline */}
+      {/* the bar: the plan's state, the transport, what is followed */}
       <div className="flex h-[30px] shrink-0 items-center gap-2 border-b border-line px-2">
-        {spec && <button type="button" data-act="run" className="rounded bg-accent px-2 py-px text-[11px] font-medium text-white hover:brightness-110 disabled:opacity-40" onClick={() => start(spec)} disabled={running} title="execute the plan (recorded as a trace)">{data ? "Run again ▶" : "Run ▶"}</button>}
-        <Chip tone={data?.status === "error" ? "bad" : running ? "accent" : data ? "ok" : "neutral"} dot>{data?.status ?? (startError ? "failed to start" : runId ? "starting…" : "loaded · not run")}</Chip>
-        <span className="text-muted">{elapsed && `${elapsed}s`} · {data?.rows.length ?? 0} rows · {events.length} events{(() => { const miss = errors.filter(({ e }) => e.raised === false).length; const bad = errors.length - miss; return `${bad ? ` · ${bad} error${bad > 1 ? "s" : ""}` : ""}${miss ? ` · ${miss} missing` : ""}`; })()}</span>
+        {src.spec && <button type="button" data-act="run" className="rounded bg-accent px-2 py-px font-medium text-white hover:brightness-110 disabled:opacity-40" onClick={src.start} disabled={running} title="execute the plan (recorded as a trace)">{src.runId ? "Run again ▶" : "Run ▶"}</button>}
+        <Chip tone={src.status === "error" ? "bad" : running ? "accent" : src.status === "done" ? "ok" : "neutral"} dot>{src.startError ? "failed to start" : src.status === "loaded" ? "the plan · not run" : src.status}</Chip>
+        <span className="whitespace-nowrap text-muted">{secs}s · {state.rows.length} rows · {state.docs.size} pages · {state.requests.length} requests{errors.length ? <b className="text-bad"> · {errors.length} error{errors.length > 1 ? "s" : ""}</b> : null}</span>
         <div className="flex items-center gap-0.5">
-          <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => { setLive(false); setT(0); }} title="the start">⏮</button>
-          <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => step(-1)} title="one event back">◀</button>
-          <button type="button" data-act="play" className={cn("px-1 hover:text-ink", playing ? "text-accent" : "text-muted")} onClick={() => { setLive(false); if (t >= events.length) setT(0); setPlaying(!playing); }} title="play the run at the chosen speed">{playing ? "❚❚" : "▷"}</button>
-          <select className="h-5 rounded border border-line bg-surface text-[10px]" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} title="replay pace: step by step (each select / read / action / page), or the recorded clock at a speed">{[0, 0.1, 0.25, 1, 4, 16].map((x) => <option key={x} value={x}>{x === 0 ? "steps" : `${x}×`}</option>)}</select>
-          <input type="range" min={0} max={Math.max(1, events.length)} value={Math.min(t, events.length)} onChange={(e) => { setLive(false); setT(Number(e.target.value)); }} className="w-72" />
-          <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => step(1)} title="one event forward">▶</button>
-          <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => setLive(true)} title="follow the run live">⏭</button>
-          <span className={cn("ml-1 rounded px-1 text-[10px]", live ? "bg-accent-soft text-accent" : "text-muted")}>{live ? "live" : `at ${t}/${events.length}`}</span>
+          <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => seek(0)} title="the start (the plan, nothing run)">⏮</button>
+          <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => seek(moment(t, -1))} title="the previous moment (←)">◀</button>
+          <button type="button" data-act="play" className={cn("px-1.5 hover:text-ink", playing ? "text-accent" : "text-muted")} onClick={() => { setLive(false); if (t >= events.length) setT(0); setPlaying(!playing); }} title="play (space)">{playing ? "❚❚" : "▶"}</button>
+          <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => seek(moment(t, 1))} title="the next moment (→)">▶|</button>
+          <select className="h-5 rounded border border-line bg-surface text-[10px]" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} title="step by step (each find / read / page / action), or the recorded clock at a speed">{[0, 0.25, 1, 4, 16].map((x) => <option key={x} value={x}>{x === 0 ? "steps" : `${x}×`}</option>)}</select>
+          <input type="range" min={0} max={Math.max(1, events.length)} value={Math.min(t, events.length)} onChange={(e) => seek(Number(e.target.value))} className="w-56" aria-label="the moment" />
+          <button type="button" className={cn("rounded px-1 text-[10px]", live ? "bg-accent-soft text-accent" : "text-muted hover:text-ink")} onClick={() => { setLive(true); setPlaying(false); }} title="follow the run live / go to the end">{live ? (running ? "● live" : "end") : `${t}/${events.length}`}</button>
         </div>
-        <button type="button" data-act="follow" onClick={() => setPick(null)} className={cn("rounded px-1.5 text-[10px]", pick ? "text-muted hover:text-ink" : "bg-accent-soft text-accent")} title={pick ? "watching what you picked -- click to follow the run again" : "following the run: the replay shows the item that was just active"}>{pick ? `watching ${pick.item != null ? (pick.item ? `item ${pick.item}` : "root") : "a stage"} · follow` : "● follow"}</button>
+        <button type="button" data-act="follow" onClick={() => setSel({ addr: null, item: null })} className={cn("rounded px-1.5 text-[10px]", sel.item != null || sel.addr ? "text-muted hover:text-ink" : "bg-accent-soft text-accent")} title="follow: the screen shows the oldest item still running">{sel.item != null || sel.addr ? `watching ${sel.item ? `item ${sel.item}` : "a step"} · follow` : `● follow${item ? ` · item ${item}` : ""}`}</button>
         <span className="flex-1" />
-        {data?.trace && !running && !traceParam && <button type="button" className="text-accent underline" onClick={() => openTrace(data.trace!)} title="replay this run's recording: the graph, the lanes, each item's page">replay ▸</button>}
-        <LoadMenu onLoad={load} />
-        <TracesMenu onOpen={openTrace} current={traceParam} />
-        {runs.data && runs.data.length > 1 && <select className="h-6 rounded border border-line bg-surface px-1 text-[10.5px]" value={runId ?? ""} onChange={(e) => setParams((q) => { const n = new URLSearchParams(q); n.set("id", e.target.value); n.delete("p"); return n; })}>{runs.data.map((r) => <option key={r.id} value={r.id}>{r.id} · {r.status} · {r.rows} rows</option>)}</select>}
+        <LoadMenu onLoad={src.load} />
+        <TracesMenu onOpen={src.openTrace} current={src.traceId} />
       </div>
-      {startError && <div className="px-2 py-1 text-bad">{startError}</div>}
-      {data?.error && <div className="border-b border-bad/40 bg-bad-soft/40 px-2 py-0.5 text-[11px]"><b className="text-bad">{data.error.code}</b> {data.error.message}{data.error.hint ? <span className="text-muted"> — {data.error.hint}</span> : null}</div>}
-      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] gap-1 p-1" style={{ gridTemplateRows: big ? "minmax(0,1fr)" : `minmax(0,1.7fr) auto ${outOpen || evOpen ? "minmax(0,1fr)" : "auto"}` }}>
-        {/* TOP: the plan as a pipeline graph (or the stage tree) | the replay screen */}
-        <div className="grid min-h-0 grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] gap-1">
-          <section className="flex min-h-0 flex-col rounded border border-line">
-            <div className="flex items-center gap-1 border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Pipeline
-              <span className="ml-1 flex overflow-hidden rounded border border-line font-normal normal-case">{(["graph", "tree"] as const).map((v) => <button key={v} type="button" className={cn("px-1.5", view === v ? "bg-accent-soft text-accent" : "hover:text-ink")} onClick={() => setView(v)}>{v}</button>)}</span>
-              {plan && <span className="ml-1 min-w-0 truncate font-mono font-normal normal-case tracking-normal" title={planLib.describe(plan)}>{planLib.describe(plan)}</span>}
-              <span className="flex-1" />
-              <button type="button" className="ml-1 shrink-0 whitespace-nowrap rounded border border-line px-1 font-normal normal-case hover:text-ink" onClick={() => setBig(!big)} title={big ? "show the lanes, rows and events again" : "give the graph and the replay the whole workspace"}>{big ? "⤡ restore" : "⤢ maximise"}</button></div>
-            <div className="min-h-0 min-w-0 flex-1 overflow-hidden p-0.5">{!stages.length ? (events.length ? <ProcessPanel events={events} at={t} pick={pick} onPick={setPick} onSeek={(i) => { setLive(false); setPlaying(false); setT(i); }} /> : <span className="p-2 text-muted">…</span>) : view === "graph"
-              ? <PipelineGraph stages={stages} stats={stats} resources={resources} at={t} running={running || (!live && !!data && t < events.length)} selected={pick?.stage ?? focusStage} onStage={(st) => setPick((p) => (p?.stage === st.id ? null : { stage: st.id, item: null }))} />
-              : <StagePlan stages={stages} stats={stats} at={t} running={running || !live} onStage={(st) => setPick((p) => (p?.stage === st.id ? null : { stage: st.id, item: null }))} />}</div>
+      {src.startError && <div className="px-2 py-1 text-bad">{src.startError}</div>}
+      {src.error && <div className="border-b border-bad/40 bg-bad-soft/40 px-2 py-0.5"><b className="text-bad">{src.error.code}</b> {src.error.message}{src.error.hint ? <span className="text-muted"> — {src.error.hint}</span> : null}</div>}
+      <div className="flex min-h-0 flex-1 flex-col gap-1 p-1">
+        {/* the graph | the page */}
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-1">
+          <section className="flex min-h-0 flex-col overflow-hidden rounded border border-line">
+            <div className="flex min-w-0 items-center gap-1.5 border-b border-line px-1.5 py-0.5 text-[10px]">
+              <span className="shrink-0 font-semibold uppercase tracking-wide text-muted">plan</span>
+              {plan && <span className="min-w-0 truncate font-mono text-muted" title={planLib.describe(plan)}>{planLib.describe(plan)}</span>}
+            </div>
+            <div className="min-h-0 flex-1">
+              {model ? <RunGraph model={model} state={state} item={item} addr={sel.addr} rootUrl={rootUrl} focus={sel.addr ?? focusAddr}
+                onSelect={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a }))} onPick={(k) => setSel((s) => ({ ...s, item: k }))} />
+                : <div className="p-3 text-muted">{src.traceId ? "this recording carries no plan: its pages and requests are on the timeline and the page" : "…"}</div>}
+            </div>
           </section>
           <section className="flex min-h-0 flex-col overflow-hidden rounded border border-line">
-            <ReplayScreen traceId={traceId} events={events} stageOf={stageOf} stages={stages} stats={stats} at={t} pick={pick} maxHeight={big ? 900 : 520} />
+            <PageStage traceId={src.traceId} events={events} model={model} state={state} full={full} addr={sel.addr} item={item} maxHeight={640} />
           </section>
         </div>
-        {/* the ACTIVITY LANES: each stage over time (how many items at once), the network; scrub here */}
-        {!big && <section className={cn("flex min-h-0 flex-col rounded border border-line", lanesOpen ? "max-h-[112px]" : "")}>
-          <button type="button" onClick={() => setLanesOpen(!lanesOpen)} className="flex items-center gap-1 px-1.5 py-px text-left text-[9.5px] font-semibold uppercase tracking-wide text-muted hover:text-ink" title={lanesOpen ? "fold the activity lanes" : "show each stage / loop / request over time (click a lane to scrub)"}>{lanesOpen ? "▾" : "▸"} Activity<span className="font-normal normal-case">{lanesOpen ? " · click or drag to scrub" : ` · ${lanes.length + extraLanes.length} lanes`}</span></button>
-          {lanesOpen && <ActivityLanes className="min-h-0 flex-1 p-1" lanes={lanes} extra={extraLanes} events={events} stageOf={stageOf} at={t} selected={pick?.stage ?? null} onLane={(id) => setPick((p) => (p?.stage === id ? null : { stage: id, item: null }))} onSeek={(i) => { setLive(false); setPlaying(false); setT(i); }} />}
-        </section>}
-        {/* BOTTOM: the rows as they arrived | the events grouped (stage ▸ item ▸ event) + errors */}
-        <div className={cn("grid min-h-0 grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] items-start gap-1", big && "hidden", (outOpen || evOpen) && "items-stretch")}>
-          <section className="flex min-h-0 flex-col rounded border border-line">
-            <button type="button" onClick={() => setOutOpen(!outOpen)} className={cn("flex items-center gap-1 px-1.5 py-px text-left text-[9.5px] font-semibold uppercase tracking-wide text-muted hover:text-ink", outOpen && "border-b border-line")}>{outOpen ? "▾" : "▸"} Output<span className="font-normal normal-case">· {rowsAt.length} rows{!live ? ` (at event ${t})` : running ? " (streaming)" : ""}</span></button>
-            {outOpen && <div className="min-h-0 flex-1 overflow-auto">{rowsAt.length ? <DataFrame rows={rowsAt} dense /> : <div className="p-2 text-muted">{running ? "waiting for the first row…" : traceParam && !(data?.rows.length) && events.some((e) => e.topic === "plan" && e.phase === "row") ? "this trace was recorded before rows were traced: it shows the run, not its rows" : "no rows at this point"}</div>}</div>}
-          </section>
-          <section className="flex min-h-0 flex-col rounded border border-line">
-            <button type="button" onClick={() => setEvOpen(!evOpen)} className={cn("flex items-center gap-1 px-1.5 py-px text-left text-[9.5px] font-semibold uppercase tracking-wide text-muted hover:text-ink", evOpen && "border-b border-line")}>{evOpen ? "▾" : "▸"} Events<span className="font-normal normal-case">· by stage ▸ item · up to #{t}</span>{errors.length ? <span className="ml-1 normal-case text-bad">· {errors.length} error{errors.length > 1 ? "s" : ""}</span> : null}</button>
-            {evOpen && errors.length > 0 && <ul className="max-h-16 shrink-0 overflow-auto border-b border-line">{errors.slice(-20).map(({ e, i }) => <li key={i}><button type="button" className="w-full truncate px-1.5 py-px text-left hover:bg-surface-2" onClick={() => { setLive(false); setT(i + 1); setPick({ stage: stageOf[i] ?? null, item: (e.item ?? []).join(".") }); }}><b className={e.raised === false ? "text-warn" : "text-bad"}>{e.error?.code}</b> <span className="text-muted">#{i}{e.item ? ` · item ${e.item.join(".")}` : ""}</span> {e.error?.message}</button></li>)}</ul>}
-            {evOpen && <EventTree events={events} stageOf={stageOf} stages={stages} at={t} pick={pick} onPick={setPick} onSeek={(i) => { setLive(false); setPlaying(false); setT(i); }} />}
-          </section>
+        {/* everything on one time axis */}
+        <Fold title="timeline" hint={timeOpen ? "click or drag to go to a moment" : `${full.requests.length} requests · ${full.docs.size} pages · ${full.actions.length} actions`} open={timeOpen} onToggle={() => setTimeOpen(!timeOpen)} className={timeOpen ? "max-h-[180px]" : ""}>
+          {events.length ? <RunTimeline className="min-h-0 flex-1 p-1" events={events} model={model} full={full} at={t} onSeek={seek} addr={sel.addr} onLane={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a }))} /> : <div className="p-2 text-muted">nothing has run yet</div>}
+        </Fold>
+        <div className={cn("grid min-h-0 grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] items-start gap-1", (rowsOpen || evOpen) && "h-[30%] items-stretch")}>
+          <Fold title="rows" hint={`${state.rows.length} projected${!live ? " so far" : ""} · click one to see where it came from`} open={rowsOpen} onToggle={() => setRowsOpen(!rowsOpen)}>
+            <div className="min-h-0 flex-1 overflow-auto">{state.rows.length
+              ? <DataFrame dense rows={state.rows.map((r) => ({ item: r.item, ...(r.row && typeof r.row === "object" && !Array.isArray(r.row) ? (r.row as Record<string, unknown>) : { value: r.row }) }))} selected={state.rows.findIndex((r) => r.item === item)} onRow={(i) => setSel({ addr: null, item: state.rows[i]?.item ?? null })} />
+              : <div className="p-2 text-muted">{running ? "waiting for the first row…" : "no rows at this moment"}</div>}</div>
+          </Fold>
+          <Fold title="events" hint={`${item ? `item ${item}'s` : "the run's"}, in words · up to #${t}`} open={evOpen} onToggle={() => setEvOpen(!evOpen)}>
+            <EventFeed events={events} model={model} upto={t} item={sel.item} onSeek={seek} />
+          </Fold>
         </div>
       </div>
     </div>
   );
 }
 
-/** Paste a plan: its JSON (the plan, or {plan, url}) or a blob -- validated by the API, then loaded (not run). */
-function PlanLoader({ onLoad, compact }: { onLoad: (s: Spec) => void; compact?: boolean }) {
-  const [text, setText] = React.useState(""); const [url, setUrl] = React.useState(""); const [err, setErr] = React.useState<string | null>(null);
-  const go = async () => {
-    setErr(null); const t = text.trim(); if (!t) return;
-    try {
-      let body: Record<string, unknown>; let u = url.trim() || undefined;
-      try { const o = JSON.parse(t); if (o && o.plan) { body = { plan: o.plan }; u = u ?? o.url; } else body = { plan: o }; } catch { body = { blob: t }; }
-      const r = await api.plan(body); onLoad({ plan: r.plan as Plan, url: u });
-    } catch (e) { setErr((e as Error).message); }
-  };
+function Fold({ title, hint, open, onToggle, className, children }: { title: string; hint?: string; open: boolean; onToggle: () => void; className?: string; children: React.ReactNode }) {
   return (
-    <div className={cn("flex flex-col gap-1 text-[11px]", compact ? "w-[420px]" : "w-[560px] max-w-full")}>
-      <textarea className="h-28 rounded border border-line bg-surface p-1 font-mono text-[10.5px]" placeholder='a plan: {"root": …, "steps": […]}, {"plan": …, "url": …}, or a blob' value={text} onChange={(e) => setText(e.target.value)} />
-      <div className="flex items-center gap-1">
-        <input className="h-6 min-w-0 flex-1 rounded border border-line bg-surface px-1 text-[10.5px]" placeholder="url (when the plan starts from one)" value={url} onChange={(e) => setUrl(e.target.value)} />
-        <button type="button" className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40" disabled={!text.trim()} onClick={go}>Load</button>
-      </div>
-      {err && <div className="text-bad">{err}</div>}
-    </div>
-  );
-}
-function LoadMenu({ onLoad }: { onLoad: (s: Spec) => void }) {
-  const [open, setOpen] = React.useState(false);
-  return (
-    <span className="relative">
-      <button type="button" className="rounded border border-line px-1.5 hover:bg-surface-2" onClick={() => setOpen(!open)} title="load another plan">load plan ▾</button>
-      {open && <div className="absolute right-0 top-6 z-30 rounded border border-line bg-surface p-1.5 shadow-lg"><PlanLoader compact onLoad={(s) => { setOpen(false); onLoad(s); }} /></div>}
-    </span>
+    <section className={cn("flex min-h-0 flex-col overflow-hidden rounded border border-line", className)}>
+      <button type="button" onClick={onToggle} className={cn("flex shrink-0 items-center gap-1 px-1.5 py-px text-left text-[9.5px] font-semibold uppercase tracking-wide text-muted hover:text-ink", open && "border-b border-line")}>{open ? "▾" : "▸"} {title}{hint && <span className="truncate font-normal normal-case">· {hint}</span>}</button>
+      {open && children}
+    </section>
   );
 }
 
-/** a size in KB (the unit the person reads traces by) */
-const kb = (n: number): string => `${Math.max(1, Math.round(n / 1024)).toLocaleString()} KB`;
-/** traces the website replays: "clear all" keeps them */
-const SITE_TRACES = ["demo", "onboarding"];
+const KIND_TONE: Record<string, string> = { step: "text-ink", result: "text-ok", page: "text-accent", request: "text-muted", action: "text-warn", dom: "text-muted", error: "text-bad", row: "text-ink", loop: "text-muted", run: "text-ink", other: "text-muted" };
 
-/** the recorded runs: open one to replay it here; delete one, or clear them all (the site's demo traces kept) */
-function TraceList({ onOpen, current, compact }: { onOpen: (id: string) => void; current?: string | null; compact?: boolean }) {
-  const qc = useQueryClient();
-  const traces = useQuery({ queryKey: ["traces"], queryFn: api.traces });
-  const list = [...(traces.data ?? [])].sort((a, b) => Number(b.started ?? 0) - Number(a.started ?? 0));
-  const total = list.reduce((a, t) => a + (t.bytes ?? 0), 0);
+/** the events up to the moment, in words -- the picked item's (and its rows'), else the run's; newest last */
+function EventFeed({ events, model, upto, item, onSeek }: { events: RunEvent[]; model: runLib.PlanModel | null; upto: number; item: runLib.ItemKey | null; onSeek: (i: number) => void }) {
+  const list = React.useMemo(() => {
+    const out: { i: number; e: RunEvent }[] = [];
+    for (let i = Math.min(upto, events.length) - 1; i >= 0 && out.length < 300; i--) {
+      const e = events[i]!; const k = runLib.keyOf(e.item);
+      if (item != null && item !== "" && !(k === item || k.startsWith(`${item}.`))) continue;
+      if (e.topic === "rrweb" || e.topic === "resource" || e.topic === "script") continue;
+      if (e.topic === "plan" && e.phase === "row" && model?.nodes.some((n) => n.op === "project")) continue;  // said by the project step's row
+      out.push({ i, e });
+    }
+    return out.reverse();
+  }, [events, upto, item]);
+  const end = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => { const el = end.current?.parentElement; if (el) el.scrollTop = el.scrollHeight; }, [list.length]);
   return (
-    <div className={cn("flex min-h-0 flex-col text-[11px]", compact ? "max-h-[60vh] w-[440px]" : "w-[560px] max-w-full rounded border border-line")}>
-      <div className="flex items-center gap-2 border-b border-line px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
-        Recorded runs{list.length ? <span className="font-normal normal-case">{list.length} · {kb(total)}</span> : null}<span className="flex-1" />
-        {list.length > 0 && <button type="button" data-act="clear-traces" className="rounded px-1.5 font-normal normal-case text-bad hover:bg-bad-soft" onClick={async () => {
-          const keep = list.map((t) => t.id).filter((x) => SITE_TRACES.includes(x));
-          if (!window.confirm(`Delete ${list.length - keep.length} trace(s)${keep.length ? ` (keeping ${keep.join(", ")}: the site replays them)` : ""}?`)) return;
-          await api.tracesClear(keep); await qc.invalidateQueries({ queryKey: ["traces"] });
-        }}>clear all</button>}
-      </div>
-      {list.length ? <ul className="min-h-0 overflow-auto">{list.map((t) => (
-        <li key={t.id} className={cn("group flex items-center gap-2 border-b border-line/60 px-2 py-1 hover:bg-surface-2", current === t.id && "bg-accent-soft")}>
-          <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onOpen(t.id)} title="replay it here">
-            <span className="block truncate font-medium">{t.id}</span>
-            <span className="text-[10px] text-muted">{t.events.toLocaleString()} events{t.bytes !== undefined ? ` · ${kb(t.bytes)}` : ""}{t.started ? ` · ${new Date(Number(t.started) * 1000).toLocaleString()}` : ""}</span>
-          </button>
-          <button type="button" className="shrink-0 rounded px-1 text-muted opacity-0 hover:text-bad group-hover:opacity-100" title="delete this trace" onClick={async () => { if (!window.confirm(`Delete ${t.id}?`)) return; await api.traceDelete(t.id); await qc.invalidateQueries({ queryKey: ["traces"] }); }}>✕</button>
-        </li>))}</ul>
-        : <div className="p-2 text-muted">{traces.isLoading ? "…" : "No recorded runs yet: every run here is recorded."}</div>}
+    <div className="min-h-0 flex-1 overflow-auto font-mono text-[10px]">
+      {list.map(({ i, e }) => { const told = runLib.tell(e, model); const step = (e as { step?: string }).step; return (
+        <button key={i} type="button" onClick={() => onSeek(i + 1)} className="flex w-full items-baseline gap-1.5 px-1.5 text-left leading-[15px] hover:bg-surface-2" title={`#${(e as { n?: number }).n ?? i}${step ? ` · step ${step}` : ""}`}>
+          <span className="w-8 shrink-0 text-right text-muted/70">{(e as { n?: number }).n ?? i}</span>
+          {e.item?.length ? <span className="shrink-0 text-muted">[{runLib.keyOf(e.item)}]</span> : null}
+          <span className={cn("min-w-0 break-words [overflow-wrap:anywhere]", told.bad ? "text-bad" : KIND_TONE[told.kind])}>{told.text}{told.detail ? <span className="text-muted"> — {told.detail}</span> : null}</span>
+        </button>); })}
+      <div ref={end} />
     </div>
-  );
-}
-function TracesMenu({ onOpen, current }: { onOpen: (id: string) => void; current?: string | null }) {
-  const [open, setOpen] = React.useState(false);
-  return (
-    <span className="relative">
-      <button type="button" className="rounded border border-line px-1.5 hover:bg-surface-2" onClick={() => setOpen(!open)} title="the recorded runs: replay one, or delete them">recorded ▾</button>
-      {open && <div className="absolute right-0 top-6 z-30 rounded border border-line bg-surface shadow-lg"><TraceList compact current={current} onOpen={(id) => { setOpen(false); onOpen(id); }} /></div>}
-    </span>
   );
 }

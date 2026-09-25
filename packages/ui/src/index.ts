@@ -33,7 +33,6 @@ export type { ElPath, FrameAction, FrameHighlight, FramePick } from "./domain/Pa
 export * as graphLib from "./lib/graph";
 export { checkPlan } from "./lib/check";
 export * as stagesLib from "./lib/stages";
-export * as replayLib from "./lib/replay";
 export { StagePlan } from "./domain/StagePlan";
 export { PipelineGraph } from "./domain/PipelineGraph";
 export { ActivityLanes, type Lane, type Mark, type MarkLane } from "./domain/ActivityLanes";
@@ -57,3 +56,8 @@ export { Timeline } from "./domain/Timeline";
 export { EventList, briefOf } from "./domain/EventList";
 export { RunBar } from "./domain/RunBar";
 export { SnapshotPane } from "./domain/SnapshotPane";
+export * as runLib from "./lib/run";
+export { RunGraph } from "./domain/run/RunGraph";
+export { RunTimeline } from "./domain/run/RunTimeline";
+export { ItemStrip } from "./domain/run/ItemStrip";
+export { StepCard } from "./domain/run/StepCard";

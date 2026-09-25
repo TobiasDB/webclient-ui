@@ -108,3 +108,11 @@ html, body { background: var(--color-surface); color: var(--color-ink); font-fam
 /* the replay's CURRENT EVENT card (it slides in with each step) */
 .wc-evcard { background: color-mix(in srgb, var(--color-ink) 90%, transparent); color: var(--color-surface); border-left: 3px solid var(--c); animation: wc-evcard-in .22s ease-out; }
 @keyframes wc-evcard-in { from { transform: translateY(-6px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* the run graph: a running cell / step breathes; an edge into a running step flows */
+.wc-cell-run { animation: wc-breathe 1s ease-in-out infinite; }
+.wc-step-active { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 35%, transparent), 0 1px 2px rgb(0 0 0 / 0.06); }
+.wc-edge-flow { stroke-dasharray: 6 10; animation: wc-flow 0.6s linear infinite; }
+@keyframes wc-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes wc-flow { to { stroke-dashoffset: -16; } }
+@media (prefers-reduced-motion: reduce) { .wc-cell-run, .wc-edge-flow { animation: none; } }
