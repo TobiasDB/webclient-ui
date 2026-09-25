@@ -110,7 +110,9 @@ function wrap(type: NodeType, cols: Col[]): Step[] {
     if (c.alias) args.push({ plan: { root: "Document", steps: [...c.steps, get("alias"), { kind: "call", name: "alias", args: [{ plan: { root: "Document", steps: c.alias } }], kwargs: {} }] } });
     else { let nm = c.name; let i = 2; while (taken.has(nm)) nm = `${c.name}_${i++}`; taken.add(nm); kwargs[nm] = { plan: { root: "Document", steps: c.steps } }; }
   }
-  const term = type === "Collection" && args.length && !Object.keys(kwargs).length ? "merge" : "project";
+  // one dict when, over a collection, every column is aliased (a named one spent as a name counts)
+  const spent = new Set(cols.map((c) => (c.alias && c.alias.length === 2 && c.alias[0]!.name === "field" ? String(c.alias[1]!.args?.[0]?.value ?? "") : "")).filter(Boolean));
+  const term = type === "Collection" && args.length && Object.keys(kwargs).every((k) => spent.has(k)) ? "merge" : "project";
   return [get("extract"), { kind: "call", name: "extract", args, kwargs }, get(term), { kind: "call", name: term, args: [], kwargs: {} }];
 }
 
@@ -147,7 +149,12 @@ export function decompile(p: Plan, url: string, returns: OpReturns = {}): Graph 
       if (c.name === "extract") {
         if (output && cur !== from) g = updateNode(g, cur, output.alias ? { alias: output.alias } : { output: output.name });  // a nested column: this node is its name
         for (const a of c.args) if (a.plan) { const ac = calls(a.plan); const al = ac.find((x) => x.name === "alias"); const aliasPlan = al?.args[0]; walk(a.plan.steps.slice(0, al ? al.index : a.plan.steps.length), cur, { alias: aliasPlan?.plan?.steps, name: typeof aliasPlan?.value === "string" ? aliasPlan.value : undefined }); }
-        for (const [k, a] of Object.entries(c.kwargs)) if (a.plan) walk(a.plan.steps, cur, { name: k }); else if (a.value !== undefined) { /* a literal column: skipped */ }
+        for (const [k, a] of Object.entries(c.kwargs)) {
+          if (!a.plan) continue;  // a literal column: skipped
+          const al = calls(a.plan).find((x) => x.name === "alias");
+          if (al) { const ap = al.args[0]; walk(a.plan.steps.slice(0, al.index), cur, { alias: ap?.plan?.steps, name: typeof ap?.value === "string" ? ap.value : undefined }); }
+          else walk(a.plan.steps, cur, { name: k });
+        }
         return;
       }
       const r = addNode(g, cur, { name: c.name, args: c.args, kwargs: c.kwargs }, returns); g = r.graph; cur = r.id;
@@ -239,3 +246,7 @@ export function pathOf(el: Element): number[] { const p: number[] = []; let n: E
 export function byPath(doc: Document, p: number[]): Element | null { let el: Element | null = doc.documentElement; for (const i of p) { el = el?.children[i] ?? null; if (!el) return null; } return el; }
 /** Nodes whose required argument is still empty (the plan cannot run yet). */
 export function incomplete(g: Graph): GNode[] { return Object.values(g.nodes).filter((n) => n.op && ["select", "select_all", "attr", "click", "write", "wait_for"].includes(n.op.name) && !String(n.op.args[0]?.value ?? "").trim()); }
+
+/** alias steps naming a column from a column already extracted beside it: `field("x")` */
+export const fieldAlias = (name: string): Step[] => [{ kind: "get", name: "field" }, { kind: "call", name: "field", args: [{ value: name }], kwargs: {} }];
+export const aliasField = (steps: Step[] | undefined): string | null => (steps && steps.length === 2 && steps[0]!.name === "field" && typeof steps[1]!.args?.[0]?.value === "string" ? (steps[1]!.args![0]!.value as string) : null);

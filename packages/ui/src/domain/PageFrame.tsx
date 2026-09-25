@@ -7,7 +7,7 @@ export type ElPath = number[];
 export type FrameHighlight = { selector?: string; /** explicit elements (structural paths) instead of a selector */ paths?: ElPath[]; colour: string; label?: string; dashed?: boolean; /** query inside this element (the focus root); `:scope` outlines the root itself */ rootPath?: ElPath | null };
 export type FramePick = { path: ElPath; tag: string; id?: string; classes: string[]; text: string };
 
-export type FrameAction = { op: "click" | "write" | "navigate"; pick: FramePick; href?: string; value?: string };
+export type FrameAction = { op: "click" | "write" | "navigate"; pick: FramePick; href?: string; value?: string; /** SHIFT held: record it */ shift: boolean };
 export type PageFrameProps = {
   /** the page's HTML (a capture) */
   html: string;
@@ -23,9 +23,10 @@ export type PageFrameProps = {
   onPick?: (p: FramePick) => void;
   onHover?: (p: FramePick | null) => void;
   /** INTERACT mode: what the person did -- a click on a control, typing into a field, following a
-   * link (the link is not followed in the frame; the workspace opens it). SHIFT held: nothing is
-   * reported and the page just behaves (a shift-followed link browses away, unrecorded). */
-  onAction?: (a: FrameAction) => void;
+   * link -- with whether SHIFT was held (record it). The page behaves natively; a link waits for
+   * the workspace: return "browse" to let the frame follow it (unrecorded, away from the plan's
+   * page), anything else keeps the page (the workspace jumped to / recorded it). */
+  onAction?: (a: FrameAction) => "browse" | void;
   onCounts?: (counts: number[]) => void;
   width?: number;
   maxHeight?: number;
@@ -56,7 +57,7 @@ export function PageFrame({ html, base, stripScripts, focusPaths = null, highlig
       if (m.type === "ready") { setReady(true); setAway(false); readyAt.current = Date.now(); }
       else if (m.type === "pick") cbs.current.onPick?.(m.pick as FramePick);
       else if (m.type === "hover") cbs.current.onHover?.((m.pick as FramePick) ?? null);
-      else if (m.type === "action") cbs.current.onAction?.(m.action as FrameAction);
+      else if (m.type === "action") { const a = m.action as FrameAction; if (cbs.current.onAction?.(a) === "browse" && a.op === "navigate" && a.href) post({ type: "go", href: a.href }); }
       else if (m.type === "counts") cbs.current.onCounts?.(m.counts as number[]);
     };
     window.addEventListener("message", h); return () => window.removeEventListener("message", h);
@@ -99,17 +100,16 @@ function mark(r,c,label,dashed,fill){var d=document.createElement("div");d.style
 function draw(){raf=0;ensure();layer.innerHTML="";var counts=[];for(var k=0;k<items.length;k++){var h=items[k],r0=h.rootPath?byPath(h.rootPath):document,els=[];try{els=h.paths?h.paths.map(byPath).filter(Boolean):h.selector===":scope"?(r0&&r0!==document?[r0]:[]):Array.prototype.slice.call((r0||document).querySelectorAll(h.selector))}catch(e){}counts.push(els.length);for(var i=0;i<els.length&&i<400;i++){mark(els[i].getBoundingClientRect(),h.colour,i===0&&h.label?h.label+(els.length>1?" ×"+els.length:""):null,h.dashed,false)}}if(hover)mark(hover.getBoundingClientRect(),picking?"#d97706":"#94a3b8",picking?hover.tagName.toLowerCase()+(hover.id?"#"+hover.id:"")+(hover.classList.length?"."+Array.prototype.slice.call(hover.classList,0,3).join("."):""):null,true,picking);post({type:"counts",counts:counts})}
 function later(){if(!raf)raf=requestAnimationFrame(draw)}
 function isolate(){var old=document.querySelectorAll("[data-wc-hide]");for(var i=0;i<old.length;i++)old[i].removeAttribute("data-wc-hide");if(!roots.length)return;var keep=new Set();roots.forEach(function(r){var n=r;while(n){keep.add(n);n=n.parentElement}});roots.forEach(function(r){var n=r;while(n&&n.parentElement){var sib=n.parentElement.children;for(var j=0;j<sib.length;j++){var s=sib[j];if(!keep.has(s)&&!/^(HEAD|STYLE|LINK|SCRIPT)$/.test(s.tagName)&&!s.hasAttribute("data-wc-layer"))s.setAttribute("data-wc-hide","")}n=n.parentElement}});if(roots[0])roots[0].scrollIntoView({block:"start"})}
-var shiftDown=false;var CONTROL="a[href],button,input,select,textarea,label,summary,[role=button],[role=tab],[role=link],[onclick]";
-addEventListener("message",function(e){var m=e.data;if(!m||!m.__wc)return;if(m.type==="focus"){roots=(m.paths||[]).map(byPath).filter(Boolean);isolate();later()}else if(m.type==="highlight"){items=m.items||[];later()}else if(m.type==="mode"){picking=!!m.picking;hover=null;later()}else if(m.type==="ping"){post({type:"ready"})}});
+var shiftDown=false,recordField=new Set();var CONTROL="a[href],button,input,select,textarea,label,summary,[role=button],[role=tab],[role=link],[onclick]";
+addEventListener("message",function(e){var m=e.data;if(!m||!m.__wc)return;if(m.type==="focus"){roots=(m.paths||[]).map(byPath).filter(Boolean);isolate();later()}else if(m.type==="highlight"){items=m.items||[];later()}else if(m.type==="mode"){picking=!!m.picking;hover=null;later()}else if(m.type==="ping"){post({type:"ready"})}else if(m.type==="go"&&m.href){location.href=m.href}});
 addEventListener("mousemove",function(e){var el=e.target;if(!(el instanceof Element)||el.hasAttribute("data-wc-layer"))return;if(!inRoots(el))el=null;if(!picking&&el)el=el.closest(CONTROL);if(el!==hover){hover=el;post({type:"hover",pick:el?info(el):null});later()}},true);
 addEventListener("click",function(e){var el=e.target;if(!(el instanceof Element))return;shiftDown=e.shiftKey;
  if(picking){e.preventDefault();e.stopPropagation();post({type:"pick",pick:info(el)});return}
- if(e.shiftKey)return;
- var a=el.closest("a[href]");if(a&&!/^(#|javascript:)/.test(a.getAttribute("href")||"")){e.preventDefault();post({type:"action",action:{op:"navigate",pick:info(a),href:a.href}});return}
- var c=el.closest(CONTROL);if(c&&!/^(INPUT|TEXTAREA|SELECT)$/.test(c.tagName))post({type:"action",action:{op:"click",pick:info(c)}})},true);
+ var a=el.closest("a[href]");if(a&&!/^(#|javascript:)/.test(a.getAttribute("href")||"")){e.preventDefault();post({type:"action",action:{op:"navigate",pick:info(a),href:a.href,shift:e.shiftKey}});return}
+ var c=el.closest(CONTROL);if(!c)return;if(/^(INPUT|TEXTAREA|SELECT)$/.test(c.tagName)){if(e.shiftKey)recordField.add(c);else recordField.delete(c);if(!/^(checkbox|radio)$/.test(c.type||""))return}post({type:"action",action:{op:"click",pick:info(c),shift:e.shiftKey}})},true);
 addEventListener("keydown",function(e){shiftDown=e.shiftKey},true);addEventListener("keyup",function(e){shiftDown=e.shiftKey},true);
-addEventListener("change",function(e){var el=e.target;if(picking||!(el instanceof Element)||shiftDown)return;if(/^(INPUT|TEXTAREA)$/.test(el.tagName)&&!/^(checkbox|radio|submit|button)$/.test(el.type||""))post({type:"action",action:{op:"write",pick:info(el),value:el.value}});else if(/^(checkbox|radio)$/.test(el.type||""))post({type:"action",action:{op:"click",pick:info(el)}})},true);
-addEventListener("submit",function(e){e.preventDefault();var b=e.submitter;if(b&&!shiftDown)post({type:"action",action:{op:"click",pick:info(b)}})},true);
+addEventListener("change",function(e){var el=e.target;if(picking||!(el instanceof Element))return;if(/^(INPUT|TEXTAREA)$/.test(el.tagName)&&!/^(checkbox|radio|submit|button)$/.test(el.type||""))post({type:"action",action:{op:"write",pick:info(el),value:el.value,shift:recordField.has(el)}})},true);
+addEventListener("submit",function(e){e.preventDefault()},true);
 addEventListener("scroll",later,true);addEventListener("resize",later);
 var mo=new MutationObserver(later);
 addEventListener("DOMContentLoaded",function(){ensure();mo.observe(document.body,{childList:true,subtree:true});post({type:"ready"})});

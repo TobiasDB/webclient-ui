@@ -17,9 +17,10 @@ export type Candidate = { selector: string; count: number; /** the parts: depth 
 export function candidates(el: Element, root: ParentNode, depth = 3): Candidate[] {
   const own = partsOf(el);
   const chain: Element[] = []; let n = el.parentElement;
-  while (n && chain.length < depth && n !== root && !["HTML", "BODY"].includes(n.tagName)) { chain.push(n); n = n.parentElement; }
+  while (n && chain.length < depth && n !== root && !["HTML", "BODY"].includes(n.tagName)) { if (n.tagName !== "TBODY") chain.push(n); n = n.parentElement; }
   const out = new Map<string, Candidate>();
-  const tryOne = (sel: string, d: number, clean: boolean) => {
+  const tryOne = (raw: string, d: number, clean: boolean) => {
+    const sel = portable(raw);
     if (!sel || out.has(sel)) return;
     let count = 0; try { const all = root.querySelectorAll(sel); if (![...all].includes(el)) return; count = all.length; } catch { return; }
     out.set(sel, { selector: sel, count, depth: d, clean });
@@ -42,6 +43,22 @@ export function candidates(el: Element, root: ParentNode, depth = 3): Candidate[
     for (const a of partsOf(anc).filter((p) => p.clean).slice(0, 3)) for (const l of leafForms) { tryOne(`${a.sel} ${l.sel}`, i + 1, true); if (i === 0) tryOne(`${a.sel} > ${l.sel}`, 1, true); }
   });
   return [...out.values()].sort((a, b) => a.depth - b.depth || (b.clean ? 1 : 0) - (a.clean ? 1 : 0) || a.selector.length - b.selector.length);
+}
+
+/** A selector that means the same on the server: the browser inserts <tbody> into every table,
+ * the raw HTML the server parses usually has none -- so `tbody` is never part of a selector. */
+export function portable(sel: string): string {
+  // compounds and the combinators between them; a compound whose TAG is tbody is dropped and the
+  // combinators around it collapse to a descendant step (matches with or without the tbody)
+  const toks = sel.trim().split(/(\s*[>+~]\s*|\s+)/).filter((t) => t !== "");
+  const out: string[] = [];
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i]!;
+    const isComb = /^\s*[>+~]?\s*$/.test(t);
+    if (!isComb && /^tbody(?![\w-])/i.test(t)) { if (out.length && /^\s*[>+~]?\s*$/.test(out[out.length - 1]!)) out[out.length - 1] = " "; if (i + 1 < toks.length && /^\s*[>+~]?\s*$/.test(toks[i + 1]!)) i++; continue; }
+    out.push(t);
+  }
+  return out.join("").replace(/\s{2,}/g, " ").trim();
 }
 
 /** The forms of one element: [tag, tag.c1, tag.c2, tag.c1.c2, #id, tag.utility…] */
@@ -130,8 +147,8 @@ export function suggestFields(records: Element[], max = 8): FieldSuggestion[] {
 export function relSelector(root: Element, el: Element): string {
   for (const p of partsOf(el).filter((p) => p.clean)) { try { const all = root.querySelectorAll(p.sel); if (all.length === 1 && all[0] === el) return p.sel; } catch { /* next */ } }
   const steps: string[] = []; let n: Element | null = el;
-  while (n && n !== root) { const p: Element | null = n.parentElement; if (!p) break; const same = [...p.children].filter((c) => c.tagName === n!.tagName); steps.push(same.length > 1 ? `${n.tagName.toLowerCase()}:nth-of-type(${same.indexOf(n) + 1})` : n.tagName.toLowerCase()); n = p; }
-  const path = steps.reverse().join(" > ");
+  while (n && n !== root) { const p: Element | null = n.parentElement; if (!p) break; if (n.tagName !== "TBODY") { const same = [...p.children].filter((c) => c.tagName === n!.tagName); steps.push(same.length > 1 ? `${n.tagName.toLowerCase()}:nth-of-type(${same.indexOf(n) + 1})` : n.tagName.toLowerCase()); } n = p; }
+  const path = portable(steps.reverse().join(" > "));
   try { const all = root.querySelectorAll(path); if (all.length === 1) return path; } catch { /* fall through */ }
   return path;
 }

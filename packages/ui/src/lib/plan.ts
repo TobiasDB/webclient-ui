@@ -130,9 +130,19 @@ export function evalLocal(p: Plan, el: Element, followed: (href: string, sub: Pl
     else if (c.name === "limit") { if (Array.isArray(cur)) cur = (cur as unknown[]).slice(0, Number(a0)); }
     else if (c.name === "extract") {
       const one = (e: Element) => {
-        const row: Record<string, unknown> = {};
-        for (const a of c.args) { if (!a.plan) continue; const { value, name } = splitAlias(a.plan); const key = name && typeof name === "object" ? String(evalLocal(name as Plan, e, followed) ?? "").trim() || "field" : String(name ?? "field"); row[key] = evalLocal(value, e, followed); }
-        for (const [k, a] of Object.entries(c.kwargs)) row[k] = a.plan ? evalLocal(a.plan, e, followed) : v(a);
+        // plain named columns first, then the aliased ones (positional or named): an alias can read an
+        // earlier column (field("x") -- that column is consumed) or the page
+        const row: Record<string, unknown> = {}; const aliased: Plan[] = []; const consumed: string[] = [];
+        for (const [k, a] of Object.entries(c.kwargs)) { if (a.plan && calls(a.plan).some((x) => x.name === "alias")) aliased.push(a.plan); else row[k] = a.plan ? evalLocal(a.plan, e, followed) : v(a); }
+        for (const a of c.args) if (a.plan) aliased.push(a.plan);
+        for (const p0 of aliased) {
+          const { value, name } = splitAlias(p0); const ref = name && typeof name === "object" ? fieldRef(name as Plan) : null;
+          let key: string;
+          if (ref !== null && ref in row) { key = String(row[ref] ?? "").trim() || ref; consumed.push(ref); }
+          else key = name && typeof name === "object" ? String(evalLocal(name as Plan, e, followed) ?? "").trim() || "field" : String(name ?? "field");
+          row[key] = evalLocal(value, e, followed);
+        }
+        for (const r of consumed) delete row[r];
         return row;
       };
       cur = Array.isArray(cur) ? (cur as Element[]).map(one) : cur ? one(cur as Element) : null;
@@ -154,6 +164,9 @@ export function splitAlias(p: Plan): { value: Plan; name: unknown } {
   for (let i = cs.length - 1; i >= 0; i--) if (cs[i]!.name === "alias") { const a = cs[i]!.args[0]; return { value: { root: p.root, steps: p.steps.slice(0, cs[i]!.index) }, name: a?.plan ?? a?.value }; }
   return { value: p, name: undefined };
 }
+
+/** The column a name plan refers to when it is exactly `field("x")`, else null. */
+export function fieldRef(p: Plan): string | null { const cs = calls(p); return cs.length === 1 && cs[0]!.name === "field" && typeof cs[0]!.args[0]?.value === "string" ? (cs[0]!.args[0]!.value as string) : null; }
 
 /** The chain's rows on a page: the root's first `select_all` fans out; without one, the page is one row. */
 export function localRows(p: Plan, doc: Document, followed?: (href: string, sub: Plan) => unknown): Local {

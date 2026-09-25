@@ -199,23 +199,47 @@ export function Author() {
   const actionParent = (): graphLib.GNode | null => (node && node.type === "Document" ? node : pageNode);
   /** actions need a browser to replay: the page opens with one */
   const needBrowser = (g: Graph): Graph => { if (!pageNode?.op || pageNode.op.kwargs.browser?.value === true) return g; return updateNode(g, pageNode.id, { op: { ...pageNode.op, kwargs: { ...pageNode.op.kwargs, browser: { value: true } } } }); };
-  /** INTERACT mode: what the person did on the page becomes nodes of the plan */
-  const onFrameAction = (a: FrameAction) => {
-    if (!graph || !doc) return; const el = byPath(doc, a.pick.path); if (!el) return;
-    if (a.op === "navigate") {  // following a link: select it, read its href, open it -- the new page is the focus
+  /** the node already in the plan that an action on `el` corresponds to: for a link, a page opened
+   * from an element that is (or holds) it; for a click / typing, an action whose selector matches it */
+  const matchOf = (a: FrameAction, el: Element): graphLib.GNode | null => {
+    if (!graph || !doc) return null;
+    const hit = (els: Element[]) => els.some((x) => x === el || x.contains(el) || el.contains(x));
+    for (const n of Object.values(graph.nodes)) {
+      if (!n.op || !n.parent) continue;
+      if (a.op === "navigate" && n.op.name === "resolve") {  // select(link) -> attr(href) -> resolve
+        const h = graph.nodes[n.parent]; const sel = h?.parent ? graph.nodes[h.parent] : undefined;
+        if (h?.op?.name === "attr" && sel && pageOf(graph, sel.id)?.id === pageKey && hit(elementsOf(values[sel.id]))) return n;
+      }
+      if ((a.op === "click" || a.op === "write") && n.op.name === a.op && pageOf(graph, n.id)?.id === pageKey) {
+        try { if (hit([...doc.querySelectorAll(String(n.op.args[0]?.value ?? ""))])) return n; } catch { /* bad selector */ }
+      }
+    }
+    return null;
+  };
+  const absolute = (href: string) => { try { return new URL(href, page?.url ?? graph?.url).toString(); } catch { return href; } };
+  /** INTERACT mode: an action that matches part of the plan JUMPS there (a link opens that page);
+   * with SHIFT it is recorded as nodes; otherwise the page just behaves (a link browses away). */
+  const onFrameAction = (a: FrameAction): "browse" | void => {
+    if (!graph || !doc) return; const el = byPath(doc, a.pick.path); if (!el) return a.op === "navigate" && !a.shift ? "browse" : undefined;
+    const match = matchOf(a, el);
+    if (match) {
+      if (a.op === "navigate" && a.href) { const url = absolute(a.href); setPages((ps) => (ps[match.id]?.url === url ? ps : { ...ps, [match.id]: { url } })); setDocs((ds) => { const { [match.id]: _drop, ...rest } = ds; return rest; }); }
+      if (a.op === "write" && a.shift) setGraph((g) => updateNode(g, match.id, { op: opOf("write", [String(match.op!.args[0]?.value ?? ""), a.value ?? ""]) }));
+      select(match.id); return;
+    }
+    if (!a.shift) return a.op === "navigate" ? "browse" : undefined;  // not recorded: the page just behaves
+    if (a.op === "navigate") {  // record: select the link, read its href, open it -- that page is the focus
       const under = node && (node.type === "Document" || node.type === "Element" || node.type === "Collection") && inRoots(el) ? node : scope; if (!under) return;
-      let g = graph; const s = addNode(g, under.id, opOf("select", [selFor(el)]), returns); g = s.graph;
-      const h = addNode(g, s.id, opOf("attr", ["href"]), returns); g = h.graph;
-      const r = addNode(g, h.id, opOf("resolve", [], browserKw(tier)), returns); setGraph(() => r.graph); select(r.id); return;
+      let g = graph; const s1 = addNode(g, under.id, opOf("select", [selFor(el)]), returns); g = s1.graph;
+      const h = addNode(g, s1.id, opOf("attr", ["href"]), returns); g = h.graph;
+      const r = addNode(g, h.id, opOf("resolve", [], browserKw(tier)), returns); setGraph(() => r.graph);
+      if (a.href) setPages((ps) => ({ ...ps, [r.id]: { url: absolute(a.href!) } }));
+      select(r.id); return;
     }
     const parent = actionParent(); if (!parent) return;
     const sel = selFor(el);
-    if (a.op === "write") {  // typing into the same field again updates the value
-      const prev = children(graph, parent.id).find((c) => c.op?.name === "write" && c.op.args[0]?.value === sel);
-      if (prev) { setGraph((g) => updateNode(g, prev.id, { op: opOf("write", [sel, a.value ?? ""]) })); return; }
-      setGraph((g) => needBrowser(addNode(g, parent.id, opOf("write", [sel, a.value ?? ""]), returns).graph)); return;
-    }
-    setGraph((g) => needBrowser(addNode(g, parent.id, opOf("click", [sel]), returns).graph));
+    const r = addNode(graph, parent.id, opOf(a.op, a.op === "write" ? [sel, a.value ?? ""] : [sel]), returns);
+    setGraph(() => needBrowser(r.graph)); select(r.id);
   };
   const addReads = (g: Graph, under: string, reads: InspectRead[] | undefined, fallbackSel: string): Graph => {
     for (const rd of reads ?? []) {
@@ -265,7 +289,7 @@ export function Author() {
       if (node.type === "Collection" && el) {  // two cells per element (th/td, dt/dd, label/value): a key → value table as one dict
         const k = el.querySelector("th, dt") ?? (el.children.length === 2 ? el.children[0] : null); const v = el.querySelector("td, dd") ?? (el.children.length === 2 ? el.children[1] : null);
         if (k && v && k !== v) { const ks = k.tagName === "TH" || k.tagName === "DT" ? k.tagName.toLowerCase() : `${k.tagName.toLowerCase()}:first-child`; const vs = v.tagName === "TD" || v.tagName === "DD" ? v.tagName.toLowerCase() : `${v.tagName.toLowerCase()}:last-child`;
-          edges.push({ label: `.extract(${vs}.alias(${ks}))`, hint: `a key → value table: each ${ks} names its ${vs} -- the rows become one dict`, onAdd: () => { const s1 = addNode(graph, node.id, opOf("select", [vs]), returns); const a1 = addNode(s1.graph, s1.id, opOf("attr", ["text"]), returns, { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: ks }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }] }); setGraph(() => updateNode(a1.graph, node.id, { output: node.output ?? "info" })); } }); }
+          edges.push({ label: `.extract(name=${ks}, value=${vs}.alias(field("name")))`, hint: `a key → value table: each ${ks} names its ${vs} -- the rows become one dict`, onAdd: () => { let g = graph; const k1 = addNode(g, node.id, opOf("select", [ks]), returns); g = k1.graph; g = addNode(g, k1.id, opOf("attr", ["text"]), returns, { output: "name" }).graph; const v1 = addNode(g, node.id, opOf("select", [vs]), returns); g = v1.graph; g = addNode(g, v1.id, opOf("attr", ["text"]), returns, { alias: graphLib.fieldAlias("name") }).graph; setGraph(() => updateNode(g, node.id, { output: node.output ?? "info" })); } }); }
       }
       if (node.type === "Collection") edges.push({ label: ".limit(n)", hint: "the first n", onAdd: () => { const n = Number(window.prompt("how many", "5")); if (n) setGraph((g) => setMod(g, node.id, opOf("limit", [n]))); } });
     }
@@ -381,9 +405,9 @@ export function Author() {
         {/* the focused object, rendered */}
         <div className="relative flex min-w-0 flex-col gap-2">
           <div className="flex h-7 items-center gap-2 overflow-hidden whitespace-nowrap text-[12px]">
-            <Chip tone={selfMode ? "warn" : "accent"}>{selfMode ? `click the page to pick .${node?.op?.name}() in ${rootLabel}` : `focus: ${rootLabel} · the page is interactive, actions are recorded (shift: not recorded)`}</Chip>
+            <Chip tone={selfMode ? "warn" : "accent"}>{selfMode ? `click the page to pick .${node?.op?.name}() in ${rootLabel}` : `focus: ${rootLabel} · interactive · shift-click records · clicking something in the plan jumps to it`}</Chip>
             <span className="flex-1" />
-            {pageNode && <><span className="truncate font-mono text-[11px] text-muted" title={page?.url}>{page?.url ?? "…"}</span>{page?.docId && <Button size="sm" variant="ghost" onClick={reload} title="reload the page">⟳</Button>}{!page?.live ? <Button size="sm" variant="ghost" onClick={goLive}>go live</Button> : <><Chip tone="ok" dot>live</Chip><label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={recordActions} onChange={(e) => setRecordActions(e.target.checked)} />record clicks</label></>}</>}
+            {pageNode && <><span className="truncate font-mono text-[11px] text-muted" title={page?.url}>{page?.url ?? "…"}</span>{page?.docId && <Button size="sm" variant="ghost" onClick={reload} title="reload the page">⟳</Button>}{!page?.live ? <Button size="sm" variant="ghost" onClick={goLive}>go live</Button> : <><Chip tone="ok" dot>live</Chip><label className="flex items-center gap-1 text-[11px]" title="shift-click records a click on the live page"><input type="checkbox" checked={recordActions} onChange={(e) => setRecordActions(e.target.checked)} />shift-click records</label></>}</>}
             {patternGroups.length > 0 && <Chip tone={showGroups ? "accent" : "neutral"} interactive onClick={() => setShowGroups(!showGroups)}>{patternGroups.length} groups</Chip>}
           </div>
           {!pageNode ? (
@@ -395,7 +419,7 @@ export function Author() {
           ) : err && !views.data ? (
             <EmptyState title={`Could not open the page · ${err.code ?? err.status}`} hint={err.hint ?? err.message} action={<Button onClick={() => setPages((ps) => ({ ...ps, [pageKey]: { url: ps[pageKey]?.url ?? "" } }))}>Retry</Button>} />
           ) : page?.live ? (
-            <Player events={stream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={roots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const par = actionParent(); runAction("click", [p.el ? selFor(p.el) : p.path], recordActions && !m.shift, par?.id); }} onDocument={(d) => setDocs((ds) => (ds[pageKey] === d ? ds : { ...ds, [pageKey]: d }))} controls={false} controller={controller} maxHeight={760} />
+            <Player events={stream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={roots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const par = actionParent(); const hitNode = p.el ? matchOf({ op: "click", pick: { path: [], tag: p.tag, classes: p.classes, text: p.text }, shift: m.shift }, p.el) : null; if (hitNode) select(hitNode.id); runAction("click", [p.el ? selFor(p.el) : p.path], recordActions && m.shift && !hitNode, par?.id); }} onDocument={(d) => setDocs((ds) => (ds[pageKey] === d ? ds : { ...ds, [pageKey]: d }))} controls={false} controller={controller} maxHeight={760} />
           ) : card && card.kind === "binary" ? (
             <EmptyState title={`A file · ${(views.data as { card?: { content_type?: string } } | undefined)?.card?.content_type ?? "binary"}`} hint="Not a page to render: add the .download() edge to return its bytes (a file value: url, filename, content type, size, base64)." action={<Button onClick={() => node && addEdge("download", [], {}, { output: "file" })}>.download()</Button>} />
           ) : views.data?.content ? (
@@ -418,13 +442,14 @@ export function Author() {
               <div className="mb-1 flex items-center gap-2"><span className="text-[11px] font-semibold uppercase tracking-wide text-muted">{node.type}</span><span className="text-muted">{samples[node.id]}</span><span className="flex-1" />{takesSelector && <button type="button" className="text-[11px] text-accent underline" onClick={() => setEditing(true)}>re-pick its selector</button>}</div>
               {node.type === "Collection" && <div className="flex flex-col gap-0.5"><div className="text-[11px] text-muted">All {elementsOf(values[node.id]).length} shown. Add an edge (select, attr…) and click inside any of them: it is read off EACH. The fields they share:</div>{selectors.suggestFields(elementsOf(values[node.id]), 10).map((f) => <button key={f.selector + f.attr} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => { const s = addNode(graph, node.id, opOf("select", [f.selector]), returns); setGraph(() => addNode(s.graph, s.id, opOf("attr", [f.attr]), returns, { output: f.name }).graph); }}><span className="text-accent">+</span><code className="font-mono text-[10px]">{f.selector} · {f.attr}</code><span className="truncate text-[11px] text-muted">{f.sample}</span></button>)}</div>}
               {node.type === "Element" && nodeEl && <div className="flex flex-col gap-0.5"><div className="text-[11px] text-muted">Read off it:</div>{selectors.attributesOf(nodeEl).map((a) => <button key={a.attr} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => addEdge("attr", [a.attr], {}, { output: a.attr === "text" ? selectors.nameFromSelector(String(node.op?.args[0]?.value ?? ""), nodeEl.tagName.toLowerCase()) : a.attr.replace(/[^a-z0-9]+/gi, "_") })}><span className="text-accent">+</span><code className="w-24 shrink-0 font-mono text-[10px]">{a.attr}</code><span className="truncate text-[11px] text-muted">{a.value}</span></button>)}</div>}
-              {node.type === "Document" && <div className="text-[11px] text-muted">The page is interactive: following a link, clicking a control or typing is recorded as a node (hold shift to do it without recording). To select, add an edge on the left, then click the page or a suggestion.{node.op?.name === "resolve" && <Pager n={node} onChange={(mod) => setGraph((g) => setMod(g, node.id, mod, "paginate"))} />}</div>}
+              {node.type === "Document" && <div className="text-[11px] text-muted">The page is interactive. Clicking something the plan already has jumps to it (a link opens that page); SHIFT-click records a link, a control or a field you type into as nodes. To select, add an edge on the left, then click the page or a suggestion.{node.op?.name === "resolve" && <Pager n={node} onChange={(mod) => setGraph((g) => setMod(g, node.id, mod, "paginate"))} />}</div>}
               {(node.type === "Value" || node.type === "Reference" || node.type === "Element") && node.op && (
                 <div className="mb-1 flex flex-wrap items-center gap-1 text-[11px]">
                   <span className="text-muted">column name:</span>
                   <input className="h-6 w-28 rounded border border-line bg-surface px-1" value={node.output ?? ""} placeholder="a name" onChange={(e) => setGraph((g) => updateNode(g, node.id, { output: e.target.value || undefined, alias: undefined }))} />
+                  {(() => { const enc = graphLib.eachOf(graph, node.id) ?? pageNode; const sibs = enc ? outputs(graph).filter((o) => o.id !== node.id && o.output && graphLib.eachOf(graph, o.id)?.id === (graphLib.eachOf(graph, node.id)?.id)) : []; const cur = graphLib.aliasField(node.alias); return sibs.length ? <><span className="text-muted">or by a column:</span><select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={cur ?? ""} onChange={(e) => setGraph((g) => updateNode(g, node.id, e.target.value ? { alias: graphLib.fieldAlias(e.target.value), output: undefined } : { alias: undefined }))}><option value="">—</option>{sibs.map((o) => <option key={o.id} value={o.output}>{o.output}</option>)}</select></> : null; })()}
                   <span className="text-muted">or from the page:</span>
-                  <input className="h-6 w-24 rounded border border-line bg-surface px-1 font-mono text-[10px]" placeholder="e.g. th" defaultValue={String(node.alias?.[1]?.args?.[0]?.value ?? "")} onBlur={(e) => { const v = e.target.value.trim(); setGraph((g) => updateNode(g, node.id, v ? { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: v }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }], output: undefined } : { alias: undefined })); }} title="a selector (relative to the record) whose text names this column: .alias(select(…).attr('text'))" />
+                  <input className="h-6 w-24 rounded border border-line bg-surface px-1 font-mono text-[10px]" placeholder="e.g. th" defaultValue={graphLib.aliasField(node.alias) ? "" : String(node.alias?.[1]?.args?.[0]?.value ?? "")} onBlur={(e) => { const v = e.target.value.trim(); if (!v && graphLib.aliasField(node.alias)) return; setGraph((g) => updateNode(g, node.id, v ? { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: v }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }], output: undefined } : { alias: undefined })); }} title="a selector (relative to the record) whose text names this column: .alias(select(…).attr('text'))" />
                 </div>
               )}
               {node.type === "Value" && <div className="flex flex-col gap-0.5">{(Array.isArray(values[node.id]) ? (values[node.id] as unknown[]).flat(3).slice(0, 12) : [values[node.id]]).map((x, i) => <div key={i} className="truncate font-mono text-[11px]">{isEl(x) ? `<${x.tagName.toLowerCase()}>` : String(x ?? "∅")}</div>)}</div>}

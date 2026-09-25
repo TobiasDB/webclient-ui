@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addNode, compile, decompile, emptyGraph, opOf, setMod, updateNode, type Graph } from "./graph";
+import { addNode, compile, decompile, emptyGraph, fieldAlias, opOf, setMod, updateNode, type Graph } from "./graph";
 import { describe as describePlan } from "./plan";
 
 /** Build the books graph the way a person does in the builder. */
@@ -62,5 +62,15 @@ describe("graph → plan", () => {
     expect(plan).not.toContain('attr("href").extract(');
     expect(plan).toContain('link=Document.select("a").attr("href")');
     expect(plan).toContain('detail=Document.select("a").attr("href").resolve().extract(title=Document.select("h1").attr("text")).project()');
+  });
+  it("a value named by a column beside it: name=th, td.alias(field(name)) -> one dict", () => {
+    let g = emptyGraph("https://x/");
+    const add = (parent: string, name: string, args: unknown[] = [], extra = {}) => { const r = addNode(g, parent, opOf(name, args), {}, extra); g = r.graph; return r.id; };
+    const page = add(g.root, "resolve"); const tr = add(page, "select_all", ["tr"], { output: "info" });
+    const th = add(tr, "select", ["th"]); add(th, "attr", ["text"], { output: "name" });
+    const td = add(tr, "select", ["td"]); add(td, "attr", ["text"], { alias: fieldAlias("name") });
+    const d = describePlan(compile(g));
+    expect(d).toContain('info=Document.select_all("tr").extract(Document.select("td").attr("text").alias(Document.field("name")), name=Document.select("th").attr("text")).merge()');
+    expect(describePlan(compile(decompile(compile(g), "https://x/")))).toBe(d);
   });
 });
