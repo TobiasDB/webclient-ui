@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../lib/cn";
-import { ACTION_COLOUR, actionOf, itemGroups, type Action, type ItemGroups, type Resources, type Stage, type StageStat } from "../lib/stages";
+import { ACTION_COLOUR, actionOf, itemGroups, resourceSummary, type Action, type ItemGroups, type Resources, type Stage, type StageStat } from "../lib/stages";
 
 export type PipelineGraphProps = {
   stages: Stage[];
@@ -234,6 +234,8 @@ export function PipelineGraph({ stages, stats, at, running, selected, onStage, r
           <Gauge label="browser pages" used={res.pagesUsed} total={res.pagesTotal} colour={ACTION_COLOUR.interact} />
           <span className={cn("shrink-0", res.waiting ? "text-warn" : "text-muted")}>queued {res.waiting}</span>
           <Spark samples={resources} />
+          <Stat label="mem" unit="MB" s={resourceSummary(resources, "memMb")} title={`resident memory of the server and its browsers${res.procs ? ` (${res.procs} processes)` : ""}`} />
+          <Stat label="cpu" unit="%" s={resourceSummary(resources, "cpuPct")} title="CPU of the server and its browsers, in % of one core" />
         </> : <span className="text-muted">{running ? "sampling…" : "none recorded"}</span>}
       </div>}
       {/* the zoom controls (top right) */}
@@ -321,5 +323,17 @@ function Timing({ stat, running }: { stat: StageStat | undefined; running: boole
       <span className="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-2">{live.length > 0 && <span className="absolute inset-y-0 left-0 rounded-full transition-all" style={{ width: `${pct * 100}%`, background: tone }} />}</span>
       <span className="shrink-0 font-mono tabular-nums">{live.length ? `${live.length}▶ ${fmt(slow)}` : ""}{d.length ? `${live.length ? " · " : ""}~${fmt(med)}` : ""}</span>
     </div>
+  );
+}
+
+/** a resource's value now, with its max and average over the run so far */
+function Stat({ label, unit, s, title }: { label: string; unit: string; s: { now?: number; max?: number; avg?: number }; title: string }) {
+  if (s.now === undefined) return null;
+  const f = (x: number) => (x >= 100 ? Math.round(x).toLocaleString() : x.toFixed(1));
+  return (
+    <span className="flex shrink-0 items-center gap-1" title={`${title}\nnow ${f(s.now)}${unit} · max ${f(s.max!)}${unit} · avg ${f(s.avg!)}${unit}`}>
+      <span className="text-muted">{label}</span><span className="font-mono tabular-nums text-ink">{f(s.now)}{unit}</span>
+      <span className="font-mono text-[8.5px] tabular-nums text-muted">max {f(s.max!)} · avg {f(s.avg!)}</span>
+    </span>
   );
 }

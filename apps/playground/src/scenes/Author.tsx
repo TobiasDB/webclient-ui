@@ -2,9 +2,9 @@ import * as React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, PipelineGraph, Player, Select, SkeletonPane, stagesLib,
+  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, ParamsEditor, PipelineGraph, Player, Select, SkeletonPane, checkPlan, stagesLib,
   TabPanel, Tabs, Toolbar, ToolbarSpacer, cn, describe, fieldColour, graphLib, needsArg, outputName, planLib, selectors, toolAsCode, usePlayerController,
-  type Edge, type FrameAction, type FrameHighlight, type Graph, type Highlight, type InspectAdd, type InspectRead, type Pick, type Plan, type RREvent,
+  type Edge, type FrameAction, type OpParam, type FrameHighlight, type Graph, type Highlight, type InspectAdd, type InspectRead, type Pick, type Plan, type RREvent,
 } from "@webclient/ui";
 import { API_URL, api, ApiError } from "../lib/api";
 import { call as callBody, plan as planBody, useActive, useSession } from "../lib/session";
@@ -72,6 +72,12 @@ export function Author() {
   const [pages, setPages] = React.useState<Record<string, Page>>({});
   const [docs, setDocs] = React.useState<Record<string, Document>>({});
   const [pickEl, setPickEl] = React.useState<Element | null>(null);
+  const [paramsOpen, setParamsOpenRaw] = React.useState(false);
+  const paramsBtn = React.useRef<HTMLButtonElement>(null);
+  const [paramsAt, setParamsAt] = React.useState<{ x: number; y: number } | null>(null);
+  // the popover floats over the page (the action bar clips what overflows it), under its button
+  const setParamsOpen = (v: boolean) => { setParamsOpenRaw(v); const r = paramsBtn.current?.getBoundingClientRect(); setParamsAt(r ? { x: r.left, y: r.bottom + 2 } : null); };
+  React.useLayoutEffect(() => { if (paramsOpen) { const r = paramsBtn.current?.getBoundingClientRect(); if (r) setParamsAt({ x: r.left, y: r.bottom + 2 }); } }, [paramsOpen, selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const [building, setBuilding] = React.useState<string | null>(null);
   const [run, setRun] = React.useState<{ rows?: Record<string, unknown>[]; error?: ApiError; ms?: number; busy: boolean; replay?: RREvent[]; trace?: string }>({ busy: false });
   const select = (id: string, edit = false) => { setSelectedRaw(id); setEditing(edit); setPickEl(null); setBuilding(null); };
@@ -91,7 +97,8 @@ export function Author() {
   React.useEffect(() => { if (graph && !graph.nodes[selected]) select(graph.root); }, [graph, selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // -- the page the focus lives on -------------------------------------------------------------
-  const pageNode = graph && node ? pageOf(graph, node.id) : null;
+  // the page on screen: the focused node's page -- for the Reference itself, the page it opens
+  const pageNode = graph && node ? (pageOf(graph, node.id) ?? Object.values(graph.nodes).find((x) => x.parent === graph.root && x.op?.name === "resolve") ?? null) : null;
   const pageKey = pageNode?.id ?? "";
   const page = pages[pageKey];
   const doc = docs[pageKey] ?? null;
@@ -158,6 +165,29 @@ export function Author() {
   const selfMode = !!node && takesSelector && (needsArg(node) || editing);
   const attrMode = !!node?.op && node.op.name === "attr";  // an attr: its suggestions (every attribute, numbers) stay at hand   // picking the focused node's OWN selector
   const values = React.useMemo(() => { const out: Record<string, unknown> = {}; if (!graph) return out; for (const n of Object.values(graph.nodes)) { const p = pageOf(graph, n.id); if (p && docs[p.id]) out[n.id] = n.id === p.id ? docs[p.id] : evalNode(graph, n.id, docs[p.id]!); } return out; }, [graph, docs]);
+  // -- the PLAN CHECK: every line evaluated on the pages we have; a page opened from a link that is not
+  // on screen is fetched in the background from the FIRST item's link, as the example it is checked on
+  const [checkDocs, setCheckDocs] = React.useState<Record<string, { url: string; doc: Document }>>({});
+  const checking = React.useRef(new Set<string>());
+  const docOf = React.useCallback((id: string): Document | null => docs[id] ?? checkDocs[id]?.doc ?? null, [docs, checkDocs]);
+  React.useEffect(() => {
+    if (!active || !sessionId || !graph) return;
+    for (const n of Object.values(graph.nodes)) {
+      if (n.op?.name !== "resolve" || !n.parent || n.parent === graph.root || docs[n.id]) continue;
+      const pp = pageOf(graph, n.parent); if (!pp) continue;
+      const url = hrefOf(graph, n.parent, docOf(pp.id), pages[pp.id]?.url ?? checkDocs[pp.id]?.url ?? graph.url); if (!url) continue;
+      const key = `${n.id}|${url}`; if (checkDocs[n.id]?.url === url || checking.current.has(key)) continue;
+      checking.current.add(key);
+      const t = tierOf(n); const sid = sessionId;
+      api.docOpen(sid, { url, browser: t === "false" ? false : t === "auto" ? "auto" : "always", live: false })
+        .then((h) => api.docViews(sid, h.id, ["content"]))
+        .then((v) => { const html = (v as { content?: string }).content; if (html) setCheckDocs((c) => ({ ...c, [n.id]: { url, doc: new DOMParser().parseFromString(html, "text/html") } })); })
+        .catch(() => { /* unchecked: the line says so */ });
+    }
+  }, [active, sessionId, graph, docs, checkDocs, pages, docOf]);
+  const problems = React.useMemo(() => (graph ? checkPlan(graph, docOf, graph.url) : {}), [graph, docOf]);
+  const problemList = React.useMemo(() => Object.entries(problems).filter(([, p]) => p.level !== "info"), [problems]);
+
   /** the rendered roots: the focused node's input when picking its own selector (or reading a value
    * off it), else its output -- ALL of a collection's elements; the page when empty */
   const roots: Element[] = React.useMemo(() => {
@@ -362,10 +392,10 @@ export function Author() {
     }
     setGraph((g) => updateNode(g, node.id, { op: { ...node.op!, args: node.op!.args.map((a, i) => (i === 0 ? { value } : a)) } })); setEditing(false); setBuilding(null); if (node.op.name === "click" || node.op.name === "write" || node.op.name === "wait_for") { const args = node.op.name === "write" ? [value, String(node.op.args[1]?.value ?? "")] : [value]; runAction(node.op.name, args, false); } };
   React.useEffect(() => {  // Esc: the inspector, then the edit, then up to the parent
-    const h = (e: KeyboardEvent) => { if (!active || e.target instanceof HTMLInputElement) return; if ((e.metaKey || e.ctrlKey) && e.key === "z") { e.preventDefault(); undo(); } else if (e.key === "Escape") { if (pickEl) { setPickEl(null); setBuilding(null); } else if (node && needsArg(node)) cancelPick(); else if (editing) setEditing(false); else if (node?.parent) select(node.parent); } };
+    const h = (e: KeyboardEvent) => { if (!active || e.target instanceof HTMLInputElement) return; if ((e.metaKey || e.ctrlKey) && e.key === "z") { e.preventDefault(); undo(); } else if (e.key === "Escape") { if (paramsOpen) setParamsOpen(false); else if (pickEl) { setPickEl(null); setBuilding(null); } else if (node && needsArg(node)) cancelPick(); else if (editing) setEditing(false); else if (node?.parent) select(node.parent); } };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, pickEl, editing, node?.parent, node?.id]);
+  }, [active, pickEl, editing, node?.parent, node?.id, paramsOpen]);
 
   // -- the plan: compile, preview, run, save / export / import ---------------------------------------
   const plan = React.useMemo<Plan | null>(() => (graph ? compile(graph) : null), [graph]);
@@ -458,11 +488,23 @@ export function Author() {
     if (!graph) return; const n = graph.nodes[id]; if (!n?.op) return;
     select(id, true);
     const val = String(n.op.args[0]?.value ?? ""); const pg0 = pageOf(graph, id); const d = pg0 ? docs[pg0.id] : null;
-    if (!val || !d || !SELECTOR_OPS.includes(n.op.name)) return;
+    if (!val || !SELECTOR_OPS.includes(n.op.name)) return;
+    if (!d) { setPendingEdit(id); return; }  // its page is still loading: open the editor when it arrives
     const par = n.parent ? graph.nodes[n.parent] : undefined; const bases: ParentNode[] = par && (par.type === "Collection" || par.type === "Element") ? elementsOf(values[par.id]) : [d];
     let first: Element | null = null; for (const b0 of bases) { try { first = b0.querySelector(val); } catch { first = null; } if (first) break; }
     if (first) setPickEl(first);
   };
+  const [pendingEdit, setPendingEdit] = React.useState<string | null>(null);
+  React.useEffect(() => { if (!pendingEdit || !graph) return; const pg0 = pageOf(graph, pendingEdit); if (pg0 && docs[pg0.id]) { const id = pendingEdit; setPendingEdit(null); editArg(id); } }, [docs, pendingEdit]); // eslint-disable-line react-hooks/exhaustive-deps
+  // -- the focused op's PARAMETERS (from GET /ops): resolve's browser tier, a select's index, a wait's timeout…
+  const paramsOf = (n: graphLib.GNode | null | undefined): OpParam[] => {
+    if (!n?.op || !opsQ.data) return []; const parentType = n.parent ? graph?.nodes[n.parent]?.type : undefined;
+    const data = opsQ.data as unknown as Record<string, { name: string; params: OpParam[] }[]>;
+    const order = [parentType === "Reference" ? "Reference" : parentType === "Collection" ? "Collection" : parentType === "Value" ? "Value" : "Document", "Document", "Reference", "Collection", "Value"];
+    for (const sec of order) { const hit = data[sec]?.find((o) => o.name === n.op!.name); if (hit) return hit.params; }
+    return [];
+  };
+  const editParams = (id: string) => { select(id); setParamsOpen(true); };
   const [manual, setManual] = React.useState<{ a: string; b: string }>({ a: "", b: "" });
   React.useEffect(() => { setManual({ a: String(node?.op?.args[0]?.value ?? ""), b: String(node?.op?.args[1]?.value ?? "") }); }, [node?.id, editing]); // eslint-disable-line react-hooks/exhaustive-deps
   const applyManual = () => { if (!node?.op) return; const args = node.op.name === "attr" ? (manual.b ? [{ value: manual.a }, { value: manual.b }] : [{ value: manual.a }]) : node.op.args.map((x, i) => (i === 0 ? { value: manual.a } : x)); setGraph((g) => updateNode(g, node.id, { op: { ...node.op!, args } })); setEditing(false); setPickEl(null); setBuilding(null); };
@@ -512,8 +554,8 @@ export function Author() {
         {/* the plan */}
         {!planOpen ? <button type="button" onClick={() => setPlanOpen(true)} className="flex min-h-0 items-start justify-center rounded border border-line pt-2 text-[10px] text-muted hover:bg-surface-2" title="show the plan"><span style={{ writingMode: "vertical-rl" }}>plan ›</span></button> :
         <section className="flex min-h-0 flex-col rounded border border-line">
-          <div className="flex items-center border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Plan<span className="flex-1" /><button type="button" className="font-normal hover:text-ink" onClick={() => setPlanOpen(false)} title="hide the plan">‹</button></div>
-          <GraphView graph={graph} selected={node?.id ?? graph.root} onSelect={(id) => select(id)} onChange={(g) => setGraph(() => g)} samples={samples} live={liveSet} editing={selfMode} onEditArg={editArg} className="min-h-0 flex-1 overflow-auto px-0.5 py-0.5" />
+          <div className="flex items-center border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Plan{problemList.length > 0 ? <button type="button" className="ml-1 rounded bg-bad-soft px-1 font-normal normal-case text-bad" title={problemList.map(([id, p]) => `${graph.nodes[id]?.op ? graphLib.describeOp(graph.nodes[id]!) : id}: ${p.message}`).join("\n")} onClick={() => select(problemList[0]![0])}>{problemList.length} to fix</button> : <span className="ml-1 font-normal normal-case text-ok" title="every line matches on the pages checked">✓ checked</span>}<span className="flex-1" /><button type="button" className="font-normal hover:text-ink" onClick={() => setPlanOpen(false)} title="hide the plan">‹</button></div>
+          <GraphView graph={graph} selected={node?.id ?? graph.root} onSelect={(id) => select(id)} onChange={(g) => setGraph(() => g)} samples={samples} live={liveSet} editing={selfMode} onEditArg={editArg} onEditParams={editParams} problems={problems} className="min-h-0 flex-1 overflow-auto px-0.5 py-0.5" />
           {missing.length > 0 && <div className="border-t border-line px-1.5 py-0.5 text-[10px] text-bad">{missing.length} op(s) still need an argument</div>}
         </section>}
 
@@ -541,6 +583,13 @@ export function Author() {
                   <button type="button" onClick={() => setMenuOpen(!menuOpen)} className="rounded border border-line px-1.5 py-px text-[10.5px] text-accent hover:bg-surface-2">+ output ▾</button>
                   {menuOpen && <div className="absolute left-0 top-6 z-30 max-h-72 w-96 overflow-auto rounded-md border border-line bg-surface p-1 shadow-lg" onMouseLeave={() => setMenuOpen(false)}>
                     {fieldMenu.map((f) => <button key={f.label} type="button" onClick={() => { f.add(); setMenuOpen(false); }} className="flex w-full items-center gap-1 rounded px-1 py-px text-left hover:bg-surface-2"><code className="shrink-0 font-mono text-[10px]">{f.label}</code><span className="min-w-0 flex-1 truncate text-[10px] text-muted">{f.sample}</span></button>)}
+                  </div>}
+                </div>}
+                {node?.op && paramsOf(node).some((p) => p.name !== "error") && <div className="relative">
+                  <button ref={paramsBtn} type="button" onClick={() => setParamsOpen(!paramsOpen)} className={cn("rounded border border-line px-1.5 py-px text-[10.5px] hover:bg-surface-2", paramsOpen && "bg-accent-soft text-accent")} title="edit this op's parameters">⚙ params</button>
+                  {paramsOpen && <div className="fixed z-50 w-80 rounded-md border border-line bg-surface p-1.5 shadow-lg" style={{ left: Math.max(8, Math.min(paramsAt?.x ?? 300, (typeof window !== "undefined" ? window.innerWidth : 1200) - 336)), top: paramsAt?.y ?? 120 }}>
+                    <div className="mb-1 flex items-center text-[10px] font-semibold uppercase tracking-wide text-muted">.{node.op.name}() parameters<span className="flex-1" /><button type="button" className="font-normal hover:text-ink" onClick={() => setParamsOpen(false)}>✕</button></div>
+                    <ParamsEditor op={node.op} params={paramsOf(node)} skip={SELECTOR_OPS.includes(node.op.name) || node.op.name === "attr" ? [paramsOf(node).find((p) => p.kind === "positional")?.name ?? ""] : []} onChange={(op) => setGraph((g) => updateNode(g, node.id, { op: { ...node.op!, args: op.args as typeof node.op.args, kwargs: op.kwargs as typeof node.op.kwargs } }))} />
                   </div>}
                 </div>}
                 <span className="flex-1" />

@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { Problem } from "../lib/check";
 import { X } from "lucide-react";
 import { cn } from "../lib/cn";
 import { children, lit, removeNode, setMod, updateNode, type GNode, type Graph, type NodeType } from "../lib/graph";
@@ -19,12 +20,18 @@ export type GraphViewProps = {
   /** the focused node's own argument is being picked (its input is rendered) */
   editing?: boolean;
   onEditArg?: (id: string) => void;
+  /** what the plan check found on a line (it matches nothing, reads nothing, was not checked) */
+  problems?: Record<string, Problem>;
+  /** a keyword argument clicked: edit the op's parameters */
+  onEditParams?: (id: string) => void;
   readOnly?: boolean;
   className?: string;
 };
 
 export const TYPE_COLOUR: Record<NodeType, string> = { Reference: "#64748b", Document: "#2563eb", Element: "#0891b2", Collection: "#7c3aed", Value: "#16a34a" };
 const SELECTOR_OPS = new Set(["select", "select_all", "click", "write", "wait_for"]);
+/** a plan line's problem: `error` (it would fail: matches nothing), `warn` (reads nothing), `info` (not checked) */
+export type { Problem } from "../lib/check";
 export const needsArg = (n: GNode) => !!n.op && (SELECTOR_OPS.has(n.op.name) || n.op.name === "attr") && !String(n.op.args[0]?.value ?? "").trim();
 
 /** The graph as a LITERAL PLAN: `Reference("…")`, then each object's ops indented under it --
@@ -32,10 +39,10 @@ export const needsArg = (n: GNode) => !!n.op && (SELECTOR_OPS.has(n.op.name) || 
  * object, typed. Click a line: it is the FOCUS (the page renders it; new selectors root there)
  * and its edges -- the ops of its surface -- appear under it. Arguments edit in place; an empty
  * one waits for a shift-click on the page or a suggestion. */
-export function GraphView({ graph, selected, onSelect, onChange, samples = {}, live, edges = [], editing, onEditArg, readOnly, className }: GraphViewProps) {
+export function GraphView({ graph, selected, onSelect, onChange, samples = {}, live, edges = [], editing, onEditArg, onEditParams, problems = {}, readOnly, className }: GraphViewProps) {
   const outs = Object.values(graph.nodes).filter((n) => n.output || n.alias).map((n) => n.id);
   // a CHAIN (one child after another) reads on one level, like a method chain; only a BRANCH indents
-  const line = (n: GNode) => <Line key={n.id} n={n} graph={graph} selected={selected === n.id} editing={selected === n.id && !!editing} onSelect={() => onSelect(n.id)} onChange={readOnly ? undefined : onChange} onEditArg={onEditArg} sample={samples[n.id]} live={!!live?.has(n.id)} colour={outs.includes(n.id) ? fieldColour(outs.indexOf(n.id)) : undefined} />;
+  const line = (n: GNode) => <Line key={n.id} n={n} graph={graph} selected={selected === n.id} editing={selected === n.id && !!editing} onSelect={() => onSelect(n.id)} onChange={readOnly ? undefined : onChange} onEditArg={onEditArg} onEditParams={onEditParams} problem={problems[n.id]} sample={samples[n.id]} live={!!live?.has(n.id)} colour={outs.includes(n.id) ? fieldColour(outs.indexOf(n.id)) : undefined} />;
   const [folded, setFolded] = React.useState<Set<string>>(new Set());
   const count = (id: string): number => children(graph, id).reduce((a, c) => a + 1 + count(c.id), 0);
   const render = (n: GNode): React.ReactNode => {
@@ -53,7 +60,7 @@ export function GraphView({ graph, selected, onSelect, onChange, samples = {}, l
   return <ul className={cn("wc-graph flex flex-col font-mono text-[10px] leading-[15px]", className)}>{render(graph.nodes[graph.root]!)}</ul>;
 }
 
-function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, sample, live, colour }: { n: GNode; graph: Graph; selected: boolean; editing: boolean; onSelect: () => void; onChange?: (g: Graph) => void; onEditArg?: (id: string) => void; sample?: string; live: boolean; colour?: string }) {
+function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, onEditParams, problem, sample, live, colour }: { n: GNode; graph: Graph; selected: boolean; editing: boolean; onSelect: () => void; onChange?: (g: Graph) => void; onEditArg?: (id: string) => void; onEditParams?: (id: string) => void; problem?: Problem; sample?: string; live: boolean; colour?: string }) {
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const setArg = (i: number, value: unknown) => onChange?.(updateNode(graph, n.id, { op: { ...n.op!, args: n.op!.args.map((a, j) => (j === i ? lit(value) : a)) } }));
   const missing = needsArg(n);
@@ -65,12 +72,14 @@ function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, samp
         .{n.op.name}(
         {n.op.args.map((a, i) => <React.Fragment key={i}>{i > 0 && ", "}{a.plan ? "…" : typeof a.value === "string" ? <Str v={a.value} placeholder={missing && i === 0 ? "click the page" : ""} bad={missing && i === 0} editing={editing && i === 0} onEdit={onChange && onEditArg ? () => onEditArg(n.id) : undefined} /> : a.value && typeof a.value === "object" ? <button type="button" className="text-topic-network underline decoration-dotted" title="edit (JSON)" onClick={(e) => { stop(e); const t = window.prompt("the mapping, as JSON", JSON.stringify(a.value)); if (t) { try { setArg(i, JSON.parse(t)); } catch { window.alert("not JSON"); } } }}>{JSON.stringify(a.value).slice(0, 40)}</button> : <span className="text-topic-network">{JSON.stringify(a.value)}</span>}</React.Fragment>)}
         {n.op.name === "attr" && n.op.args.length < 2 && onChange && <button type="button" className="hidden text-[10px] text-muted group-hover:inline hover:text-accent" onClick={(e) => { stop(e); onChange(updateNode(graph, n.id, { op: { ...n.op!, args: [...n.op!.args, lit("(\\d+)")] } })); }} title="read the value through a regex (its first group)">, +pattern</button>}
-        {kw.filter(([k]) => k !== "optional").map(([k, a], i) => <span key={k}>{n.op!.args.length || i ? ", " : ""}<span className="text-muted">{k}=</span><span className="text-topic-network">{a.plan ? "…" : JSON.stringify(a.value)}</span></span>)}
+        {kw.filter(([k]) => k !== "optional").map(([k, a], i) => <span key={k} className={cn(onEditParams && "cursor-pointer rounded-sm hover:bg-accent-soft")} title={onEditParams ? "edit the parameters" : undefined} onClick={onEditParams ? (e) => { stop(e); onEditParams(n.id); } : undefined}>{n.op!.args.length || i ? ", " : ""}<span className="text-muted">{k}=</span><span className="text-topic-network">{a.plan ? "…" : JSON.stringify(a.value)}</span></span>)}
+        {onEditParams && <button type="button" className="hidden px-0.5 text-[9px] text-muted group-hover:inline hover:text-accent" onClick={(e) => { stop(e); onEditParams(n.id); }} title="edit the parameters">⚙</button>}
         )
       </span>}
       {pager && <span className="text-topic-network">.paginate({pager.kwargs.next?.value ? `next="${String(pager.kwargs.next.value)}", ` : ""}max_pages={String(pager.kwargs.max_pages?.value ?? 20)}){onChange && <button type="button" className="ml-0.5 text-muted hover:text-bad" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "paginate")); }}>×</button>}</span>}
       {limit && <span className="text-topic-network">.limit({String(limit.args[0]?.value)}){onChange && <button type="button" className="ml-0.5 text-muted hover:text-bad" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "limit")); }}>×</button>}</span>}
       <span className="flex-1" />
+      {problem && <span className={cn("shrink-0 rounded-sm px-0.5 font-sans text-[9px]", problem.level === "error" ? "bg-bad-soft text-bad" : problem.level === "warn" ? "bg-warn-soft text-warn" : "text-muted")} title={problem.message}>{problem.level === "error" ? "✕" : problem.level === "warn" ? "!" : "?"} {problem.short}</span>}
       {live && <span className="rounded bg-ok-soft px-1 font-sans text-[9px] text-ok">live</span>}
       {sample && (() => {
         // a select under a collection: "4/5" of the records have it -- red when not all do and it is not optional (the run would fail); click toggles optional

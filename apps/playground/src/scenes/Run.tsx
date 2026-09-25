@@ -97,7 +97,7 @@ export function Run() {
       <div className="flex h-[30px] shrink-0 items-center gap-2 border-b border-line px-2">
         {spec && <button type="button" data-act="run" className="rounded bg-accent px-2 py-px text-[11px] font-medium text-white hover:brightness-110 disabled:opacity-40" onClick={() => start(spec)} disabled={running} title="execute the plan (recorded as a trace)">{data ? "Run again ▶" : "Run ▶"}</button>}
         <Chip tone={data?.status === "error" ? "bad" : running ? "accent" : data ? "ok" : "neutral"} dot>{data?.status ?? (startError ? "failed to start" : runId ? "starting…" : "loaded · not run")}</Chip>
-        <span className="text-muted">{elapsed && `${elapsed}s`} · {data?.rows.length ?? 0} rows · {events.length} events{errors.length ? ` · ${errors.length} errors` : ""}</span>
+        <span className="text-muted">{elapsed && `${elapsed}s`} · {data?.rows.length ?? 0} rows · {events.length} events{(() => { const miss = errors.filter(({ e }) => e.raised === false).length; const bad = errors.length - miss; return `${bad ? ` · ${bad} error${bad > 1 ? "s" : ""}` : ""}${miss ? ` · ${miss} missing` : ""}`; })()}</span>
         <div className="flex items-center gap-0.5">
           <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => { setLive(false); setT(0); }} title="the start">⏮</button>
           <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => step(-1)} title="one event back">◀</button>
@@ -134,7 +134,7 @@ export function Run() {
           <div className="grid min-h-0 grid-rows-[minmax(0,0.6fr)_minmax(0,1.4fr)] gap-1">
             <section className="flex min-h-0 flex-col rounded border border-line">
               <div className="border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Errors · {errors.length}</div>
-              <ul className="min-h-0 flex-1 overflow-auto">{errors.map(({ e, i }) => <li key={i}><button type="button" className="w-full px-1.5 py-px text-left hover:bg-surface-2" onClick={() => { setLive(false); setT(i + 1); }}><b className="text-bad">{e.error?.code}</b> <span className="text-muted">#{i}</span> {e.error?.message}</button></li>)}{!errors.length && <li className="p-1.5 text-muted">none</li>}</ul>
+              <ul className="min-h-0 flex-1 overflow-auto">{errors.map(({ e, i }) => <li key={i}><button type="button" className="w-full px-1.5 py-px text-left hover:bg-surface-2" onClick={() => { setLive(false); setT(i + 1); }}><b className={e.raised === false ? "text-warn" : "text-bad"}>{e.error?.code}</b> <span className="text-muted">#{i}{e.raised === false ? " · missing (optional)" : ""}{e.item ? ` · item ${e.item.join(".")}` : ""}</span> {e.error?.message}</button></li>)}{!errors.length && <li className="p-1.5 text-muted">none</li>}</ul>
             </section>
             <section className="flex min-h-0 flex-col rounded border border-line">
               <div className="border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Events{focusStage ? " · this stage" : ""} · up to #{t}</div>

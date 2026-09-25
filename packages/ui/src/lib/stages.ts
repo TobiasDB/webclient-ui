@@ -67,14 +67,18 @@ export type StageStat = { count: number; errors: { code?: string; message?: stri
   /** the width its items run at: at most `limit` at once, bounded by the `bound` pool (http slots / browser pages) */ parallel?: { limit: number; bound: string } };
 
 /** the pool's occupancy at a moment of the run (sampled while it is live) */
-export type Resources = { at: number; httpUsed: number; httpTotal: number; pagesUsed: number; pagesTotal: number; waiting: number };
+export type Resources = { at: number; httpUsed: number; httpTotal: number; pagesUsed: number; pagesTotal: number; waiting: number;
+  /** the server's process tree (it + its browsers): resident memory (MB), CPU (% of one core), process count */ memMb?: number; cpuPct?: number; procs?: number };
 /** every pool sample up to `upTo` */
 export function resourcesOf(events: RunEvent[], upTo = events.length): Resources[] {
   const out: Resources[] = [];
   for (let i = 0; i < Math.min(upTo, events.length); i++) {
-    const e = events[i]! as RunEvent & { http_total?: number; http_free?: number; pages_total?: number; pages_free?: number; waiting?: number };
+    const e = events[i]! as RunEvent & { http_total?: number; http_free?: number; pages_total?: number; pages_free?: number; waiting?: number; mem_mb?: number; cpu_pct?: number; procs?: number };
     if (e.topic !== "resources") continue;
-    out.push({ at: i, httpTotal: e.http_total ?? 0, httpUsed: (e.http_total ?? 0) - (e.http_free ?? 0), pagesTotal: e.pages_total ?? 0, pagesUsed: (e.pages_total ?? 0) - (e.pages_free ?? 0), waiting: e.waiting ?? 0 });
+    const prev = out[out.length - 1];
+    out.push({ at: i, httpTotal: e.http_total ?? prev?.httpTotal ?? 0, httpUsed: e.http_total !== undefined ? e.http_total - (e.http_free ?? 0) : prev?.httpUsed ?? 0,
+      pagesTotal: e.pages_total ?? prev?.pagesTotal ?? 0, pagesUsed: e.pages_total !== undefined ? e.pages_total - (e.pages_free ?? 0) : prev?.pagesUsed ?? 0, waiting: e.waiting ?? 0,
+      memMb: e.mem_mb, cpuPct: e.cpu_pct, procs: e.procs });
   }
   return out;
 }
@@ -222,3 +226,10 @@ export function itemGroups(stat: StageStat | undefined, feed: StageStat | undefi
 /** ops whose DURATION is shown (they wait on the network or the page) */
 const TIMED = new Set(["resolve", "paginate", "click", "write", "scroll", "wait_for", "goto", "download", "hover", "press"]);
 const UNTRACED = new Set(["number", "date", "datetime", "map", "extract", "project", "merge", "limit", "filter", "alias", "download"]);
+
+/** max and average of a resource over the samples (skipping samples without it) */
+export function resourceSummary(samples: Resources[], key: "memMb" | "cpuPct"): { now?: number; max?: number; avg?: number } {
+  const xs = samples.map((r) => r[key]).filter((x): x is number => typeof x === "number");
+  if (!xs.length) return {};
+  return { now: xs[xs.length - 1], max: Math.max(...xs), avg: xs.reduce((a, b) => a + b, 0) / xs.length };
+}
