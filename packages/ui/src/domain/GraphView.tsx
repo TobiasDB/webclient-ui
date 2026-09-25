@@ -34,12 +34,18 @@ export const needsArg = (n: GNode) => !!n.op && (SELECTOR_OPS.has(n.op.name) || 
  * one waits for a shift-click on the page or a suggestion. */
 export function GraphView({ graph, selected, onSelect, onChange, samples = {}, live, edges = [], editing, onEditArg, readOnly, className }: GraphViewProps) {
   const outs = Object.values(graph.nodes).filter((n) => n.output || n.alias).map((n) => n.id);
-  const render = (n: GNode): React.ReactNode => (
-    <li key={n.id}>
-      <Line n={n} graph={graph} selected={selected === n.id} editing={selected === n.id && !!editing} onSelect={() => onSelect(n.id)} onChange={readOnly ? undefined : onChange} onEditArg={onEditArg} sample={samples[n.id]} live={!!live?.has(n.id)} colour={outs.includes(n.id) ? fieldColour(outs.indexOf(n.id)) : undefined} />
-      {children(graph, n.id).length > 0 && <ul className="ml-3 border-l border-line/70 pl-1">{children(graph, n.id).map(render)}</ul>}
-    </li>
-  );
+  // a CHAIN (one child after another) reads on one level, like a method chain; only a BRANCH indents
+  const line = (n: GNode) => <Line key={n.id} n={n} graph={graph} selected={selected === n.id} editing={selected === n.id && !!editing} onSelect={() => onSelect(n.id)} onChange={readOnly ? undefined : onChange} onEditArg={onEditArg} sample={samples[n.id]} live={!!live?.has(n.id)} colour={outs.includes(n.id) ? fieldColour(outs.indexOf(n.id)) : undefined} />;
+  const render = (n: GNode): React.ReactNode => {
+    const run: GNode[] = [n]; let kids = children(graph, n.id);
+    while (kids.length === 1) { run.push(kids[0]!); kids = children(graph, kids[0]!.id); }
+    return (
+      <li key={n.id}>
+        {run.map(line)}
+        {kids.length > 0 && <ul className="ml-1.5 border-l border-line/60 pl-1 [&>li+li]:mt-px [&>li+li]:border-t [&>li+li]:border-dashed [&>li+li]:border-line/60">{kids.map(render)}</ul>}
+      </li>
+    );
+  };
   return <ul className={cn("wc-graph flex flex-col font-mono text-[10.5px] leading-[18px]", className)}>{render(graph.nodes[graph.root]!)}</ul>;
 }
 
@@ -50,8 +56,8 @@ function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, samp
   const pager = n.mods?.find((m) => m.name === "paginate"); const limit = n.mods?.find((m) => m.name === "limit");
   const kw = n.op ? Object.entries(n.op.kwargs) : [];
   return (
-    <div className={cn("group flex cursor-pointer items-center gap-x-1 overflow-hidden whitespace-nowrap rounded px-1 py-px", selected ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-surface-2", missing && "ring-1 ring-bad/50")} onClick={(e) => { stop(e); onSelect(); }} style={colour ? { boxShadow: `inset 0 0 0 1px ${colour}`, background: `${colour}12` } : undefined} title={n.output ? `output: ${n.output}` : n.alias ? "output (named from the page / a column)" : undefined}>
-      {!n.op ? <span className="min-w-0 truncate">Reference(<Str v={graph.url} onChange={onChange ? (v) => onChange({ ...graph, url: v }) : undefined} />)</span> : <span className="min-w-0 truncate">
+    <div className={cn("group flex cursor-pointer items-center gap-x-1 overflow-hidden whitespace-nowrap rounded px-1 py-px", selected ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-surface-2", missing && "ring-1 ring-bad/50")} onClick={(e) => { stop(e); onSelect(); }} title={n.output ? `output: ${n.output}` : n.alias ? "output (named from the page / a column)" : undefined}>
+      {!n.op ? <span className="min-w-0 truncate">Reference(<Str v={graph.url} onChange={onChange ? (v) => onChange({ ...graph, url: v }) : undefined} />)</span> : <span className="min-w-0 truncate rounded-sm px-0.5" style={colour ? { boxShadow: `inset 0 0 0 1px ${colour}`, background: `${colour}14` } : undefined}>
         .{n.op.name}(
         {n.op.args.map((a, i) => <React.Fragment key={i}>{i > 0 && ", "}{a.plan ? "…" : typeof a.value === "string" ? <Str v={a.value} placeholder={missing && i === 0 ? "click the page" : i === 1 && n.op!.name === "attr" ? "pattern" : ""} bad={missing && i === 0} editing={editing && i === 0} onFocus={() => onEditArg?.(n.id)} onChange={onChange ? (v) => setArg(i, v) : undefined} /> : a.value && typeof a.value === "object" ? <button type="button" className="text-topic-network underline decoration-dotted" title="edit (JSON)" onClick={(e) => { stop(e); const t = window.prompt("the mapping, as JSON", JSON.stringify(a.value)); if (t) { try { setArg(i, JSON.parse(t)); } catch { window.alert("not JSON"); } } }}>{JSON.stringify(a.value).slice(0, 40)}</button> : <span className="text-topic-network">{JSON.stringify(a.value)}</span>}</React.Fragment>)}
         {n.op.name === "attr" && n.op.args.length < 2 && onChange && <button type="button" className="hidden text-[10px] text-muted group-hover:inline hover:text-accent" onClick={(e) => { stop(e); onChange(updateNode(graph, n.id, { op: { ...n.op!, args: [...n.op!.args, lit("(\\d+)")] } })); }} title="read the value through a regex (its first group)">, +pattern</button>}

@@ -426,7 +426,7 @@ export function Author() {
   const [rowsOpen, setRowsOpenRaw] = React.useState(() => remembered("wc.author.rows", true));
   const setRowsOpen = (v: boolean) => { setRowsOpenRaw(v); try { localStorage.setItem("wc.author.rows", v ? "1" : "0"); } catch { /* fine */ } };
   const rowsH = 210;
-  const pageH = Math.max(320, vh - 44 - 30 - 44 - (rowsOpen ? rowsH : 22) - 12);
+  const pageH = Math.max(320, vh - 44 - 30 - 46 - (rowsOpen ? rowsH : 22) - 10);
   /** each output's colour -- the same on the plan line, the page outline and its rows column */
   const colourOf = React.useMemo(() => { const m: Record<string, string> = {}; outs.forEach((o, i) => { if (o.output) m[o.output] = fieldColour(i); }); return m; }, [outs]);
   const columnColours = (rows: Record<string, unknown>[]) => { const m: Record<string, string> = {}; for (const r of rows.slice(0, 5)) for (const k of Object.keys(r)) { const parts = k.split("."); for (let i = parts.length - 1; i >= 0; i--) { const c = colourOf[parts[i]!]; if (c) { m[k] = c; break; } } } return m; };
@@ -461,7 +461,7 @@ export function Author() {
 
         {/* the action bar, then the page */}
         <div className="flex min-h-0 min-w-0 flex-col gap-0.5">
-          <section className={cn("rounded border px-1.5 py-0.5", selfMode ? "border-warn/60 bg-warn-soft/40" : "border-line")}>
+          <section className={cn("h-[46px] shrink-0 overflow-hidden rounded border px-1.5 py-0.5", selfMode ? "border-warn/60 bg-warn-soft/40" : "border-line")}>
             <div className="flex h-5 items-center gap-1.5 overflow-hidden whitespace-nowrap">
               <code className="truncate font-mono text-[10.5px] text-ink">{node?.op ? graphLib.describeOp(node) : `Reference("${graph.url}")`}</code>
               {node && samples[node.id] && <span className="text-[10px] text-muted">{samples[node.id]}</span>}
@@ -472,7 +472,7 @@ export function Author() {
                 {!page?.live ? <button type="button" className="text-[11px] text-muted hover:text-ink" onClick={goLive}>go live</button> : <span className="rounded bg-ok-soft px-1 text-[10px] text-ok">live</span>}</>}
               {patternGroups.length > 0 && <button type="button" className={cn("rounded px-1 text-[10px]", showGroups ? "bg-accent-soft text-accent" : "text-muted hover:text-ink")} onClick={() => setShowGroups(!showGroups)}>{patternGroups.length} groups</button>}
             </div>
-            <div className="flex min-h-5 flex-wrap items-center gap-1">
+            <div className="flex h-5 flex-nowrap items-center gap-1 overflow-x-auto overflow-y-hidden whitespace-nowrap">
               {selfMode && node?.op ? <>
                 <span className="text-[11px] font-medium text-warn">Choose the selector for .{node.op.name}(): click the page, or a suggestion on the right</span>
                 <span className="flex-1" />
@@ -499,6 +499,7 @@ export function Author() {
               </>}
             </div>
           </section>
+          <div className="relative shrink-0 overflow-hidden" style={{ height: pageH }}>
           {!pageNode ? (
             <section className="rounded-md border border-line p-3 text-[12px]">
               <Input mono value={graph.url} onChange={(e) => setGraph((g) => ({ ...g, url: e.target.value }))} className="mb-2 w-full" />
@@ -512,7 +513,9 @@ export function Author() {
             <EmptyState title="A file" hint="Not a page to render: add .download() above to return its bytes (url, filename, content type, size, base64)." action={<Button onClick={() => node && addEdge("download", [], {}, { output: "file" })}>.download()</Button>} />
           ) : views.data?.content ? (
             <PageFrame html={views.data.content} base={views.data.url ?? page?.url ?? graph.url} stripScripts={stripScripts} focusPaths={shownRoots.length ? shownRoots.map(pathOf) : null} highlights={frameHls} picking={selfMode} onPick={onFramePick} onAction={onFrameAction} maxHeight={pageH} width={1180} />
-          ) : <EmptyState title={pageUrl(pageKey) || page?.url ? "Opening the page into your session…" : "This page's URL comes from the page before it: open that first"} />}
+          ) : <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{pageUrl(pageKey) || page?.url ? "opening the page into your session…" : "this page's URL comes from the page before it: open that first"}</div>}
+            {(actError || busy) && <div className="pointer-events-none absolute bottom-1 left-1 z-10 rounded bg-surface/95 px-1.5 py-0.5 text-[11px] shadow">{actError ? <><Chip tone="bad">{actError.detail?.code ?? actError.status}</Chip> {actError.detail?.hint ?? actError.message}</> : `${busy}…`}</div>}
+          </div>
           {/* the rows: the preview on this page, and the server run */}
           <section className="flex min-h-0 shrink-0 flex-col rounded border border-line" style={{ height: rowsOpen ? rowsH : 22 }}>
             <div className="flex h-[20px] shrink-0 items-center gap-2 border-b border-line px-1.5 text-[10.5px]">
@@ -529,8 +532,6 @@ export function Author() {
                 : <DataFrame rows={shown.rows} colours={columnColours(shown.rows)} dense emptyHint="Nothing matched on this page yet." />}
             </div>}
           </section>
-          {actError && <div className="text-[11px]"><Chip tone="bad">{actError.detail?.code ?? actError.status}</Chip> {actError.detail?.hint ?? actError.message}</div>}
-          {busy && <div className="text-[11px] text-muted">{busy}…</div>}
         </div>
 
         {/* while an op waits for its selector: its suggestions / the selector editor, beside the page */}
