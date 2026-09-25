@@ -9,9 +9,9 @@ import { topicColorVar } from "./TopicChip";
 /** One rrweb event (a DOM event, or one of ours as a custom event tagged with its topic). */
 export type RREvent = { type: number; data: any; timestamp: number };
 
-export type Highlight = { selector: string; label?: string; tone?: "accent" | "ok" | "warn" | "field" | "bad"; colour?: string; key?: string; dashed?: boolean; /** query inside this element (the focus root) instead of the page; `selector: ":scope"` outlines the root itself */ root?: Element | null; /** explicit elements instead of a selector */ els?: Element[] };
+export type Highlight = { /** the SPOTLIGHT: the rest of the page dimmed, this element outlined thick and pulsing */ spot?: boolean; selector: string; label?: string; tone?: "accent" | "ok" | "warn" | "field" | "bad"; colour?: string; key?: string; dashed?: boolean; /** query inside this element (the focus root) instead of the page; `selector: ":scope"` outlines the root itself */ root?: Element | null; /** explicit elements instead of a selector */ els?: Element[] };
 export type Pick = { path: string; selector: string; tag: string; classes: string[]; id?: string; text: string; attrs: Record<string, string>; href?: string; /** the element itself (in the rebuilt page) */ el?: Element };
-type Box = { left: number; top: number; width: number; height: number; label?: string; colour: string; dashed?: boolean };
+type Box = { left: number; top: number; width: number; height: number; label?: string; colour: string; dashed?: boolean; spot?: boolean };
 type Pulse = { id: number; at: number; topic: string; text: string; tone: string };
 
 export type PlayerProps = {
@@ -218,6 +218,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     for (const h of highlights) {
       let els: Element[] = []; try { els = h.els ? h.els : h.root ? (h.selector === ":scope" ? [h.root] : [...h.root.querySelectorAll(h.selector)]) : [...d.querySelectorAll(h.selector)]; } catch { continue; }
       const colour = h.colour ?? TONE[h.tone ?? "accent"];
+      if (h.spot && els[0]) { out.push({ ...boxFor(els[0], colour, h.label, false), spot: true }); continue; }
       els.forEach((el, i) => out.push(boxFor(el, colour, i === 0 ? (h.label ? `${h.label}${els.length > 1 && !h.label.includes("×") ? ` ×${els.length}` : ""}` : undefined) : undefined, !!h.dashed)));
     }
     setBoxes((prev) => (prev.length === out.length && prev.every((b, i) => b.left === out[i]!.left && b.top === out[i]!.top && b.width === out[i]!.width && b.height === out[i]!.height && b.label === out[i]!.label)) ? prev : out);
@@ -316,7 +317,12 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
         {/* the overlay: highlights, hover, flashes -- scaled with the page */}
         <div className={cn("absolute left-0 top-0 origin-top-left", pickable && !shiftPick && "cursor-crosshair")} style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); cbs.current.onHover?.(null); }} onClick={onClick}>
           {cursor && <div className={cn("wc-cursor", cursor.down && "wc-cursor-down")} style={{ left: cursor.x - scrollXY[0], top: cursor.y - scrollXY[1] }} />}
-          {[...boxes, ...flash, ...(hover ? [hover] : [])].map((b, i) => (
+          {boxes.filter((b) => b.spot).map((b, i) => { const x = b.left - 6, y = b.top - 6, w = b.width + 12, h = b.height + 12; return (
+            <React.Fragment key={`spot${i}`}>
+              {[[0, 0, size.w, Math.max(0, y)], [0, y + h, size.w, Math.max(0, size.h - y - h)], [0, y, Math.max(0, x), h], [x + w, y, Math.max(0, size.w - x - w), h]].map((q, k) => <div key={k} className="pointer-events-none absolute bg-slate-900/40" style={{ left: q[0], top: q[1], width: q[2], height: q[3] }} />)}
+              <div className="wc-spot pointer-events-none absolute" style={{ left: x, top: y, width: w, height: h, ["--c" as any]: b.colour }}>{b.label && <span className="wc-hl-label">{b.label}</span>}</div>
+            </React.Fragment>); })}
+          {[...boxes.filter((b) => !b.spot), ...flash, ...(hover ? [hover] : [])].map((b, i) => (
             <div key={i} className={cn("wc-hl absolute", b.dashed && "wc-hl-dashed", flash.includes(b) && "wc-hl-flash")} style={{ left: b.left, top: b.top, width: b.width, height: b.height, ["--c" as any]: b.colour }}>
               {b.label && <span className="wc-hl-label">{b.label}</span>}
             </div>

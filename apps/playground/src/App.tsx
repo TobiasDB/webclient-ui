@@ -5,7 +5,7 @@ import { Chip, RunBar, cn, type Event } from "@webclient/ui";
 import { subscribe } from "./lib/api";
 import { Home } from "./scenes/Home";
 import { Author } from "./scenes/Author";
-import { Traces } from "./scenes/Traces";
+import { useParams } from "react-router-dom";
 import { Tools } from "./scenes/Tools";
 import { Run } from "./scenes/Run";
 import { Settings } from "./scenes/Settings";
@@ -13,7 +13,7 @@ import { Loops } from "./scenes/Loops";
 import { DocumentStrip } from "./components/DocumentStrip";
 
 const WORKSPACES = [
-  ["/", "Home"], ["/author", "Author"], ["/run", "Run"], ["/loops", "Crawl · Loops"], ["/traces", "Traces"], ["/tools", "Tools"], ["/settings", "Settings"],
+  ["/", "Home"], ["/author", "Author"], ["/run", "Run"], ["/loops", "Crawl · Loops"], ["/tools", "Tools"], ["/settings", "Settings"],
 ] as const;
 
 /** The live stream shared by every workspace (the run bar) -- one socket, resumed by cursor. */
@@ -72,12 +72,13 @@ export function App() {
           <Route path="*" element={null} />
         </Routes>
         <Keep path="/loops"><Loops liveEvents={events} /></Keep>
-        <Keep path="/traces"><Routes><Route path="/traces" element={<Traces />} /><Route path="/traces/:id" element={<Traces />} /></Routes></Keep>
+        {/* Traces is Run now (a recorded run replays there): old links land in it */}
+        <Keep path="/traces"><Routes><Route path="/traces" element={<ToRun />} /><Route path="/traces/:id" element={<ToRun />} /></Routes></Keep>
         <Keep path="/run"><Run /></Keep>
         <Keep path="/tools"><Tools /></Keep>
         <Keep path="/settings"><Settings /></Keep>
       </Boundary></main>
-      {showEvents && <RunBar events={shown} connected={connected} paused={paused} onPause={(p) => { setPaused(p); setFrozen(p ? events : null); }} onOpen={() => nav("/traces")} />}
+      {showEvents && <RunBar events={shown} connected={connected} paused={paused} onPause={(p) => { setPaused(p); setFrozen(p ? events : null); }} onOpen={() => nav("/run")} />}
     </div>
   );
 }
@@ -132,4 +133,10 @@ function SessionChip() {
       <button type="button" data-act="reconnect" onClick={renew} className="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-white hover:brightness-110" title="open a new session: pages reopen in it (live pages start again)">reconnect</button>
     </span>
   );
+}
+
+/** /traces and /traces/:id are Run now */
+function ToRun() {
+  const { id } = useParams();
+  return <Navigate to={id ? `/run?trace=${encodeURIComponent(id)}` : "/run"} replace />;
 }

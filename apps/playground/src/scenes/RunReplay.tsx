@@ -2,7 +2,7 @@
  * selected item is on, the step's OWN element outlined) and the events grouped Stage ▸ Item ▸ event. */
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { PageFrame, Player, cn, graphLib, replayLib, stagesLib, type RunEvent } from "@webclient/ui";
+import { PageFrame, Player, cn, graphLib, replayLib, stagesLib, withAgent, type RunEvent } from "@webclient/ui";
 import { api } from "../lib/api";
 
 type Stage = ReturnType<typeof stagesLib.stagesOf>[number];
@@ -35,6 +35,7 @@ type Spec = { op: string; selector?: string; fanSel?: string; local?: number; la
 
 export function ReplayScreen({ traceId, events, stageOf, stages, stats, at, pick, maxHeight }: { traceId: string | null; events: RunEvent[]; stageOf: (string | null)[]; stages: Stage[]; stats: Stats; at: number; pick: Pick; maxHeight: number }) {
   const all = React.useMemo(() => stagesLib.flatStages(stages), [stages]);
+  const feeds = React.useMemo(() => stagesLib.structuralFeeds(stages), [stages]);
   const j = currentStep(events, stageOf, at, pick);
   const ev = j >= 0 ? events[j]! : null;
   // where the step is: its own page; a record's step (on an element: no page id) is on the page whose span of the
@@ -42,14 +43,14 @@ export function ReplayScreen({ traceId, events, stageOf, stages, stats, at, pick
   const place = React.useMemo(() => {
     if (!ev || j < 0) return null;
     const own = docOf(ev); const st = all.find((x) => x.id === stageOf[j]);
-    const feed = st ? stats[st.id]?.feed : undefined; const fan = feed ? all.find((x) => x.id === feed) : undefined;
+    const feed = st ? stats[st.id]?.feed ?? feeds[st.id] : undefined; const fan = feed ? all.find((x) => x.id === feed) : undefined;
     let idx = (ev.item ?? []).length ? ev.item![ev.item!.length - 1]! : undefined;
     // a trace without item paths (recorded before they were stamped): the ITERATION -- how many times this
     // stage ran on this page since its fan-out there -- is the item's index
     let fanDoc: string | undefined;
     if (idx == null && fan && st && !(ev.item ?? []).length) {
       // anchored on the fan-out: its page, and how many times this stage ran since it
-      let n = 0; for (let k = j - 1; k >= 0; k--) { const e = events[k]!; if (stageOf[k] === fan.id && e.phase === "fanout" && (!docOf(ev) || docOf(e) === docOf(ev))) { fanDoc = docOf(e); break; } if (stageOf[k] === st.id && e.topic === "plan" && e.phase === "step" && (!docOf(ev) || docOf(e) === docOf(ev))) n++; }
+      let n = 0; for (let k = j - 1; k >= 0; k--) { const e = events[k]!; if (stageOf[k] === fan.id && (e.phase === "fanout" || (e.phase === "step" && e.topic === "plan")) && (!docOf(ev) || docOf(e) === docOf(ev))) { fanDoc = docOf(e); break; } if (stageOf[k] === st.id && e.topic === "plan" && e.phase === "step" && (!docOf(ev) || docOf(e) === docOf(ev))) n++; }
       idx = n;
       if (!own && fanDoc) return { doc: fanDoc, fan, local: idx };
     }
@@ -60,7 +61,7 @@ export function ReplayScreen({ traceId, events, stageOf, stages, stats, at, pick
     for (let k = j - 1; k >= 0 && j - k < 5000; k--) { const e = events[k]!; const d = docOf(e); if (d && keyOf(e) === key) return { doc: d, fan, local: idx }; }
     for (let k = j - 1; k >= 0 && j - k < 5000; k--) { const d = docOf(events[k]!); if (d) return { doc: d, fan, local: idx }; }  // no item: the last page touched
     return null;
-  }, [ev, j, events, stageOf, stats, all]);
+  }, [ev, j, events, stageOf, stats, all, feeds]);
   const doc = place?.doc;
 
   // WHAT to outline (independent of which rendering shows the page): this step if it names a selector,
@@ -81,14 +82,16 @@ export function ReplayScreen({ traceId, events, stageOf, stages, stats, at, pick
   const snapN = React.useMemo(() => { if (!doc || j < 0) return undefined; for (let k = j; k >= 0; k--) { const e = events[k]!; if (e.topic === "snapshot" && docOf(e) === doc) return (e as { n?: number }).n; } return undefined; }, [doc, j, events]);
   const page = useQuery({ queryKey: ["trace-doc", traceId, doc, snapN], queryFn: () => api.traceDocument(traceId!, doc!, snapN), enabled: !!traceId && !!doc && !useRecording, staleTime: Infinity, retry: 1 });
   const rr = useQuery({ queryKey: ["trace-rrweb", traceId, doc], queryFn: () => api.traceRrweb(traceId!, doc!), enabled: !!traceId && !!doc && useRecording, staleTime: Infinity, retry: 1 });
-  const parsed = React.useMemo(() => (page.data?.content ? new DOMParser().parseFromString(page.data.content, "text/html") : null), [page.data?.content]);
+  // paths are computed on EXACTLY what the frame renders (scripts / widgets stripped): on the raw HTML a stripped
+  // <script> shifts every later sibling, and the outline / scroll land on the wrong element or none
+  const parsed = React.useMemo(() => (page.data?.content ? new DOMParser().parseFromString(withAgent(page.data.content, page.data.final_url ?? page.data.url, true), "text/html") : null), [page.data]);
   const target = React.useMemo(() => (parsed && spec ? replayLib.targetOf(parsed, spec.op, spec.selector, spec.fanSel, spec.local) : null), [parsed, spec]);
   const highlights = React.useMemo(() => {
     if (!target || !spec) return [];
     const others = target.els.filter((e) => e !== target.own);
     return [
       ...(others.length ? [{ paths: others.slice(0, 60).map(graphLib.pathOf), colour, dashed: true }] : []),
-      ...(target.own ? [{ paths: [graphLib.pathOf(target.own)], colour, label: spec.label }] : []),
+      ...(target.own ? [{ paths: [graphLib.pathOf(target.own)], colour, label: spec.label, spot: true }] : []),
     ];
   }, [target, spec, colour]);
   const scrollTo = target?.own ? graphLib.pathOf(target.own) : null;
@@ -96,14 +99,15 @@ export function ReplayScreen({ traceId, events, stageOf, stages, stats, at, pick
   // the recording: its rebuilt DOM (at this moment) is where the target is looked up
   const [pDoc, setPDoc] = React.useState<Document | null>(null);
   const [tick, setTick] = React.useState(0);
-  React.useEffect(() => { const h = setTimeout(() => setTick((x) => x + 1), 120); return () => clearTimeout(h); }, [at, pDoc]);  // after the seek settles
-  const pTarget = React.useMemo(() => (useRecording && pDoc && spec ? replayLib.targetOf(pDoc, spec.op, spec.selector, spec.fanSel, spec.local) : null), [useRecording, pDoc, spec, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  // after the seek settles -- and again later: a seek can rebuild the page, detaching what was found first
+  React.useEffect(() => { const a = setTimeout(() => setTick((x) => x + 1), 120); const b = setTimeout(() => setTick((x) => x + 1), 700); return () => { clearTimeout(a); clearTimeout(b); }; }, [at, pDoc]);
+  const pTarget = React.useMemo(() => { if (!useRecording || !pDoc || !spec) return null; const t = replayLib.targetOf(pDoc, spec.op, spec.selector, spec.fanSel, spec.local); return t.own && !t.own.isConnected ? null : t; }, [useRecording, pDoc, spec, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const pHighlights = React.useMemo(() => {
     if (!pTarget || !spec) return [];
     const others = pTarget.els.filter((e) => e !== pTarget.own);
     return [
       ...(others.length ? [{ selector: "", els: others.slice(0, 60), colour, dashed: true, key: "others" }] : []),
-      ...(pTarget.own ? [{ selector: "", els: [pTarget.own], colour, label: spec.label, key: "own" }] : []),
+      ...(pTarget.own ? [{ selector: "", els: [pTarget.own], colour, label: spec.label, key: "own", spot: true }] : []),
     ];
   }, [pTarget, spec, colour]);
   const shown = useRecording ? pTarget : target;

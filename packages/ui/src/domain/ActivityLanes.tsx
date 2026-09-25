@@ -24,7 +24,7 @@ export type ActivityLanesProps = {
   className?: string;
 };
 
-const LANE_H = 14, GAP = 3, LABEL_W = 150;
+const LANE_H = 9, GAP = 2, LABEL_W = 140;
 
 /** ACTIVITY LANES (a Gantt of the run): one lane per stage -- when it ran, for how many items at once
  * (each pixel of time shaded by how many of its items were running then: a fan-out shows as a band,
@@ -67,7 +67,7 @@ export function ActivityLanes({ lanes, events, stageOf, at, onSeek, selected, on
 
   const shown = lanes.filter((l) => model.hist.has(l.id));
   const marks = extra.filter((l) => l.marks.length);
-  const H = (shown.length + marks.length + 1) * (LANE_H + GAP) + 16;
+  const H = (shown.length + marks.length + 1) * (LANE_H + GAP) + 12;
   const cursor = at > 0 ? x(ts[Math.min(at, ts.length) - 1] ?? t0) : 0;
   const seekAtX = (px: number) => {
     if (!onSeek || !ts.length) return; const t = t0 + (Math.max(0, Math.min(w, px)) / w) * (t1 - t0);
@@ -82,16 +82,16 @@ export function ActivityLanes({ lanes, events, stageOf, at, onSeek, selected, on
       <div className="flex">
         <div className="shrink-0" style={{ width: LABEL_W }}>
           {shown.map((l) => (
-            <button key={l.id} type="button" onClick={() => onLane?.(l.id)} className={cn("flex w-full items-center gap-1 truncate pr-1 text-left", selected === l.id ? "text-accent" : "text-muted hover:text-ink")} style={{ height: LANE_H, marginBottom: GAP }} title={`${l.label} · ${model.hist.get(l.id)!.n.toLocaleString()} item run(s) · up to ${model.hist.get(l.id)!.max} at once`}>
+            <button key={l.id} type="button" onClick={() => onLane?.(l.id)} className={cn("flex w-full items-center gap-1 truncate pr-1 text-left text-[8.5px] leading-none", selected === l.id ? "text-accent" : "text-muted hover:text-ink")} style={{ height: LANE_H, marginBottom: GAP }} title={`${l.label} · ${model.hist.get(l.id)!.n.toLocaleString()} item run(s) · up to ${model.hist.get(l.id)!.max} at once`}>
               <span className="size-2 shrink-0 rounded-sm" style={{ background: l.colour }} /><span className="truncate">{l.label}</span>
             </button>
           ))}
           {marks.map((l) => (
-            <div key={l.id} className="flex w-full items-center gap-1 truncate pr-1 text-muted" style={{ height: LANE_H, marginBottom: GAP }} title={l.tip ?? `${l.label} · ${l.marks.length.toLocaleString()}`}>
+            <div key={l.id} className="flex w-full items-center gap-1 truncate pr-1 text-[8.5px] leading-none text-muted" style={{ height: LANE_H, marginBottom: GAP }} title={l.tip ?? `${l.label} · ${l.marks.length.toLocaleString()}`}>
               <span className="size-2 shrink-0 rounded-sm" style={{ background: l.colour }} /><span className="truncate">{l.label}</span>
             </div>
           ))}
-          <div className="flex items-center gap-1 pr-1 text-muted" style={{ height: LANE_H }}><span className="size-2 shrink-0 rounded-sm bg-slate-400" />page fetches</div>
+          <div className="flex items-center gap-1 pr-1 text-[8.5px] leading-none text-muted" style={{ height: LANE_H }}><span className="size-2 shrink-0 rounded-sm bg-slate-400" />page fetches</div>
         </div>
         <svg width={w} height={H} className="shrink-0 cursor-crosshair touch-none select-none"
           onPointerDown={(e) => { drag.current = true; (e.currentTarget as SVGElement).setPointerCapture?.(e.pointerId); seekAtX(toX(e)); }}
@@ -121,7 +121,7 @@ export function ActivityLanes({ lanes, events, stageOf, at, onSeek, selected, on
           {/* network: a tick per page fetched; retries amber; errors red */}
           {(() => { const y0 = (shown.length + marks.length) * (LANE_H + GAP); return model.net.map((n, i) => <rect key={i} x={x(n.t)} y={y0 + (n.kind === "fetch" ? 3 : 0)} width={1} height={n.kind === "fetch" ? LANE_H - 3 : LANE_H} fill={n.kind === "retry" ? "#f59e0b" : n.kind === "error" ? "#dc2626" : "#94a3b8"} />); })()}
           {/* the time axis */}
-          {Array.from({ length: 6 }, (_, i) => { const xx = (i / 5) * w; return <text key={i} x={Math.min(w - 24, xx + 2)} y={H - 3} fill="#94a3b8" fontSize={9}>{`${((t1 - t0) * (i / 5)).toFixed(1)}s`}</text>; })}
+          {Array.from({ length: 6 }, (_, i) => { const xx = (i / 5) * w; return <text key={i} x={Math.min(w - 24, xx + 2)} y={H - 2} fill="#94a3b8" fontSize={8}>{`${((t1 - t0) * (i / 5)).toFixed(1)}s`}</text>; })}
           <line x1={cursor} x2={cursor} y1={0} y2={H} stroke="#2563eb" strokeWidth={1.5} />
         </svg>
       </div>

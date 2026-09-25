@@ -101,3 +101,6 @@ html, body { background: var(--color-surface); color: var(--color-ink); font-fam
 .wc-player .wc-cursor::after { content: ""; position: absolute; left: -9px; top: -9px; width: 30px; height: 30px; border-radius: 999px; border: 2px solid #2457e6; opacity: 0; }
 .wc-player .wc-cursor-down::after { animation: wc-click .26s ease-out; }
 @keyframes wc-click { 0% { opacity: .9; transform: scale(.4); } 100% { opacity: 0; transform: scale(1.4); } }
+/* the replay's SPOTLIGHT: the step's own element, unmistakable */
+.wc-player .wc-spot { box-sizing: border-box; border: 3px solid var(--c); border-radius: 6px; background: color-mix(in srgb, var(--c) 12%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 30%, transparent); animation: wc-spot 1s ease-out 2; }
+@keyframes wc-spot { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 60%, transparent); } 100% { box-shadow: 0 0 0 14px transparent; } }

@@ -20,7 +20,7 @@ export function Home() {
       </Panel>
       <Panel title="Recent traces" flush>
         {traces.data?.length ? (
-          <ul>{traces.data.map((t) => <li key={t.id} className="cursor-pointer border-b border-line px-3 py-2 text-[13px] hover:bg-surface-2" onClick={() => nav(`/traces/${t.id}`)}><b>{t.id}</b> <span className="text-muted">· {t.events} events</span></li>)}</ul>
+          <ul>{traces.data.map((t) => <li key={t.id} className="cursor-pointer border-b border-line px-3 py-2 text-[13px] hover:bg-surface-2" onClick={() => nav(`/run?trace=${encodeURIComponent(t.id)}`)}><b>{t.id}</b> <span className="text-muted">· {t.events} events</span></li>)}</ul>
         ) : <EmptyState title="No traces yet" hint="Record one with `with wc.trace('traces/<name>')` in the API's working directory, or run demo.py." />}
       </Panel>
       <Panel title="The API">

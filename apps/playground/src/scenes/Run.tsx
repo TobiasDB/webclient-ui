@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityLanes, Chip, DataFrame, EmptyState, PipelineGraph, StagePlan, cn, planLib, stagesLib, type Plan, type RunEvent } from "@webclient/ui";
 import { EventTree, ProcessPanel, ReplayScreen, markLanes, type Pick } from "./RunReplay";
 import { api, type RunState } from "../lib/api";
@@ -44,6 +44,7 @@ export function Run() {
     const sp = decSpec(p); if (!sp) return; started.current = p; setSpec(sp);
     if (!params.get("id")) { setRunId(null); setData(null); setT(0); }
   }, [active, params]);
+  const openTrace = (id: string) => setParams(() => { const n = new URLSearchParams(); n.set("trace", id); return n; });
   const load = (sp: Spec) => { setParams(() => { const n = new URLSearchParams(); n.set("p", encSpec(sp)); return n; }); };
   React.useEffect(() => { if (!active) return; const id = params.get("id"); if (id && id !== runId) { setRunId(id); setData(null); setSpec(recall(id)); setLive(true); } }, [active, params]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -97,6 +98,16 @@ export function Run() {
   const lanes = React.useMemo(() => stagesLib.flatStages(stages).map((st) => ({ id: st.id, label: `${st.kind} ${st.op}${st.arg ? ` ${st.arg}` : ""}${st.column && st.column !== "(named from the page)" ? ` → ${st.column}` : ""}`, colour: stagesLib.ACTION_COLOUR[stagesLib.actionOf(st.op)] })), [stages]);
   const traceId = traceParam ?? data?.trace ?? null;
   const extraLanes = React.useMemo(() => markLanes(events), [events]);
+  // the lanes fold away (remembered): the replay and the rows get the room
+  // the three bottom panels (activity, output, events) are FOLDED by default -- the graph and the replay get the
+  // room -- and remember being opened
+  const usePanel = (key: string): [boolean, (v: boolean) => void] => {
+    const [v, set] = React.useState(() => { try { return localStorage.getItem(`wc.run.${key}`) === "1"; } catch { return false; } });
+    return [v, (x: boolean) => { set(x); try { localStorage.setItem(`wc.run.${key}`, x ? "1" : "0"); } catch { /* fine */ } }];
+  };
+  const [lanesOpen, setLanesOpen] = usePanel("lanes.open");
+  const [outOpen, setOutOpen] = usePanel("output.open");
+  const [evOpen, setEvOpen] = usePanel("events.open");
   // play: the recorded clock, at a speed
   // speed 0 = STEP BY STEP: one visible moment (a select, a read, an action, a page fetched) every 0.4s -- a run's
   // steps are milliseconds apart, so no time speed lets you see each one; otherwise the recorded clock × speed
@@ -125,7 +136,7 @@ export function Run() {
   const step = (d: number) => { setLive(false); setT((x) => Math.max(0, Math.min(events.length, x + d))); };
   const elapsed = data ? ((data.finished ?? Date.now() / 1000) - data.started).toFixed(1) : "";
 
-  if (!runId && !spec && !data && !traceParam) return <div className="flex h-full flex-col items-center justify-center gap-3 p-6"><EmptyState title="No plan loaded" hint="Open one from Author (Open in Run), or paste a plan below. It loads as a pipeline graph; Run ▶ executes it: the stages realise live, rows stream in, and the run is recorded as a trace." /><PlanLoader onLoad={load} /></div>;
+  if (!runId && !spec && !data && !traceParam) return <div className="flex h-full flex-col items-center justify-start gap-3 overflow-auto p-6"><EmptyState title="Nothing loaded" hint="Open a plan from Author (Open in Run), paste one below, or replay a recorded run. A plan loads as a pipeline graph; Run ▶ executes it and records it." /><PlanLoader onLoad={load} /><TraceList onOpen={openTrace} /></div>;
   return (
     <div className="flex h-full min-h-0 flex-col text-[11px]">
       {/* the run bar: status, time, counts, the timeline */}
@@ -145,13 +156,14 @@ export function Run() {
         </div>
         <button type="button" data-act="follow" onClick={() => setPick(null)} className={cn("rounded px-1.5 text-[10px]", pick ? "text-muted hover:text-ink" : "bg-accent-soft text-accent")} title={pick ? "watching what you picked -- click to follow the run again" : "following the run: the replay shows the item that was just active"}>{pick ? `watching ${pick.item != null ? (pick.item ? `item ${pick.item}` : "root") : "a stage"} · follow` : "● follow"}</button>
         <span className="flex-1" />
-        {data?.trace && !running && <a href={`/traces/${encodeURIComponent(data.trace)}`} className="text-accent underline" title="the recorded trace: replay, events, plan">trace ↗</a>}
+        {data?.trace && !running && !traceParam && <button type="button" className="text-accent underline" onClick={() => openTrace(data.trace!)} title="replay this run's recording: the graph, the lanes, each item's page">replay ▸</button>}
         <LoadMenu onLoad={load} />
+        <TracesMenu onOpen={openTrace} current={traceParam} />
         {runs.data && runs.data.length > 1 && <select className="h-6 rounded border border-line bg-surface px-1 text-[10.5px]" value={runId ?? ""} onChange={(e) => setParams((q) => { const n = new URLSearchParams(q); n.set("id", e.target.value); n.delete("p"); return n; })}>{runs.data.map((r) => <option key={r.id} value={r.id}>{r.id} · {r.status} · {r.rows} rows</option>)}</select>}
       </div>
       {startError && <div className="px-2 py-1 text-bad">{startError}</div>}
       {data?.error && <div className="border-b border-bad/40 bg-bad-soft/40 px-2 py-0.5 text-[11px]"><b className="text-bad">{data.error.code}</b> {data.error.message}{data.error.hint ? <span className="text-muted"> — {data.error.hint}</span> : null}</div>}
-      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] gap-1 p-1" style={{ gridTemplateRows: big ? "minmax(0,1fr)" : "minmax(0,1.35fr) auto minmax(0,1fr)" }}>
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] gap-1 p-1" style={{ gridTemplateRows: big ? "minmax(0,1fr)" : `minmax(0,1.7fr) auto ${outOpen || evOpen ? "minmax(0,1fr)" : "auto"}` }}>
         {/* TOP: the plan as a pipeline graph (or the stage tree) | the replay screen */}
         <div className="grid min-h-0 grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] gap-1">
           <section className="flex min-h-0 flex-col rounded border border-line">
@@ -169,20 +181,20 @@ export function Run() {
           </section>
         </div>
         {/* the ACTIVITY LANES: each stage over time (how many items at once), the network; scrub here */}
-        {!big && <section className="flex max-h-[180px] min-h-0 flex-col rounded border border-line">
-          <div className="border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Activity · each stage over time (height: items at once) · click to scrub</div>
-          <ActivityLanes className="min-h-0 flex-1 p-1" lanes={lanes} extra={extraLanes} events={events} stageOf={stageOf} at={t} selected={pick?.stage ?? null} onLane={(id) => setPick((p) => (p?.stage === id ? null : { stage: id, item: null }))} onSeek={(i) => { setLive(false); setPlaying(false); setT(i); }} />
+        {!big && <section className={cn("flex min-h-0 flex-col rounded border border-line", lanesOpen ? "max-h-[112px]" : "")}>
+          <button type="button" onClick={() => setLanesOpen(!lanesOpen)} className="flex items-center gap-1 px-1.5 py-px text-left text-[9.5px] font-semibold uppercase tracking-wide text-muted hover:text-ink" title={lanesOpen ? "fold the activity lanes" : "show each stage / loop / request over time (click a lane to scrub)"}>{lanesOpen ? "▾" : "▸"} Activity<span className="font-normal normal-case">{lanesOpen ? " · click or drag to scrub" : ` · ${lanes.length + extraLanes.length} lanes`}</span></button>
+          {lanesOpen && <ActivityLanes className="min-h-0 flex-1 p-1" lanes={lanes} extra={extraLanes} events={events} stageOf={stageOf} at={t} selected={pick?.stage ?? null} onLane={(id) => setPick((p) => (p?.stage === id ? null : { stage: id, item: null }))} onSeek={(i) => { setLive(false); setPlaying(false); setT(i); }} />}
         </section>}
         {/* BOTTOM: the rows as they arrived | the events grouped (stage ▸ item ▸ event) + errors */}
-        <div className={cn("grid min-h-0 grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-1", big && "hidden")}>
+        <div className={cn("grid min-h-0 grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] items-start gap-1", big && "hidden", (outOpen || evOpen) && "items-stretch")}>
           <section className="flex min-h-0 flex-col rounded border border-line">
-            <div className="border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Output · {rowsAt.length} rows{!live ? ` (at event ${t})` : running ? " (streaming)" : ""}</div>
-            <div className="min-h-0 flex-1 overflow-auto">{rowsAt.length ? <DataFrame rows={rowsAt} dense /> : <div className="p-2 text-muted">{running ? "waiting for the first row…" : traceParam && !(data?.rows.length) && events.some((e) => e.topic === "plan" && e.phase === "row") ? "this trace was recorded before rows were traced: it shows the run, not its rows" : "no rows at this point"}</div>}</div>
+            <button type="button" onClick={() => setOutOpen(!outOpen)} className={cn("flex items-center gap-1 px-1.5 py-px text-left text-[9.5px] font-semibold uppercase tracking-wide text-muted hover:text-ink", outOpen && "border-b border-line")}>{outOpen ? "▾" : "▸"} Output<span className="font-normal normal-case">· {rowsAt.length} rows{!live ? ` (at event ${t})` : running ? " (streaming)" : ""}</span></button>
+            {outOpen && <div className="min-h-0 flex-1 overflow-auto">{rowsAt.length ? <DataFrame rows={rowsAt} dense /> : <div className="p-2 text-muted">{running ? "waiting for the first row…" : traceParam && !(data?.rows.length) && events.some((e) => e.topic === "plan" && e.phase === "row") ? "this trace was recorded before rows were traced: it shows the run, not its rows" : "no rows at this point"}</div>}</div>}
           </section>
           <section className="flex min-h-0 flex-col rounded border border-line">
-            <div className="flex items-center border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Events · by stage ▸ item · up to #{t}{errors.length ? <span className="ml-1 normal-case text-bad">· {errors.length} error{errors.length > 1 ? "s" : ""}</span> : null}</div>
-            {errors.length > 0 && <ul className="max-h-16 shrink-0 overflow-auto border-b border-line">{errors.slice(-20).map(({ e, i }) => <li key={i}><button type="button" className="w-full truncate px-1.5 py-px text-left hover:bg-surface-2" onClick={() => { setLive(false); setT(i + 1); setPick({ stage: stageOf[i] ?? null, item: (e.item ?? []).join(".") }); }}><b className={e.raised === false ? "text-warn" : "text-bad"}>{e.error?.code}</b> <span className="text-muted">#{i}{e.item ? ` · item ${e.item.join(".")}` : ""}</span> {e.error?.message}</button></li>)}</ul>}
-            <EventTree events={events} stageOf={stageOf} stages={stages} at={t} pick={pick} onPick={setPick} onSeek={(i) => { setLive(false); setPlaying(false); setT(i); }} />
+            <button type="button" onClick={() => setEvOpen(!evOpen)} className={cn("flex items-center gap-1 px-1.5 py-px text-left text-[9.5px] font-semibold uppercase tracking-wide text-muted hover:text-ink", evOpen && "border-b border-line")}>{evOpen ? "▾" : "▸"} Events<span className="font-normal normal-case">· by stage ▸ item · up to #{t}</span>{errors.length ? <span className="ml-1 normal-case text-bad">· {errors.length} error{errors.length > 1 ? "s" : ""}</span> : null}</button>
+            {evOpen && errors.length > 0 && <ul className="max-h-16 shrink-0 overflow-auto border-b border-line">{errors.slice(-20).map(({ e, i }) => <li key={i}><button type="button" className="w-full truncate px-1.5 py-px text-left hover:bg-surface-2" onClick={() => { setLive(false); setT(i + 1); setPick({ stage: stageOf[i] ?? null, item: (e.item ?? []).join(".") }); }}><b className={e.raised === false ? "text-warn" : "text-bad"}>{e.error?.code}</b> <span className="text-muted">#{i}{e.item ? ` · item ${e.item.join(".")}` : ""}</span> {e.error?.message}</button></li>)}</ul>}
+            {evOpen && <EventTree events={events} stageOf={stageOf} stages={stages} at={t} pick={pick} onPick={setPick} onSeek={(i) => { setLive(false); setPlaying(false); setT(i); }} />}
           </section>
         </div>
       </div>
@@ -218,6 +230,49 @@ function LoadMenu({ onLoad }: { onLoad: (s: Spec) => void }) {
     <span className="relative">
       <button type="button" className="rounded border border-line px-1.5 hover:bg-surface-2" onClick={() => setOpen(!open)} title="load another plan">load plan ▾</button>
       {open && <div className="absolute right-0 top-6 z-30 rounded border border-line bg-surface p-1.5 shadow-lg"><PlanLoader compact onLoad={(s) => { setOpen(false); onLoad(s); }} /></div>}
+    </span>
+  );
+}
+
+/** a size in KB (the unit the person reads traces by) */
+const kb = (n: number): string => `${Math.max(1, Math.round(n / 1024)).toLocaleString()} KB`;
+/** traces the website replays: "clear all" keeps them */
+const SITE_TRACES = ["demo", "onboarding"];
+
+/** the recorded runs: open one to replay it here; delete one, or clear them all (the site's demo traces kept) */
+function TraceList({ onOpen, current, compact }: { onOpen: (id: string) => void; current?: string | null; compact?: boolean }) {
+  const qc = useQueryClient();
+  const traces = useQuery({ queryKey: ["traces"], queryFn: api.traces });
+  const list = [...(traces.data ?? [])].sort((a, b) => Number(b.started ?? 0) - Number(a.started ?? 0));
+  const total = list.reduce((a, t) => a + (t.bytes ?? 0), 0);
+  return (
+    <div className={cn("flex min-h-0 flex-col text-[11px]", compact ? "max-h-[60vh] w-[440px]" : "w-[560px] max-w-full rounded border border-line")}>
+      <div className="flex items-center gap-2 border-b border-line px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+        Recorded runs{list.length ? <span className="font-normal normal-case">{list.length} · {kb(total)}</span> : null}<span className="flex-1" />
+        {list.length > 0 && <button type="button" data-act="clear-traces" className="rounded px-1.5 font-normal normal-case text-bad hover:bg-bad-soft" onClick={async () => {
+          const keep = list.map((t) => t.id).filter((x) => SITE_TRACES.includes(x));
+          if (!window.confirm(`Delete ${list.length - keep.length} trace(s)${keep.length ? ` (keeping ${keep.join(", ")}: the site replays them)` : ""}?`)) return;
+          await api.tracesClear(keep); await qc.invalidateQueries({ queryKey: ["traces"] });
+        }}>clear all</button>}
+      </div>
+      {list.length ? <ul className="min-h-0 overflow-auto">{list.map((t) => (
+        <li key={t.id} className={cn("group flex items-center gap-2 border-b border-line/60 px-2 py-1 hover:bg-surface-2", current === t.id && "bg-accent-soft")}>
+          <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onOpen(t.id)} title="replay it here">
+            <span className="block truncate font-medium">{t.id}</span>
+            <span className="text-[10px] text-muted">{t.events.toLocaleString()} events{t.bytes !== undefined ? ` · ${kb(t.bytes)}` : ""}{t.started ? ` · ${new Date(Number(t.started) * 1000).toLocaleString()}` : ""}</span>
+          </button>
+          <button type="button" className="shrink-0 rounded px-1 text-muted opacity-0 hover:text-bad group-hover:opacity-100" title="delete this trace" onClick={async () => { if (!window.confirm(`Delete ${t.id}?`)) return; await api.traceDelete(t.id); await qc.invalidateQueries({ queryKey: ["traces"] }); }}>✕</button>
+        </li>))}</ul>
+        : <div className="p-2 text-muted">{traces.isLoading ? "…" : "No recorded runs yet: every run here is recorded."}</div>}
+    </div>
+  );
+}
+function TracesMenu({ onOpen, current }: { onOpen: (id: string) => void; current?: string | null }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <span className="relative">
+      <button type="button" className="rounded border border-line px-1.5 hover:bg-surface-2" onClick={() => setOpen(!open)} title="the recorded runs: replay one, or delete them">recorded ▾</button>
+      {open && <div className="absolute right-0 top-6 z-30 rounded border border-line bg-surface shadow-lg"><TraceList compact current={current} onOpen={(id) => { setOpen(false); onOpen(id); }} /></div>}
     </span>
   );
 }

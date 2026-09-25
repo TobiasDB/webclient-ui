@@ -245,3 +245,24 @@ export function resourceSummary(samples: Resources[], key: "memMb" | "cpuPct"): 
   if (!xs.length) return {};
   return { now: xs[xs.length - 1], max: Math.max(...xs), avg: xs.reduce((a, b) => a + b, 0) / xs.length };
 }
+
+/** each stage's FAN-OUT, from the plan's structure alone (no events needed): the select_all / paginate /
+ * links whose items it runs over -- what `StageStat.feed` says once fan-out counts are in, available for
+ * traces that recorded none */
+export function structuralFeeds(sts: Stage[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  const FANS = new Set(["select_all", "paginate", "links"]); const WHOLE_OPS = new Set(["extract", "project", "merge", "limit", "filter"]);
+  const seq = (list: Stage[], outer?: string, pending?: string) => {
+    let exp = outer; let items = pending;
+    for (const st of list) {
+      if (!WHOLE_OPS.has(st.op) && items !== undefined) { exp = items; items = undefined; }
+      if (exp) out[st.id] = exp;
+      if (FANS.has(st.op)) items = st.id;
+      const inner = WHOLE_OPS.has(st.op) ? items ?? exp : exp;
+      st.children.filter((c) => !c.chain).forEach((c) => seq([c], inner));
+      seq(st.children.filter((c) => c.chain), exp, items);
+    }
+  };
+  seq(sts);
+  return out;
+}

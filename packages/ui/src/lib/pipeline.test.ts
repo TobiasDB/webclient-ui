@@ -23,3 +23,17 @@ describe("fan-out", () => {
     expect(all.find((s) => s.op === "attr")!.chain).toBe(true);
   });
 });
+
+import { structuralFeeds } from "./stages";
+describe("structural feeds", () => {
+  it("a column's stages run over the select_all before the extract, with no events at all", () => {
+    let g = emptyGraph("https://x/");
+    const add = (p: string, n: string, a: unknown[] = [], extra = {}) => { const r = addNode(g, p, opOf(n, a), {}, extra); g = r.graph; return r.id; };
+    const page = add(g.root, "resolve"); const li = add(page, "select_all", ["div.card"]);
+    const t = add(li, "select", [".title"]); add(t, "attr", ["text"], { output: "title" });
+    const all = flatStages(stagesOf(compile(g))); const feeds = structuralFeeds(stagesOf(compile(g)));
+    const fan = all.find((s) => s.op === "select_all")!;
+    const sel = flatStages(stagesOf(compile(g))).find((s) => s.op === "select")!;
+    expect(feeds[sel.id]).toBe(fan.id);
+  });
+});
