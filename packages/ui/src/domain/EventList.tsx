@@ -25,7 +25,8 @@ export type EventListProps = {
  * asked; the row at the cursor is highlighted and kept in view (story 7.1). */
 export function EventList({ events, cursor, onCursor, groupByDocument, className, relativeTo }: EventListProps) {
   const active = React.useRef<HTMLLIElement>(null);
-  React.useEffect(() => { active.current?.scrollIntoView({ block: "nearest" }); }, [cursor]);
+  // scroll the LIST, not the page (scrollIntoView scrolls every ancestor: the workspace would jump)
+  React.useEffect(() => { const el = active.current; if (!el) return; let box: HTMLElement | null = el.parentElement; while (box && box.scrollHeight <= box.clientHeight) box = box.parentElement; if (!box) return; const r = el.getBoundingClientRect(), b = box.getBoundingClientRect(); if (r.top < b.top) box.scrollTop -= b.top - r.top; else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom; }, [cursor]);
   const t0 = relativeTo ?? events[0]?.ts ?? 0;
   const groups = React.useMemo(() => {
     if (!groupByDocument) return [{ key: "", items: events.map((e, i) => ({ e, i })) }];

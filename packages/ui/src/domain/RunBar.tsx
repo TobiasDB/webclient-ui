@@ -25,7 +25,7 @@ export function RunBar({ events, connected, paused, onPause, tracing, onTrace, o
   const [hidden, setHidden] = React.useState<Set<string>>(new Set(["console", "dom", "rrweb", "script"]));
   const topics = [...new Set(events.map((e) => topicRoot(e.topic)))].sort();
   const list = React.useRef<HTMLOListElement>(null);
-  React.useEffect(() => { if (!paused) list.current?.lastElementChild?.scrollIntoView({ block: "end" }); }, [events.length, paused]);
+  React.useEffect(() => { const l = list.current; if (!paused && l) l.scrollTop = l.scrollHeight; }, [events.length, paused]);  // the list, not the page
   const shown = events.filter((e) => !hidden.has(topicRoot(e.topic)));
   return (
     <div className={cn("flex shrink-0 flex-col border-t border-line bg-surface", className)} style={{ height }}>

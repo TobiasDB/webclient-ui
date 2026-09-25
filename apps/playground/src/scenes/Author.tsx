@@ -211,6 +211,9 @@ export function Author() {
   };
   /** BACK on the live page: the browser's back button on the SAME page (no new page, nothing replayed).
    * The actions not in the plan are trimmed to those that lead to where it lands (by URL). */
+  /** the live page is not where the head's own page is (it went elsewhere and no page of the plan claimed it) */
+  const headOwnUrl = head ? (pages[head.page]?.url ?? (graph?.nodes[head.page]?.parent === graph?.root ? graph?.url : undefined)) : undefined;
+  const awayFromHead = !!liveDocId && !!liveUrl && !!headOwnUrl && liveUrl !== headOwnUrl && head?.at === head?.page;
   const liveBack = async (): Promise<string | null> => {
     if (!sessionId || !liveDocId) return null; setActError(null); setBusy("going back");
     try {
@@ -225,13 +228,13 @@ export function Author() {
   const liveReset = async () => {
     if (!sessionId || !liveDocId || !stateNode) return;
     let ps = [...pending]; let url = liveUrl; let guard = 12;
-    while (ps.length > 0 && guard-- > 0) {
+    while ((ps.length > 0 || (awayFromHead && url !== headOwnUrl)) && guard-- > 0) {
       const u = await liveBack(); if (u === null) break;
       const moved = u !== url; url = u;
       while (ps.length && ps[ps.length - 1]!.to !== u) ps.pop();  // the same trim liveBack applies
       if (!moved) break;  // no history left to go back through
     }
-    if (ps.length > 0) { setActError(null); setBusy("rebuilding the page at the plan's head"); try { await liveAt(stateNode, graph!, true); setPending([]); pullNow.current(); } catch (e) { setActError(e as ApiError); } finally { setBusy(null); } }
+    if (ps.length > 0 || (awayFromHead && url !== headOwnUrl)) { setActError(null); setBusy("rebuilding the page at the plan's head"); try { await liveAt(stateNode, graph!, true); setPending([]); pullNow.current(); } catch (e) { setActError(e as ApiError); } finally { setBusy(null); } }
   };
   /** perform `op` from the step on screen, snapshot the result, and record it as the next step */
   const act = async (op: string, args: unknown[], record = true) => {
@@ -281,8 +284,17 @@ export function Author() {
         if (r.op?.name !== "resolve" || r.id === head.page || graphLib.isOff(graph, r.id)) continue;
         const sels = Object.values(graph.nodes).filter((n) => n.parent && n.op && ["select", "select_all"].includes(n.op.name) && stateOf(graph, n.id)?.id === r.id && String(n.op.args[0]?.value ?? "").trim()).map((n) => String(n.op!.args[0]!.value));
         const hits = sels.filter((q) => { try { return !!mirrorDoc.querySelector(q); } catch { return false; } }).length;
-        const urlHit = !!liveUrl && (pages[r.id]?.url ?? (r.parent === graph.root ? graph.url : undefined)) === liveUrl;
-        const score = urlHit ? 1 : sels.length ? hits / sels.length : 0;
+        const own = pages[r.id]?.url ?? (r.parent === graph.root ? graph.url : undefined);
+        const urlHit = !!liveUrl && own === liveUrl;
+        let score: number;
+        if (r.parent === graph.root) score = urlHit ? 1 : 0;  // the plan's own page: ITS url only (a look-alike list is not it)
+        else {
+          // a page opened from a link: the live URL must be one the plan would follow from the page before
+          // (every item's link, when that page is at hand); the selectors decide only when those links are not known
+          const pp = r.parent ? pageOf(graph, r.parent) : null; const pd = pp ? docOf(pp.id) : null;
+          const hrefs = pp && pd && r.parent ? (() => { const v = evalNode(graph, r.parent!, pd); const base = pages[pp.id]?.url ?? graph.url; return (Array.isArray(v) ? v.flat(Infinity) : [v]).filter((x): x is string => typeof x === "string" && !!x).map((h) => { try { return new URL(h, base).toString(); } catch { return h; } }); })() : [];
+          score = urlHit || (!!liveUrl && hrefs.includes(liveUrl)) ? 1 : sels.length ? hits / sels.length : 0;
+        }
         if (score >= 0.6 && (!best || score > best.score)) best = { id: r.id, hits, of: sels.length, score };
       }
       if (!best) return;
@@ -301,12 +313,25 @@ export function Author() {
   React.useEffect(() => () => { const h = headRef.current; if (h && sessionId) api.docClose(sessionId, h.docId).catch(() => undefined); }, [sessionId]);
   // the HEAD is always live: open (or replay to) it when it comes on screen
   const opening = React.useRef<string | null>(null);
+  /** the ONE live page is on another page of the plan: this page shows its static copy until it is brought here */
+  const liveElsewhere = !!head && !liveDocId && !!stateNode && atHead && head.page !== pageKey;
   React.useEffect(() => {
     if (!active || !sessionId || !graph || !stateNode || !atHead || liveDocId) return;
+    if (head && head.page !== pageKey) return;  // never silently replace the live page the person is using
     const key = `${pageKey}|${stateKey}`; if (opening.current === key) return; opening.current = key;
     setPending([]); setActError(null);
     liveAt(stateNode).catch((e) => setActError(e as ApiError)).finally(() => { setBusy(null); opening.current = null; });
   }, [active, sessionId, pageKey, stateKey, atHead, liveDocId]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** bring the live page HERE: the same page navigates to this page's URL (nothing reopened, nothing replayed) */
+  const bringLiveHere = async () => {
+    if (!sessionId || !head || !pageNode || !stateNode) return;
+    const url = page?.url ?? pageUrl(pageNode.id); if (!url) { await liveAt(stateNode).catch((e) => setActError(e as ApiError)); setBusy(null); return; }
+    setActError(null); setBusy("bringing the live page here");
+    try {
+      const h = await api.executeDoc({ plan: planBody("Document", [callBody("goto", [url])], sessionId), document_id: head.docId });
+      setHead({ page: pageNode.id, at: pageNode.id, docId: head.docId }); setPending([]); setLiveUrl(h.url ?? url); pullNow.current();
+    } catch (e) { setActError(e as ApiError); } finally { setBusy(null); }
+  };
   /** go live at the step on screen (a fork when it is not the head) */
   const goLiveHere = async () => { if (!stateNode) return; setActError(null); try { await liveAt(stateNode); } catch (e) { setActError(e as ApiError); } finally { setBusy(null); } };
   const runAction = async (op: string, args: unknown[], record: boolean, _under?: string) => act(op, args, record);
@@ -700,7 +725,7 @@ export function Author() {
   const [rowsOpen, setRowsOpenRaw] = React.useState(() => remembered("wc.author.rows", true));
   const setRowsOpen = (v: boolean) => { setRowsOpenRaw(v); try { localStorage.setItem("wc.author.rows", v ? "1" : "0"); } catch { /* fine */ } };
   const rowsH = 210;
-  const pageH = Math.max(320, vh - 44 - 30 - 46 - (rowsOpen ? rowsH : 22) - 10 - (pageSteps.length > 1 || pending.length > 0 || !!liveDocId ? 22 : 0));
+  const pageH = Math.max(320, vh - 44 - 30 - 46 - (rowsOpen ? rowsH : 22) - 10 - (pageNode ? 22 : 0));  // the steps bar is always there: the page never jumps
   /** each output's colour -- the same on the plan line, the page outline and its rows column */
   const colourOf = React.useMemo(() => { const m: Record<string, string> = {}; outs.forEach((o, i) => { if (o.output) m[o.output] = fieldColour(i); }); return m; }, [outs]);
   const columnColours = (rows: Record<string, unknown>[]) => { const m: Record<string, string> = {}; for (const r of rows.slice(0, 5)) for (const k of Object.keys(r)) { const parts = k.split("."); for (let i = parts.length - 1; i >= 0; i--) { const c = colourOf[parts[i]!]; if (c) { m[k] = c; break; } } } return m; };
@@ -783,12 +808,16 @@ export function Author() {
             </div>
           </section>
           {/* the page's STEPS: the page, then each action; step back / forward; the live head is marked */}
-          {pageNode && (pageSteps.length > 1 || pending.length > 0 || !!liveDocId) && <div className="flex h-[20px] shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap rounded border border-line px-1 text-[10px]">
+          {pageNode && <div className="flex h-[20px] shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap rounded border border-line px-1 text-[10px]">
             {liveDocId && <span className="mr-1 flex shrink-0 items-center gap-0.5 border-r border-line pr-1">
               <button type="button" data-act="live-back" disabled={!!busy} onClick={() => { void liveBack(); }} className="rounded px-1 hover:bg-surface-2 disabled:opacity-40" title="the browser's back button, on this page (the actions not in the plan are trimmed to where it lands)">⟵ back</button>
-              <button type="button" data-act="live-reset" disabled={!pending.length || !!busy} onClick={() => { void liveReset(); }} className="rounded px-1 hover:bg-surface-2 disabled:opacity-40" title="back until no action outside the plan is left (rebuilt at the plan's head only when a click made no history entry)">⟲ to the plan</button>
+              <button type="button" data-act="live-reset" disabled={(!pending.length && !awayFromHead) || !!busy} onClick={() => { void liveReset(); }} className="rounded px-1 hover:bg-surface-2 disabled:opacity-40" title="back until no action outside the plan is left (rebuilt at the plan's head only when a click made no history entry)">⟲ to the plan</button>
               {placed && placed.page === pageKey && !pending.length && <span className="text-muted">on <b className="text-accent">{graph.nodes[placed.page]?.output ? `.resolve() → ${graph.nodes[placed.page]!.output}` : ".resolve()"}</b>{placed.of ? ` (${placed.hits}/${placed.of} selectors match)` : " (its URL)"}</span>}
               {busy && <span className="text-muted">{busy}…</span>}
+            </span>}
+            {liveElsewhere && <span className="mr-1 flex shrink-0 items-center gap-1 border-r border-line pr-1">
+              <span className="text-muted">the live page is on another page of the plan -- this is this page's copy</span>
+              <button type="button" data-act="bring-live" disabled={!!busy} onClick={() => { void bringLiveHere(); }} className="rounded bg-accent px-1.5 text-white disabled:opacity-40">{busy ? `${busy}…` : "bring the live page here"}</button>
             </span>}
             <span className="mr-1 font-semibold uppercase tracking-wide text-muted">steps</span>
             <button type="button" className="px-0.5 text-muted hover:text-ink disabled:opacity-30" disabled={stepIx <= 0} onClick={() => stepIx > 0 && select(pageSteps[stepIx - 1]!.id)} title="the step before">◀</button>
@@ -809,6 +838,10 @@ export function Author() {
             </section>
           ) : err && !views.data ? (
             <EmptyState title={`Could not open the page · ${err.code ?? err.status}`} hint={err.hint ?? err.message} action={<Button onClick={() => setPages((ps) => ({ ...ps, [pageKey]: { url: ps[pageKey]?.url ?? "" } }))}>Retry</Button>} />
+          ) : liveElsewhere && views.data?.content ? (
+            <>
+              <PageFrame html={views.data.content} base={views.data.url ?? page?.url ?? graph.url} stripScripts={stripScripts} focusPaths={shownRoots.length ? shownRoots.map(pathOf) : null} highlights={frameHls} picking={selfMode} onPick={onFramePick} onAction={onFrameAction} maxHeight={pageH} width={1180} />
+            </>
           ) : atHead && !liveDocId ? (
             <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "opening the live page…"}</div>
           ) : liveDocId ? (

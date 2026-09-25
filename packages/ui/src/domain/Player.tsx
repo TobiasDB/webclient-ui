@@ -71,6 +71,15 @@ const NO_HIGHLIGHTS: Highlight[] = [];
  * page restarts its mirror on every navigation / step), so the pointer always moves on from there */
 let lastPointer: { x: number; y: number } | null = null;
 
+/** scroll the REBUILT page's own window to an element -- never `scrollIntoView`: the mirror's frame is
+ * same-origin, so that also scrolls every ancestor (the workspace jumped whenever a line was focused) */
+function scrollWithin(el: Element, block: "start" | "center"): void {
+  const w = el.ownerDocument.defaultView; if (!w) return;
+  const r = el.getBoundingClientRect();
+  const top = w.scrollY + r.top - (block === "center" ? Math.max(0, (w.innerHeight - r.height) / 2) : 0);
+  w.scrollTo({ top: Math.max(0, top), left: w.scrollX });
+}
+
 export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, shiftPick = false, onClickThrough, focus = null, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
   const ownCtl = React.useMemo(() => new PlayerController(), []);
   const ctl = controller ?? ownCtl;
@@ -216,7 +225,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
   /** the centre of a selector's first match, in page coordinates (what the driver aimed at) */
   const centreOf = (sel: string): number[] | undefined => {
     const d = doc(); if (!d) return undefined; let el: Element | null = null; try { el = d.querySelector(sel); } catch { return undefined; } if (!el) return undefined;
-    if (!live) { try { el.scrollIntoView({ block: "center" }); } catch { /* fine */ } }  // live: the page's own scroll arrives in the stream
+    if (!live) { try { scrollWithin(el, "center"); } catch { /* fine */ } }  // live: the page's own scroll arrives in the stream
     const r = el.getBoundingClientRect(); const w = d.defaultView;
     return [r.left + r.width / 2 + (w?.scrollX ?? 0), r.top + r.height / 2 + (w?.scrollY ?? 0)];  // DOCUMENT coordinates
   };
@@ -274,7 +283,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     if (roots.length) {
       const keep = new Set<Element>(); for (const r of roots) { let n: Element | null = r; while (n) { keep.add(n); n = n.parentElement; } }
       for (const r of roots) { let n: Element | null = r; while (n && n.parentElement) { for (const sib of n.parentElement.children) if (!keep.has(sib) && sib.tagName !== "HEAD" && sib.tagName !== "STYLE" && sib.tagName !== "LINK") sib.setAttribute("data-wc-hide", ""); n = n.parentElement; } }
-      roots[0]!.scrollIntoView({ block: "start" });
+      scrollWithin(roots[0]!, "start");
     }
     refreshRef.current();
   }, [focus, ready]);
