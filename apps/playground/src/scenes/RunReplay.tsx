@@ -19,17 +19,7 @@ const opOf = (e: RunEvent): string => String(e.detail?.op ?? (e as { action?: st
 const selOf = (e: RunEvent): string | undefined => (e.detail?.selector as string | undefined) ?? ((e as { args?: { selector?: string } }).args?.selector ?? undefined);
 const SELECTING = new Set(["select", "select_all", "click", "write", "wait_for", "scroll", "hover", "press"]);
 
-/** the moment on screen: the last step / action / fetch (up to `at`) of the picked item / stage (or any: follow) */
-export function currentStep(events: RunEvent[], stageOf: (string | null)[], at: number, pick: Pick): number {
-  for (let i = Math.min(at, events.length) - 1; i >= 0; i--) {
-    const e = events[i]!;
-    if (pick?.item != null && keyOf(e) !== pick.item) continue;
-    if (pick?.stage && stageOf[i] !== pick.stage) continue;
-    if (pick?.doc) { if (docOf(e) === pick.doc) return i; continue; }
-    if ((e.topic === "plan" && e.phase === "step") || e.topic === "action" || e.topic === "snapshot") return i;
-  }
-  return -1;
-}
+export const currentStep = (events: RunEvent[], stageOf: (string | null)[], at: number, pick: Pick): number => replayLib.currentStep(events, stageOf, at, pick);
 
 type Spec = { op: string; selector?: string; fanSel?: string; local?: number; label: string };
 
@@ -40,28 +30,7 @@ export function ReplayScreen({ traceId, events, stageOf, stages, stats, at, pick
   const ev = j >= 0 ? events[j]! : null;
   // where the step is: its own page; a record's step (on an element: no page id) is on the page whose span of the
   // fan-out holds the record; anything else on its item's last page (its detail page's fetch)
-  const place = React.useMemo(() => {
-    if (!ev || j < 0) return null;
-    const own = docOf(ev); const st = all.find((x) => x.id === stageOf[j]);
-    const feed = st ? stats[st.id]?.feed ?? feeds[st.id] : undefined; const fan = feed ? all.find((x) => x.id === feed) : undefined;
-    let idx = (ev.item ?? []).length ? ev.item![ev.item!.length - 1]! : undefined;
-    // a trace without item paths (recorded before they were stamped): the ITERATION -- how many times this
-    // stage ran on this page since its fan-out there -- is the item's index
-    let fanDoc: string | undefined;
-    if (idx == null && fan && st && !(ev.item ?? []).length) {
-      // anchored on the fan-out: its page, and how many times this stage ran since it
-      let n = 0; for (let k = j - 1; k >= 0; k--) { const e = events[k]!; if (stageOf[k] === fan.id && (e.phase === "fanout" || (e.phase === "step" && e.topic === "plan")) && (!docOf(ev) || docOf(e) === docOf(ev))) { fanDoc = docOf(e); break; } if (stageOf[k] === st.id && e.topic === "plan" && e.phase === "step" && (!docOf(ev) || docOf(e) === docOf(ev))) n++; }
-      idx = n;
-      if (!own && fanDoc) return { doc: fanDoc, fan, local: idx };
-    }
-    const spans = fan ? replayLib.pageSpans(events, stageOf, fan.id) : [];
-    if (own) { const sp = spans.find((x) => x.doc === own); return { doc: own, fan, local: idx != null && sp && (ev.item ?? []).length ? idx - sp.from : idx }; }
-    if (fan && idx != null) { const hit = replayLib.pageOfItem(spans, idx); if (hit) return { doc: hit.doc, fan, local: hit.local }; }
-    const key = keyOf(ev);
-    for (let k = j - 1; k >= 0 && j - k < 5000; k--) { const e = events[k]!; const d = docOf(e); if (d && keyOf(e) === key) return { doc: d, fan, local: idx }; }
-    for (let k = j - 1; k >= 0 && j - k < 5000; k--) { const d = docOf(events[k]!); if (d) return { doc: d, fan, local: idx }; }  // no item: the last page touched
-    return null;
-  }, [ev, j, events, stageOf, stats, all, feeds]);
+  const place = React.useMemo(() => replayLib.placeOf(events, stageOf, all, (id) => stats[id]?.feed ?? feeds[id], j), [j, events, stageOf, stats, all, feeds]);
   const doc = place?.doc;
 
   // WHAT to outline (independent of which rendering shows the page): this step if it names a selector,
@@ -70,7 +39,9 @@ export function ReplayScreen({ traceId, events, stageOf, stages, stats, at, pick
     if (!ev || j < 0 || !place) return null;
     let k = j; const key = keyOf(ev);
     while (k >= 0) { const e = events[k]!; if ((e.topic === "action" || (e.topic === "plan" && e.phase === "step")) && keyOf(e) === key && (!docOf(e) || docOf(e) === doc) && selOf(e) && SELECTING.has(opOf(e))) break; k--; if (j - k > 400) { k = -1; break; } }
-    if (k < 0) return null;
+    // no selecting step of its own: a read straight off the record (`select_all(li).extract(text=attr("text"))`) --
+    // the record itself, the item's match of the fan-out
+    if (k < 0) return place.fan?.op === "select_all" && place.local != null ? { op: "select", fanSel: place.fan.arg, local: place.local, label: `${opOf(ev)}${selOf(ev) ? ` ${selOf(ev)}` : ""}` } : null;
     const step = events[k]!;
     return { op: opOf(step), selector: selOf(step), fanSel: place.fan?.op === "select_all" ? place.fan.arg : undefined, local: place.local, label: `${opOf(ev)}${selOf(ev) ? ` ${selOf(ev)}` : ""}` };
   }, [ev, j, events, place, doc]);
@@ -120,7 +91,7 @@ export function ReplayScreen({ traceId, events, stageOf, stages, stats, at, pick
         {ev ? <>
           <span className="shrink-0 rounded bg-surface-2 px-1 font-mono">{item ? `item ${item}` : "root"}</span>
           <span className="min-w-0 truncate font-mono" style={{ color: colour }}>{spec?.label ?? opOf(ev)}</span>
-          {shown && <span className="shrink-0 text-muted">{shown.how === "item" ? `this item's element${shown.els.length > 1 ? ` (1 of ${shown.els.length})` : ""}` : shown.els.length ? "on the page" : "not on this page"}</span>}
+          {shown && <span className="shrink-0 text-muted">{shown.how === "item" ? `this item's element${shown.own && !replayLib.shown(shown.own) ? " (hidden on the page)" : ""}${shown.els.length > 1 ? ` (1 of ${shown.els.length})` : ""}` : shown.els.length ? "on the page" : "not on this page"}</span>}
           <span className="shrink-0 rounded bg-surface-2 px-1 text-muted">{useRecording ? "recording" : "snapshot"}</span>
           <span className="flex-1" />
           <span className="min-w-0 truncate text-muted" title={page.data?.final_url ?? page.data?.url}>{(page.data?.final_url ?? page.data?.url ?? "").replace(/^https?:\/\//, "")}{page.data?.status_code ? ` · ${page.data.status_code}` : ""}</span>

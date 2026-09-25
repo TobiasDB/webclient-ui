@@ -4,7 +4,7 @@
  * item's element is the k-th match of the fan-out's selector on THAT page (k = the item's index, less
  * what earlier pages of a paginated fan-out contributed), and the step's selector runs within it. */
 
-import type { RunEvent } from "./stages";
+import type { RunEvent, Stage } from "./stages";
 
 /** for a fan-out stage spanning pages: each page's first item index (the items of earlier pages before it) */
 export function pageOffsets(events: RunEvent[], stageOf: (string | null)[], fanStage: string): Map<string, number> {
@@ -61,3 +61,94 @@ export function shown(el: Element): boolean {
   if (el.closest("head, [hidden], template")) return false;
   try { const r = el.getBoundingClientRect(); if (r.width > 0 && r.height > 0) return true; const cs = w.getComputedStyle(el); return cs.display === "contents"; } catch { return true; }
 }
+
+const keyOf = (e: RunEvent) => (e.item ?? []).join(".");
+const docOf = (e: RunEvent) => (e as { document_id?: string }).document_id;
+
+/** each chained stage's predecessor: a chain `select → attr → number` hangs under its head, the rest in order */
+const PREV = new WeakMap<Stage[], Map<string, string>>();
+function chainPrev(all: Stage[]): Map<string, string> {
+  let m = PREV.get(all); if (m) return m; m = new Map();
+  for (const st of all) { let prev = st.id; for (const c of st.children) if (c.chain) { m.set(c.id, prev); prev = c.id; } }
+  PREV.set(all, m); return m;
+}
+
+export type Place = { doc: string; fan?: Stage; local?: number };
+
+/** WHERE step `j` happened: its own page; a record's step (on an element: no page id) is on the page whose span of the
+ * fan-out holds the record; anything else on its item's last page (its detail page's fetch). `feedOf` names the
+ * fan-out stage feeding a stage. `local` is the item's index among the fan-out's matches on that page. */
+export function placeOf(events: RunEvent[], stageOf: (string | null)[], all: Stage[], feedOf: (stage: string) => string | undefined, j: number, depth = 0): Place | null {
+  const ev = events[j]; if (!ev || j < 0) return null;
+  const own = docOf(ev); const st = all.find((x) => x.id === stageOf[j]);
+  // a step on an ELEMENT (no page id) further down a chain reads what the step before it found -- on THAT step's
+  // page (`.select("#product_description ~ p").attr("text")`: the read is on the detail page the select ran on)
+  if (!own && st?.chain && depth < 8) {
+    const prev = chainPrev(all).get(st.id); const key = keyOf(ev);
+    if (prev) for (let k = j - 1; k >= 0 && j - k < 5000; k--) { const e = events[k]!; if (stageOf[k] === prev && e.topic === "plan" && e.phase === "step" && keyOf(e) === key) { const pp = placeOf(events, stageOf, all, feedOf, k, depth + 1); if (pp) return pp; break; } }
+  }
+  const feed = st ? feedOf(st.id) : undefined; const fan = feed ? all.find((x) => x.id === feed) : undefined;
+  let idx = (ev.item ?? []).length ? ev.item![ev.item!.length - 1]! : undefined;
+  // a trace without item paths (recorded before they were stamped): the ITERATION -- how many times this
+  // stage ran on this page since its fan-out there -- is the item's index
+  let fanDoc: string | undefined;
+  if (idx == null && fan && st && !(ev.item ?? []).length) {
+    // anchored on the fan-out: its page, and how many times this stage ran since it
+    let n = 0; for (let k = j - 1; k >= 0; k--) { const e = events[k]!; if (stageOf[k] === fan.id && (e.phase === "fanout" || (e.phase === "step" && e.topic === "plan")) && (!docOf(ev) || docOf(e) === docOf(ev))) { fanDoc = docOf(e); break; } if (stageOf[k] === st.id && e.topic === "plan" && e.phase === "step" && (!docOf(ev) || docOf(e) === docOf(ev))) n++; }
+    idx = n;
+    if (!own && fanDoc) return { doc: fanDoc, fan, local: idx };
+  }
+  // a NESTED fan-out's item ([8, 0]: row 0 of book 8's table) is on the page where the fan-out ran FOR ITS PARENT
+  // ([8]) -- every parent's fan-out restarts at 0, so a count across all of them lands on the first book's page
+  const path = ev.item ?? [];
+  if (fan && path.length >= 2) {
+    const parent = path.slice(0, -1).join(".");
+    for (let k = j - 1; k >= 0; k--) { const e = events[k]!; if (stageOf[k] === fan.id && e.topic === "plan" && e.phase === "fanout" && keyOf(e) === parent && docOf(e)) return { doc: own ?? docOf(e)!, fan, local: path[path.length - 1] }; }
+  }
+  const spans = fan ? pageSpans(events, stageOf, fan.id) : [];
+  if (own) { const sp = spans.find((x) => x.doc === own); return { doc: own, fan, local: idx != null && sp && (ev.item ?? []).length ? idx - sp.from : idx }; }
+  if (fan && idx != null) { const hit = pageOfItem(spans, idx); if (hit) return { doc: hit.doc, fan, local: hit.local }; }
+  const key = keyOf(ev);
+  for (let k = j - 1; k >= 0 && j - k < 5000; k--) { const e = events[k]!; const d = docOf(e); if (d && keyOf(e) === key) return { doc: d, fan, local: idx }; }
+  for (let k = j - 1; k >= 0 && j - k < 5000; k--) { const d = docOf(events[k]!); if (d) return { doc: d, fan, local: idx }; }  // no item: the last page touched
+  return null;
+}
+
+/** what is watched: a stage and / or an item (its index path joined, "" = the root), or a page; null = follow the run */
+export type Watch = { stage?: string | null; item?: string | null; doc?: string | null } | null;
+
+/** the moment on screen: the last step / action / fetch (up to `at`) of the picked item / stage (or any: follow) */
+export function currentStep(events: RunEvent[], stageOf: (string | null)[], at: number, pick: Watch): number {
+  const shown = (e: RunEvent) => (e.topic === "plan" && e.phase === "step") || e.topic === "action" || e.topic === "snapshot";
+  // FOLLOW (nothing picked): items run in parallel, so the last event belongs to a different item -- and a different
+  // page -- almost every step. Stay with the OLDEST item still in flight (and its nested rows) until it is done.
+  if (!pick || (pick.item == null && !pick.stage && !pick.doc)) {
+    const upto = Math.min(at, events.length);
+    const order: string[] = []; const last = new Map<string, number>(); const done = new Set<string>();
+    for (let i = 0; i < upto; i++) {
+      const e = events[i]!; const path = e.item ?? []; if (!path.length) continue;
+      const top = String(path[0]);
+      if (e.topic === "plan" && e.phase === "item" && path.length === 1) { done.add(top); continue; }
+      if (!shown(e)) continue;
+      if (!last.has(top)) order.push(top);
+      last.set(top, i);
+    }
+    let lastAny = -1; for (let i = upto - 1; i >= 0; i--) if (shown(events[i]!)) { lastAny = i; break; }
+    // an item is finished once it says so -- or (older traces: no item events) once it has gone quiet for a while
+    const followed = order.find((k) => !done.has(k) && upto - last.get(k)! < 400);
+    const mine = followed != null ? last.get(followed)! : -1;
+    // a later ROOT step (the page fetched, the fan-out) still shows when nothing item-level is newer
+    if (mine < 0) return lastAny;
+    const root = lastAny > mine && !(events[lastAny]!.item ?? []).length ? lastAny : -1;
+    return root > mine ? root : mine;
+  }
+  for (let i = Math.min(at, events.length) - 1; i >= 0; i--) {
+    const e = events[i]!;
+    if (pick?.item != null && keyOf(e) !== pick.item) continue;
+    if (pick?.stage && stageOf[i] !== pick.stage) continue;
+    if (pick?.doc) { if (docOf(e) === pick.doc) return i; continue; }
+    if ((e.topic === "plan" && e.phase === "step") || e.topic === "action" || e.topic === "snapshot") return i;
+  }
+  return -1;
+}
+
