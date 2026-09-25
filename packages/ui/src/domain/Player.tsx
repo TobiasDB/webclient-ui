@@ -101,6 +101,12 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
   // it is drawn at document - scroll
   const [cursor, setCursor] = React.useState<{ x: number; y: number; down: boolean } | null>(lastPointer ? { ...lastPointer, down: false } : null);
   const cursorAnim = React.useRef(0);
+  const liveClock = React.useRef<{ baseline: number; t0: number } | null>(null);
+  /** add a live event stamped no later than the replay clock's now (it applies at once, order kept) */
+  const liveAdd = (r: { addEvent: (e: unknown) => void }, e: { timestamp: number }) => {
+    const c = liveClock.current; const now = c ? c.baseline + (performance.now() - c.t0) : e.timestamp;
+    try { r.addEvent(e.timestamp > now ? { ...e, timestamp: now } : e); } catch { /* a malformed chunk */ }
+  };
   const cursorPos = React.useRef<{ x: number; y: number } | null>(lastPointer);
   const [scrollXY, setScrollXY] = React.useState<[number, number]>([0, 0]);
   const [ready, setReady] = React.useState(false);
@@ -155,8 +161,12 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
       r.on("state-change", (s: any) => { if (s?.player?.value) setPlaying(s.player.value === "playing"); });
       const m = live ? { startTime: events[0]!.timestamp, endTime: events[events.length - 1]!.timestamp, totalTime: 0 } : r.getMetaData(); setMeta(m);
       if (live) {
-        r.startLive(events[0]!.timestamp - 500); setPlaying(true);
-        for (const e of events) { try { r.addEvent(e); } catch { /* a malformed chunk */ } }
+        // the clock starts at the recording's first moment (earlier stamps would be dropped); it then runs
+        // BEHIND the page by however late the mirror opened -- so every event is added stamped no later than
+        // the clock's NOW (see liveAdd): it applies the moment it arrives, in order, no lag
+        const baseline = events[0]!.timestamp - 500; r.startLive(baseline); setPlaying(true);
+        liveClock.current = { baseline, t0: performance.now() };
+        for (const e of events) liveAdd(r, e);
         appended.current = events.length;
       }
       else if (autoPlay) { r.play(0); setPlaying(true); }
@@ -171,7 +181,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
   // live: append what arrived since the last render
   React.useEffect(() => {
     if (!live || !rep.current) return;
-    for (let i = appended.current; i < events.length; i++) { try { rep.current.addEvent(events[i]); } catch { /* a malformed chunk */ } }
+    for (let i = appended.current; i < events.length; i++) liveAdd(rep.current, events[i]!);
     appended.current = events.length;
   }, [events, live]);
 

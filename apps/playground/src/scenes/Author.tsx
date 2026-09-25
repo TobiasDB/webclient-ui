@@ -146,6 +146,8 @@ export function Author() {
 
   // -- live: the mirrored browser page; clicks go through ------------------------------------------
   const [stream, setStream] = React.useState<RREvent[]>([]);
+  /** fetch the live page's events NOW (after an action: its result shows without waiting for the next tick) */
+  const pullNow = React.useRef<() => void>(() => undefined);
   // a live page that NAVIGATES starts a new recording (Meta + FullSnapshot): the mirror restarts there
   // (replaying the new page's events onto the old page's picture is what left a white screen)
   const liveStart = React.useMemo(() => { for (let i = stream.length - 1; i >= 0; i--) if ((stream[i] as { type?: number }).type === 4) return i; return 0; }, [stream]);
@@ -163,8 +165,10 @@ export function Author() {
   React.useEffect(() => {
     if (!liveDocId) return;
     let on = true; const docId = liveDocId; setStream([]); since.current = 0;
+    // (declared below: pullNow lets an action fetch its result at once, not at the next tick)
     const pull = async () => { try { const evs = await api.history({ since: since.current, document_id: docId, payload: true }); if (!on || !evs.length) return; since.current = Math.max(since.current, ...evs.map((c) => c.n ?? 0)); const out: RREvent[] = []; for (const e of evs) { if (e.topic === "rrweb") out.push(...((e.events ?? []) as RREvent[])); else if (e.topic !== "snapshot") { const { events: _d, content: _c, body: _b, ...payload } = e as any; out.push({ type: 5, data: { tag: e.topic, payload }, timestamp: Math.round((e.ts ?? Date.now() / 1000) * 1000) }); } } setStream((s) => [...s, ...out]); } catch { /* next tick */ } };
-    pull(); const t = setInterval(pull, 700); return () => { on = false; clearInterval(t); };
+    pullNow.current = () => { void pull(); };
+    pull(); const t = setInterval(pull, 250); return () => { on = false; clearInterval(t); pullNow.current = () => undefined; };
   }, [liveDocId]);
   const [busy, setBusy] = React.useState<string | null>(null);
   const [actError, setActError] = React.useState<ApiError | null>(null);
@@ -188,7 +192,7 @@ export function Author() {
     setBusy("opening a live page");
     // a full browser pool makes this WAIT: say so (and where to free pages) rather than just spinning
     try { const hp = (await api.health()).pool as { pages_free?: number; pages_total?: number } | undefined; if (hp && hp.pages_free === 0) setBusy(`waiting for a browser page -- all ${hp.pages_total} are in use by other sessions (Settings → close other sessions)`); } catch { /* fine */ }
-    const h = await api.docOpen(sessionId, { url, browser: "always", live: true });
+    const h = await api.docOpen(sessionId, { url, browser: "always", live: true, interactive: true });  // a person drives it: no simulated pointer path
     const steps = stepsOfPage(g, pageNode.id); const upto = steps.slice(1, steps.findIndex((x) => x.id === st.id) + 1);
     for (const x of upto) {  // replay step by step, snapshotting each (the steps get their pictures back)
       setBusy(`replaying .${x.op!.name}(…)`);
@@ -206,6 +210,7 @@ export function Author() {
       const docId = await liveAt(stateNode); if (!docId) return;
       setBusy(`.${op}(…)`);
       await api.executeDoc({ plan: planBody("Document", [callBody(op, args)], sessionId), document_id: docId });
+      pullNow.current();
       if (!record) { await snap(sessionId, docId, stateNode.id); return; }
       // a step already after this one: the new step FORKS (the old branch is kept, switched off)
       let g = graph; for (const c of children(g, stateNode.id)) if (c.op && ACTIONS.has(c.op.name) && !c.off) g = updateNode(g, c.id, { off: true });
@@ -219,7 +224,7 @@ export function Author() {
   /** a plain click on the live head: done on the page, NOT recorded yet (pending until a selector is used) */
   const clickThrough = async (sel: string) => {
     if (!sessionId || !liveDocId) return; setActError(null); setBusy(".click(…)");
-    try { await api.executeDoc({ plan: planBody("Document", [callBody("click", [sel])], sessionId), document_id: liveDocId }); setPending((ps) => [...ps, { op: "click", args: [sel] }]); }
+    try { await api.executeDoc({ plan: planBody("Document", [callBody("click", [sel])], sessionId), document_id: liveDocId }); pullNow.current(); setPending((ps) => [...ps, { op: "click", args: [sel] }]); }
     catch (e) { setActError(e as ApiError); } finally { setBusy(null); }
   };
   // leaving Author: its live page goes back to the pool
@@ -327,10 +332,12 @@ export function Author() {
     if (!graph || !pickEl || !node) return;
     // the pending op (waiting for this pick) goes; the frame's page hangs off what it hung off
     const pending = needsArg(node); const anchor = pending && node.parent ? scopeOf(graph, node.parent) : scope; if (!anchor) return;
-    const sel = selFor(pickEl); let g = pending ? graphLib.removeNode(graph, node.id) : graph; const s1 = addNode(g, anchor.id, opOf("select", [sel]), returns); g = s1.graph; const h = addNode(g, s1.id, opOf("attr", ["src"]), returns); g = h.graph; const r = addNode(g, h.id, opOf("resolve", [], browserKw(tier)), returns); g = r.graph; setGraph(() => g); select(r.id);
+    const sel = selFor(pickEl, true); let g = pending ? graphLib.removeNode(graph, node.id) : graph; const s1 = addNode(g, anchor.id, opOf("select", [sel]), returns); g = s1.graph; const h = addNode(g, s1.id, opOf("attr", ["src"]), returns); g = h.graph; const r = addNode(g, h.id, opOf("resolve", [], browserKw(tier)), returns); g = r.graph; setGraph(() => g); select(r.id);
   };
   /** a selector for an element the person acted on, rooted where it will be evaluated */
-  const selFor = (el: Element): string => { const r = rootFor(el); return selectors.uniqueCandidates(el, r ?? el.ownerDocument)[0]?.selector ?? describe(el).selector; };
+  /** a selector that points to THIS element and nothing else: an action runs on the whole page (`scoped`:
+   * a select relative to the focus root, e.g. a link inside each record) -- verified, never "the first of several" */
+  const selFor = (el: Element, scoped = false): string => { const r = scoped ? rootFor(el) ?? el.ownerDocument : el.ownerDocument; return selectors.exactSelector(el, r); };
   /** the node an action hangs off: the focused page / action node, else the page */
   const actionParent = (): graphLib.GNode | null => (node && node.type === "Document" ? node : pageNode);
   /** actions need a browser to replay: the page opens with one */
@@ -366,7 +373,7 @@ export function Author() {
     if (!a.shift) return a.op === "navigate" ? "browse" : undefined;  // not recorded: the page just behaves
     if (a.op === "navigate") {  // record: select the link, read its href, open it -- that page is the focus
       const under = node && (node.type === "Document" || node.type === "Element" || node.type === "Collection") && inRoots(el) ? node : scope; if (!under) return;
-      let g = graph; const s1 = addNode(g, under.id, opOf("select", [selFor(el)]), returns); g = s1.graph;
+      let g = graph; const s1 = addNode(g, under.id, opOf("select", [selFor(el, true)]), returns); g = s1.graph;
       const h = addNode(g, s1.id, opOf("attr", ["href"]), returns); g = h.graph;
       const r = addNode(g, h.id, opOf("resolve", [], browserKw(tier)), returns); setGraph(() => r.graph);
       if (a.href) setPages((ps) => ({ ...ps, [r.id]: { url: absolute(a.href!) } }));

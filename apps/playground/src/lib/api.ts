@@ -100,7 +100,7 @@ export const api = {
   tracePlan: (id: string) => call<{ blob: string; describe: string }>(`/traces/${encodeURIComponent(id)}/plan`),
   /** the documents the session holds (the strip at the top): static captures and live pages */
   docs: (sid: string) => call<DocHandle[]>(`/sessions/${encodeURIComponent(sid)}/documents`),
-  docOpen: (sid: string, body: { url: string; browser?: unknown; live?: boolean }) => call<DocHandle>(`/sessions/${encodeURIComponent(sid)}/documents`, { method: "POST", body: JSON.stringify(body) }),
+  docOpen: (sid: string, body: { url: string; browser?: unknown; live?: boolean; interactive?: boolean }) => call<DocHandle>(`/sessions/${encodeURIComponent(sid)}/documents`, { method: "POST", body: JSON.stringify(body) }),
   docViews: (sid: string, id: string, include: string[]) => call<DocViews>(`/sessions/${encodeURIComponent(sid)}/documents/${encodeURIComponent(id)}/views?include=${include.join(",")}`),
   docReload: (sid: string, id: string) => call<DocHandle>(`/sessions/${encodeURIComponent(sid)}/documents/${encodeURIComponent(id)}/reload`, { method: "POST", body: "{}" }),
   docClose: (sid: string, id: string) => call<{ id: string }>(`/sessions/${encodeURIComponent(sid)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),

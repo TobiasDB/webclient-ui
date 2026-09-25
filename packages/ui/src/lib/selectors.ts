@@ -220,3 +220,33 @@ export function attributesOf(el: Element): AttrRow[] {
   if (el.classList.length) out.push({ attr: "class", value: el.className.slice(0, 80), kind: "attribute" });
   return out;
 }
+
+/** does `sel` match EXACTLY `el` (one match, that element) under `root`? */
+export function pointsTo(sel: string, el: Element, root: ParentNode): boolean {
+  try { const all = root.querySelectorAll(sel); return all.length === 1 && all[0] === el; } catch { return false; }
+}
+
+/** A selector that points to THIS element and nothing else under `root` -- what an ACTION needs (a
+ * click on the 3rd "Add to basket" must not click the 1st). The best readable candidate that matches
+ * only it; else a structural path down from the nearest ancestor that is itself exactly
+ * addressable (`#results > li:nth-of-type(3) > button`), else from the root. Always verified. */
+export function exactSelector(el: Element, root: ParentNode = el.ownerDocument): string {
+  for (const c of candidates(el, root)) if (c.count === 1 && pointsTo(c.selector, el, root)) return c.selector;
+  // readable forms that only miss by position: keep them, add the position among their matches
+  const step = (n: Element): string => {
+    const tag = n.tagName.toLowerCase(); const p = n.parentElement; if (!p) return tag;
+    const same = [...p.children].filter((c) => c.tagName === n.tagName);
+    return same.length > 1 ? `${tag}:nth-of-type(${same.indexOf(n) + 1})` : tag;
+  };
+  const path: string[] = [step(el)];
+  let n: Element | null = el.parentElement;
+  while (n && n !== root && !["HTML"].includes(n.tagName)) {
+    // an ancestor exactly addressable on its own: anchor the path there
+    const anchor = candidates(n, root, 1).find((c) => c.count === 1 && c.clean && pointsTo(c.selector, n!, root));
+    if (anchor) { const sel = `${anchor.selector} > ${path.join(" > ")}`; if (pointsTo(sel, el, root)) return sel; }
+    path.unshift(step(n)); n = n.parentElement;
+    const sel = path.join(" > "); if (n === root || n?.tagName === "HTML") { if (pointsTo(sel, el, root)) return sel; }
+  }
+  const full = path.join(" > "); if (pointsTo(full, el, root)) return full;
+  return full;
+}

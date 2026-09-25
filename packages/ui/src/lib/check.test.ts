@@ -44,3 +44,17 @@ describe("selector candidates", () => {
     expect(uniqueCandidates(el, d)[0]?.selector).toBe('button[data-tab="Past"]');
   });
 });
+
+import { exactSelector, pointsTo } from "./selectors";
+describe("exact selectors for actions", () => {
+  it("point to the clicked element even when its readable forms match several", () => {
+    const d = new DOMParser().parseFromString('<ol class="row"><li><h3>A</h3><button class="btn add">Add</button></li><li><h3>B</h3><button class="btn add">Add</button></li><li><h3>C</h3><button class="btn add">Add</button></li></ol>', "text/html");
+    const third = d.querySelectorAll("button")[2]!;
+    const sel = exactSelector(third, d);
+    expect(pointsTo(sel, third, d)).toBe(true);
+    expect(sel).toMatch(/nth-of-type\(3\)/);
+    // a uniquely identifiable element keeps its readable selector
+    const d2 = new DOMParser().parseFromString('<div><button id="go">Go</button><button>Other</button></div>', "text/html");
+    expect(exactSelector(d2.querySelector("#go")!, d2)).toBe("button#go");
+  });
+});

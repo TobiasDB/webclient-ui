@@ -60,11 +60,13 @@ export function ElementInspector({ pick, scopeEl, scopeLabel, op, initial, group
   const [showReads, setShowReads] = React.useState(false);
   const fromToggles = (next: Record<number, Set<string>>) => segs.map((s, i) => { const on = next[i]; if (!on || !on.size) return ""; return [on.has("tag") ? s.tag : "", s.id && on.has("#") ? `#${esc(s.id)}` : "", ...s.classes.filter((c) => on.has(c)).map((c) => `.${esc(c)}`)].join(""); }).filter(Boolean).join(" ");
   const toggle = (i: number, part: string) => { const next = { ...toggled, [i]: new Set(toggled[i] ?? []) }; const set = next[i]!; set.has(part) ? set.delete(part) : set.add(part); if (part !== "tag" && set.size && !set.has("tag") && i === segs.length - 1) set.add("tag"); setToggled(next); setSelector(fromToggles(next)); };
-  const keyOf = (a: { attr: string; number?: boolean; date?: boolean; select?: string }) => `${a.select ?? ""}@${a.attr}${a.number ? "#n" : ""}${a.date ? "#d" : ""}`;
+  // each row its OWN key: the same attribute can be read several ways (text; text through a pattern;
+  // text as a number) -- a key from the attribute alone ticked them all at once
+  const keyOf = (list: "a" | "f", i: number, a: { attr: string; number?: boolean; date?: boolean; select?: string; pattern?: string }) => `${list}${i}|${a.select ?? ""}@${a.attr}|${a.pattern ?? ""}${a.number ? "#n" : ""}${a.date ? "#d" : ""}`;
   const reads = (): InspectRead[] => {
     const out: InspectRead[] = [];
-    for (const a of attrs) { const k = keyOf(a); if (ticks[k]) out.push({ attr: a.attr, pattern: a.pattern, number: a.number, date: a.date, name: names[k] || undefined, nameFrom: from[k] || undefined }); }
-    for (const f of shared) { const k = keyOf(f); if (ticks[k]) out.push({ select: f.selector, attr: f.attr, pattern: f.pattern, number: f.number, date: f.date, name: names[k] || f.name, nameFrom: from[k] || undefined }); }
+    attrs.forEach((a, i) => { const k = keyOf("a", i, a); if (ticks[k]) out.push({ attr: a.attr, pattern: a.pattern, number: a.number, date: a.date, name: names[k] || undefined, nameFrom: from[k] || undefined }); });
+    shared.forEach((f, i) => { const k = keyOf("f", i, f); if (ticks[k]) out.push({ select: f.selector, attr: f.attr, pattern: f.pattern, number: f.number, date: f.date, name: names[k] || f.name, nameFrom: from[k] || undefined }); });
     return out;
   };
   const nReads = Object.values(ticks).filter(Boolean).length;
@@ -104,8 +106,8 @@ export function ElementInspector({ pick, scopeEl, scopeLabel, op, initial, group
       {/* optional reads to add with it */}
       <button type="button" className="self-start text-[10px] text-muted hover:text-ink" onClick={() => setShowReads(!showReads)}>{showReads ? "▾" : "▸"} also output values from it{nReads ? ` (${nReads})` : ""}</button>
       {showReads && <div className="flex max-h-56 flex-col gap-0.5 overflow-auto">
-        {attrs.map((a) => <Row key={keyOf(a)} k={keyOf(a)} label={a.number ? `${a.attr} → number` : a.date ? `${a.attr} → date` : a.attr} value={a.label ?? a.value} hint={a.attr === "text" ? nameFromSelector(selector, pick.tag) : a.attr.replace(/[^a-z0-9]+/gi, "_")} />)}
-        {shared.map((f) => <Row key={keyOf(f)} k={keyOf(f)} label={<>{f.selector} <span className="text-muted">· {f.attr}{f.number ? " → n" : f.date ? " → date" : ""}</span></>} value={f.sample} hint={f.name} />)}
+        {attrs.map((a, i) => <Row key={keyOf("a", i, a)} k={keyOf("a", i, a)} label={a.number ? `${a.attr} → number` : a.date ? `${a.attr} → date` : a.attr} value={a.label ?? a.value} hint={a.attr === "text" ? nameFromSelector(selector, pick.tag) : a.attr.replace(/[^a-z0-9]+/gi, "_")} />)}
+        {shared.map((f, i) => <Row key={keyOf("f", i, f)} k={keyOf("f", i, f)} label={<>{f.selector} <span className="text-muted">· {f.attr}{f.number ? " → n" : f.date ? " → date" : ""}</span></>} value={f.sample} hint={f.name} />)}
       </div>}
       <div className="flex items-center gap-1 border-t border-line pt-1">
         <button type="button" data-act="" disabled={bad || !selector} onClick={() => onAdd(selector, reads())} className="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-white hover:brightness-110 disabled:opacity-40">{initial ? "Update" : "Add"} .{op}("{selector.length > 28 ? selector.slice(0, 28) + "…" : selector}"){nReads ? ` + ${nReads}` : ""}</button>
