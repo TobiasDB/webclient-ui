@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Chip, DataFrame, EmptyState, StagePlan, cn, planLib, stagesLib, type Plan, type RunEvent } from "@webclient/ui";
+import { Chip, DataFrame, EmptyState, PipelineGraph, StagePlan, cn, planLib, stagesLib, type Plan, type RunEvent } from "@webclient/ui";
 import { api, type RunState } from "../lib/api";
 import { useActive, useSession } from "../lib/session";
 
@@ -77,13 +77,14 @@ export function Run() {
   const rowsAt = React.useMemo(() => (data?.rows ?? []).filter((r) => r.at <= t || (!running && t >= events.length)).map((r) => (r.row && typeof r.row === "object" && !Array.isArray(r.row) ? (r.row as Record<string, unknown>) : { value: r.row })), [data?.rows, t, running, events.length]);
   const errors = React.useMemo(() => events.slice(0, t).map((e, i) => ({ e, i })).filter(({ e }) => e.topic === "error"), [events, t]);
   const [focusStage, setFocusStage] = React.useState<string | null>(null);
+  const [view, setView] = React.useState<"graph" | "tree">("graph");
   const logFrom = Math.max(0, t - 80);
   const log = events.slice(logFrom, t).map((e, k) => ({ e, i: logFrom + k })).filter(({ e }) => !focusStage || (e.topic === "plan" && stages.length > 0 && (() => { const st = stagesLib.flatStages(stages).find((s) => s.id === focusStage); return st && e.detail?.op === st.op && (!st.arg || e.detail?.selector === st.arg); })()));
   const runs = useQuery({ queryKey: ["runs", runId, data?.status], queryFn: api.runs, enabled: active });
   const step = (d: number) => { setLive(false); setT((x) => Math.max(0, Math.min(events.length, x + d))); };
   const elapsed = data ? ((data.finished ?? Date.now() / 1000) - data.started).toFixed(1) : "";
   const logRef = React.useRef<HTMLOListElement>(null);
-  React.useEffect(() => { if (live) logRef.current?.lastElementChild?.scrollIntoView({ block: "end" }); }, [live, t]);
+  React.useEffect(() => { const l = logRef.current; if (live && l) l.scrollTop = l.scrollHeight; }, [live, t]); // (not scrollIntoView: that scrolls the page too)
 
   if (!runId && !spec) return <EmptyState title="Nothing to run yet" hint="Build a plan in Author and press Run ▶ -- it opens here: the plan as stages realising live, the rows as they stream, errors, and a timeline to step back through; each run is recorded as a trace." />;
   return (
@@ -107,20 +108,24 @@ export function Run() {
       </div>
       {startError && <div className="px-2 py-1 text-bad">{startError}</div>}
       {data?.error && <div className="border-b border-bad/40 bg-bad-soft/40 px-2 py-0.5 text-[11px]"><b className="text-bad">{data.error.code}</b> {data.error.message}{data.error.hint ? <span className="text-muted"> — {data.error.hint}</span> : null}</div>}
-      <div className="grid min-h-0 flex-1 grid-cols-[400px_minmax(0,1fr)] gap-1 p-1">
-        {/* the plan as stages, realising */}
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,0.85fr)_minmax(0,1.15fr)] gap-1 p-1">
+        {/* the plan as a pipeline graph (or the stage tree), realising live */}
         <section className="flex min-h-0 flex-col rounded border border-line">
-          <div className="flex items-center border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Plan · stages<span className="flex-1" />{focusStage && <button type="button" className="font-normal normal-case hover:text-ink" onClick={() => setFocusStage(null)}>all events</button>}</div>
-          <div className="min-h-0 flex-1 overflow-auto p-0.5">{stages.length ? <StagePlan stages={stages} stats={stats} at={t} running={running || !live} onStage={(s) => setFocusStage(s.id === focusStage ? null : s.id)} /> : <span className="p-2 text-muted">…</span>}</div>
-          {plan && <div className="border-t border-line p-1 font-mono text-[9.5px] leading-[13px] text-muted">{planLib.describe(plan)}</div>}
+          <div className="flex items-center gap-1 border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Pipeline
+            <span className="ml-1 flex overflow-hidden rounded border border-line font-normal normal-case">{(["graph", "tree"] as const).map((v) => <button key={v} type="button" className={cn("px-1.5", view === v ? "bg-accent-soft text-accent" : "hover:text-ink")} onClick={() => setView(v)}>{v}</button>)}</span>
+            {plan && <span className="ml-1 min-w-0 truncate font-mono font-normal normal-case tracking-normal" title={planLib.describe(plan)}>{planLib.describe(plan)}</span>}
+            <span className="flex-1" />{focusStage && <button type="button" className="font-normal normal-case hover:text-ink" onClick={() => setFocusStage(null)}>all events</button>}</div>
+          <div className="min-h-0 min-w-0 flex-1 overflow-hidden p-0.5">{!stages.length ? <span className="p-2 text-muted">…</span> : view === "graph"
+            ? <PipelineGraph stages={stages} stats={stats} at={t} running={running || !live} selected={focusStage} onStage={(s) => setFocusStage(s.id === focusStage ? null : s.id)} />
+            : <StagePlan stages={stages} stats={stats} at={t} running={running || !live} onStage={(s) => setFocusStage(s.id === focusStage ? null : s.id)} />}</div>
         </section>
         {/* the rows as they stream, then errors + the event log */}
-        <div className="grid min-h-0 grid-rows-[minmax(0,1.3fr)_minmax(0,1fr)] gap-1">
+        <div className="grid min-h-0 grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] gap-1">
           <section className="flex min-h-0 flex-col rounded border border-line">
             <div className="border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Output · {rowsAt.length} rows{!live ? ` (at event ${t})` : running ? " (streaming)" : ""}</div>
             <div className="min-h-0 flex-1 overflow-auto">{rowsAt.length ? <DataFrame rows={rowsAt} dense /> : <div className="p-2 text-muted">{running ? "waiting for the first row…" : "no rows at this point"}</div>}</div>
           </section>
-          <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-1">
+          <div className="grid min-h-0 grid-rows-[minmax(0,0.6fr)_minmax(0,1.4fr)] gap-1">
             <section className="flex min-h-0 flex-col rounded border border-line">
               <div className="border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Errors · {errors.length}</div>
               <ul className="min-h-0 flex-1 overflow-auto">{errors.map(({ e, i }) => <li key={i}><button type="button" className="w-full px-1.5 py-px text-left hover:bg-surface-2" onClick={() => { setLive(false); setT(i + 1); }}><b className="text-bad">{e.error?.code}</b> <span className="text-muted">#{i}</span> {e.error?.message}</button></li>)}{!errors.length && <li className="p-1.5 text-muted">none</li>}</ul>

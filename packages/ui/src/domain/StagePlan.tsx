@@ -20,7 +20,7 @@ const KIND_COLOUR: Record<string, string> = { FETCH: "#2563eb", PAGES: "#2563eb"
 export function StagePlan({ stages, stats, at, running, onStage, className }: StagePlanProps) {
   const max = Math.max(1, ...Object.values(stats).map((s) => s.count));
   const row = (s: Stage): React.ReactNode => {
-    const st = stats[s.id] ?? { count: 0, errors: [] };
+    const st: StageStat = stats[s.id] ?? { count: 0, errors: [], fanout: 0 };
     const active = running && st.last !== undefined && at - st.last < 12;
     const reached = st.count > 0 || st.errors.length > 0;
     return (

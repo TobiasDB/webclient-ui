@@ -33,6 +33,7 @@ export type { ElPath, FrameAction, FrameHighlight, FramePick } from "./domain/Pa
 export * as graphLib from "./lib/graph";
 export * as stagesLib from "./lib/stages";
 export { StagePlan } from "./domain/StagePlan";
+export { PipelineGraph } from "./domain/PipelineGraph";
 export type { Stage, StageStat, RunEvent } from "./lib/stages";
 export type { Graph, GNode, NodeType } from "./lib/graph";
 export * as selectors from "./lib/selectors";
