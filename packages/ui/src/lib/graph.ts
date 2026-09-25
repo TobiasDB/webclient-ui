@@ -93,8 +93,11 @@ function colsOf(g: Graph, id: string): Col[] {
     const inner = children(g, c.id).some((x) => bearing(g, x.id)) ? colsOf(g, c.id) : [];
     const own = stepsOf(c);
     if (!inner.length) { out.push({ name: c.output ?? autoName(c), alias: c.alias, steps: [...own, ...(c.type === "Collection" && c.op?.name === "select_all" ? [get("attr"), callStep(opOf("attr", ["text"]))] : [])] }); continue; }
-    // an element / a value / a link read: its outputs are the parent's columns (the select is cheap to repeat)
-    if (!c.output && !c.alias && c.type !== "Collection" && c.type !== "Document") { for (const x of inner) out.push({ ...x, steps: [...own, ...x.steps] }); continue; }
+    // a value / a link read cannot hold columns (no extract on a Reference): its own output is a
+    // column, and what hangs off it (a page it opens) is the parent's columns beside it
+    if (c.type === "Reference" || c.type === "Value") { if (c.output || c.alias) out.push({ name: c.output ?? autoName(c), alias: c.alias, steps: own }); for (const x of inner) out.push({ ...x, steps: [...own, ...x.steps] }); continue; }
+    // an element: its outputs are the parent's columns (the select is cheap to repeat)
+    if (!c.output && !c.alias && c.type === "Element") { for (const x of inner) out.push({ ...x, steps: [...own, ...x.steps] }); continue; }
     // a page crossed (resolve) or a collection: ONE nested column (a dict / a list of rows), so the page is fetched once
     out.push({ name: c.output ?? (c.type === "Document" ? "detail" : autoName(c)), alias: c.alias, steps: [...own, ...wrap(c.type, inner)] });
   }

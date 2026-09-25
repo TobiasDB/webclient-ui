@@ -29,7 +29,7 @@ export type { InspectAdd, InspectRead } from "./domain/ElementInspector";
 export { GraphView, TYPE_COLOUR, needsArg } from "./domain/GraphView";
 export type { Edge } from "./domain/GraphView";
 export { PageFrame, withAgent } from "./domain/PageFrame";
-export type { ElPath, FrameHighlight, FramePick } from "./domain/PageFrame";
+export type { ElPath, FrameAction, FrameHighlight, FramePick } from "./domain/PageFrame";
 export * as graphLib from "./lib/graph";
 export type { Graph, GNode, NodeType } from "./lib/graph";
 export * as selectors from "./lib/selectors";

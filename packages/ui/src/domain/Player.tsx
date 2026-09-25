@@ -1,6 +1,5 @@
 import "rrweb/dist/style.css";
 import * as React from "react";
-import { Crosshair } from "lucide-react";
 import { cn } from "../lib/cn";
 import { MediaBar } from "./MediaBar";
 import { PlayerController } from "./PlayerController";
@@ -30,9 +29,9 @@ export type PlayerProps = {
   onHover?: (pick: Pick | null) => void;
   /** pick with SHIFT-click only; a plain click goes through to the page (`onClickThrough`) */
   shiftPick?: boolean;
-  onClickThrough?: (pick: Pick) => void;
-  /** render only this element (its ancestors keep their styling; everything else is hidden) */
-  focus?: Element | null;
+  onClickThrough?: (pick: Pick, mods: { shift: boolean }) => void;
+  /** render only these elements (their ancestors keep their styling; everything else is hidden) */
+  focus?: Element | Element[] | null;
   /** Seek to an absolute timestamp (ms since epoch) when it changes. */
   seekTo?: number | null;
   /** The player's clock (absolute ms), as it plays or is scrubbed. */
@@ -233,16 +232,17 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
   const hoverRaf = React.useRef(0);
   const onMove = (e: React.MouseEvent) => { if (!pickable) return; const ev = { clientX: e.clientX, clientY: e.clientY, currentTarget: e.currentTarget } as React.MouseEvent; cancelAnimationFrame(hoverRaf.current); hoverRaf.current = requestAnimationFrame(() => hoverAt(ev)); };
   const hoverAt = (e: React.MouseEvent) => { const p = pickAt(e); const d = doc(); if (!p || !d) { setHover(null); cbs.current.onHover?.(null); return; } const el = d.querySelector(p.path) ?? d.elementFromPoint((e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left) / scale, (e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top) / scale); if (el) setHover(boxFor(el, "#6b7280", p.selector, true)); cbs.current.onHover?.(p); };
-  const onClick = (e: React.MouseEvent) => { if (!pickable) return; e.preventDefault(); const p = pickAt(e); if (!p) return; if (shiftPick && !e.shiftKey) { cbs.current.onClickThrough?.(p); return; } const r = host.current?.getBoundingClientRect(); cbs.current.onPick?.(p, { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0) }); };
+  const onClick = (e: React.MouseEvent) => { if (!pickable) return; e.preventDefault(); const p = pickAt(e); if (!p) return; if (shiftPick) { cbs.current.onClickThrough?.(p, { shift: e.shiftKey }); return; } const r = host.current?.getBoundingClientRect(); cbs.current.onPick?.(p, { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0) }); };
   // focus: render only one element -- hide the siblings along its ancestor chain (styles stay: the ancestors keep their classes)
   React.useEffect(() => {
     const d = doc(); if (!d) return;
     if (!d.getElementById("__wc_focus_css")) { const st = d.createElement("style"); st.id = "__wc_focus_css"; st.textContent = "[data-wc-hide]{display:none!important}"; (d.head ?? d.documentElement).appendChild(st); }
     d.querySelectorAll("[data-wc-hide]").forEach((x) => x.removeAttribute("data-wc-hide"));
-    if (focus && focus.ownerDocument === d) {
-      let n: Element | null = focus;
-      while (n && n.parentElement) { for (const sib of n.parentElement.children) if (sib !== n && sib.tagName !== "HEAD" && sib.tagName !== "STYLE" && sib.tagName !== "LINK") sib.setAttribute("data-wc-hide", ""); n = n.parentElement; }
-      focus.scrollIntoView({ block: "start" });
+    const roots = (Array.isArray(focus) ? focus : focus ? [focus] : []).filter((x) => x.ownerDocument === d);
+    if (roots.length) {
+      const keep = new Set<Element>(); for (const r of roots) { let n: Element | null = r; while (n) { keep.add(n); n = n.parentElement; } }
+      for (const r of roots) { let n: Element | null = r; while (n && n.parentElement) { for (const sib of n.parentElement.children) if (!keep.has(sib) && sib.tagName !== "HEAD" && sib.tagName !== "STYLE" && sib.tagName !== "LINK") sib.setAttribute("data-wc-hide", ""); n = n.parentElement; } }
+      roots[0]!.scrollIntoView({ block: "start" });
     }
     refreshRef.current();
   }, [focus, ready]);
@@ -277,7 +277,6 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
         </div>
         {!ready && !live && events.length >= 2 && <div className="absolute inset-0 flex items-center justify-center text-[12px] text-muted">rebuilding the page…</div>}
         {events.length < 2 && <div className="absolute inset-0 flex items-center justify-center text-[12px] text-muted">{live ? "waiting for the page's first snapshot…" : "nothing to show yet"}</div>}
-        {pickable && <span className="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded bg-ink/80 px-1.5 py-0.5 text-[10px] text-surface"><Crosshair size={10} /> {shiftPick ? "shift-click to pick · click goes through" : "click an element to pick it"}</span>}
       </div>
       {controls && <MediaBar controller={ctl} />}
     </div>

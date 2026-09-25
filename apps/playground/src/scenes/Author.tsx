@@ -4,12 +4,27 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, ElementTable, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, PlanView, Player, Select, SkeletonPane,
   TabPanel, Tabs, Toolbar, ToolbarSpacer, describe, fieldColour, graphLib, needsArg, planLib, selectors, toolAsCode, usePlayerController,
-  type Edge, type FrameHighlight, type Graph, type Highlight, type InspectAdd, type InspectRead, type Pick, type Plan, type RREvent,
+  type Edge, type FrameAction, type FrameHighlight, type Graph, type Highlight, type InspectAdd, type InspectRead, type Pick, type Plan, type RREvent,
 } from "@webclient/ui";
 import { API_URL, api, ApiError } from "../lib/api";
 import { call as callBody, plan as planBody, useActive, useSession } from "../lib/session";
 
-const { addNode, updateNode, setMod, opOf, emptyGraph, children, pageOf, evalNode, elementsOf, sample, hrefOf, compile, decompile, outputs, inputOf, outputOf, pathOf, byPath, incomplete, isEl } = graphLib;
+const { addNode, updateNode, setMod, opOf, emptyGraph, children, pageOf, evalNode, elementsOf, sample, hrefOf, compile, decompile, outputs, inputOf, pathOf, byPath, incomplete, isEl } = graphLib;
+const isPlain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v) && typeof (v as { base64?: unknown }).base64 !== "string";
+/** EXPLODE a nested row: a dict's keys become dotted columns; a list of dicts becomes one row per item
+ * (the parent's columns repeated) -- how a nested page's rows read alongside their parent row. */
+function explode(row: Record<string, unknown>, prefix = "", cap = 400): Record<string, unknown>[] {
+  let outs: Record<string, unknown>[] = [{}];
+  for (const [k, v] of Object.entries(row)) {
+    const key = prefix ? `${prefix}.${k}` : k;
+    let sub: Record<string, unknown>[] | null = null;
+    if (isPlain(v)) sub = explode(v, key, cap);
+    else if (Array.isArray(v) && v.length && v.every(isPlain)) sub = (v as Record<string, unknown>[]).flatMap((x) => explode(x, key, cap));
+    if (sub) outs = outs.flatMap((o) => sub!.map((x) => ({ ...o, ...x }))).slice(0, cap);
+    else outs.forEach((o) => { o[key] = v; });
+  }
+  return outs;
+}
 const VIEWS = ["card", "content", "patterns", "records", "flags", "controls"];
 const GROUP_HUES = ["#e11d48", "#7c3aed", "#0891b2", "#ca8a04", "#16a34a", "#db2777", "#2563eb", "#9333ea"];
 type Tier = "false" | "auto" | "always";
@@ -31,11 +46,12 @@ function scopeOf(g: Graph, id: string): graphLib.GNode | null { for (const n of 
  * Document, Element, Collection, Value -- shown on the left as a literal plan. Click a line:
  * it is the FOCUS. The page renders just that object (its ancestors keep their styling), every
  * selector is rooted there, and the object's matches are outlined. The page is a real render
- * (its CSS and JS; a live page is the mirrored browser, and clicks go through); SHIFT-click an
- * element to build a selector from it (its hierarchy up to the focus, classes and ids to
- * toggle, the candidates by group, every match outlined). A new edge that needs a selector
- * waits for one: from the page, or from the suggestions (records for select_all, fields for
- * select, attributes for attr). Outputs are projected from the objects; Run executes the plan. */
+ * (its CSS and JS; a live page is the mirrored browser) and INTERACTIVE: following a link,
+ * clicking a control, typing are recorded as nodes (shift: not recorded). An edge that needs a
+ * selector puts the page in PICK mode: click an element (the inspector shows its hierarchy up
+ * to the focus, classes and ids to toggle, the candidates by group, every match outlined) or a
+ * suggestion (records for select_all, fields for select, attributes for attr). Outputs are
+ * projected from the objects; Run executes the plan. */
 export function Author() {
   const [params, setParams] = useSearchParams();
   const active = useActive("/author");
@@ -52,14 +68,12 @@ export function Author() {
   const undo = () => { const prev = history.current.pop(); if (prev) setStateRaw(prev); };
   const [selected, setSelectedRaw] = React.useState<string>("root");
   const [editing, setEditing] = React.useState(false);
-  const [recIdx, setRecIdx] = React.useState(0);
   const [pages, setPages] = React.useState<Record<string, Page>>({});
   const [docs, setDocs] = React.useState<Record<string, Document>>({});
   const [pickEl, setPickEl] = React.useState<Element | null>(null);
   const [building, setBuilding] = React.useState<string | null>(null);
-  const [nav, setNav] = React.useState<{ href: string; el: Element | null } | null>(null);
   const [run, setRun] = React.useState<{ rows?: Record<string, unknown>[]; error?: ApiError; ms?: number; busy: boolean; replay?: RREvent[] }>({ busy: false });
-  const select = (id: string, edit = false) => { setSelectedRaw(id); setEditing(edit); setPickEl(null); setBuilding(null); setNav(null); setRecIdx(0); };
+  const select = (id: string, edit = false) => { setSelectedRaw(id); setEditing(edit); setPickEl(null); setBuilding(null); };
   const reset = (s: State | null, sel = "root", keep: Record<string, Page> = {}) => { setStateRaw(s); history.current = []; setPages(keep); setDocs({}); select(sel); setRun({ busy: false }); };
   const start = (url: string, tier: Tier, keep?: Page) => { let g = emptyGraph(url); const r = addNode(g, g.root, opOf("resolve", [], browserKw(tier)), returns); g = r.graph; reset({ tier, graph: g }, r.id, keep ? { [r.id]: keep } : {}); };
   React.useEffect(() => { if (!active) return; setParams((q) => { const n = new URLSearchParams(q); if (state) n.set("g", enc(state)); else n.delete("g"); n.delete("url"); n.delete("doc"); n.delete("p"); return n; }, { replace: true }); }, [state, active, setParams]);
@@ -142,20 +156,27 @@ export function Author() {
   const takesSelector = !!node?.op && SELECTOR_OPS.includes(node.op.name);
   const selfMode = !!node && takesSelector && (needsArg(node) || editing);   // picking the focused node's OWN selector
   const values = React.useMemo(() => { const out: Record<string, unknown> = {}; if (!graph) return out; for (const n of Object.values(graph.nodes)) { const p = pageOf(graph, n.id); if (p && docs[p.id]) out[n.id] = n.id === p.id ? docs[p.id] : evalNode(graph, n.id, docs[p.id]!); } return out; }, [graph, docs]);
-  const recCount = node && node.type === "Collection" ? elementsOf(values[node.id]).length : 0;
-  /** the rendered root: the focused node's input when picking its own selector (or reading a value off it), else its output */
-  const root: Element | null = !graph || !node || !doc ? null
-    : selfMode || node.type === "Value" || node.type === "Reference" ? inputOf(graph, node.id, doc)
-    : outputOf(graph, node.id, doc, recIdx);
+  /** the rendered roots: the focused node's input when picking its own selector (or reading a value
+   * off it), else its output -- ALL of a collection's elements; the page when empty */
+  const roots: Element[] = React.useMemo(() => {
+    if (!graph || !node || !doc) return [];
+    const inputSide = selfMode || node.type === "Value" || node.type === "Reference";
+    const src = inputSide ? (node.parent ? graph.nodes[node.parent] : undefined) : node;
+    if (!src || src.type === "Document" || src.type === "Reference") return [];
+    return elementsOf(values[src.id]);
+  }, [graph, node, doc, selfMode, values]);
+  const root: Element | null = roots[0] ?? null;
+  const rootFor = (el: Element | null): Element | null => (el ? roots.find((r) => r === el || r.contains(el)) ?? null : null);
+  const inRoots = (el: Element) => !roots.length || roots.some((r) => r === el || r.contains(el));
   const scope = graph && node ? scopeOf(graph, node.id) : null;
-  const rootLabel = root ? `${root.tagName.toLowerCase()}${selectors.semantic([...root.classList]).slice(0, 2).map((c) => `.${c}`).join("")}` : "the page";
+  const rootLabel = root ? `${roots.length > 1 ? "each " : ""}${root.tagName.toLowerCase()}${selectors.semantic([...root.classList]).slice(0, 2).map((c) => `.${c}`).join("")}${roots.length > 1 ? ` ×${roots.length}` : ""}` : "the page";
   // highlights (elements of the workspace's DOM): the focus's own matches, the outputs, the selector under construction
   const hls: HL[] = [];
   const outs = graph ? outputs(graph) : [];
   if (graph && node && doc) {
-    outs.forEach((o, i) => { if (pageOf(graph, o.id)?.id !== pageKey) return; const v = values[o.id]; let els = elementsOf(v); if (!els.length && o.parent) els = elementsOf(values[o.parent]); els = root ? els.filter((e) => root.contains(e)) : els; if (els.length) hls.push({ els, colour: fieldColour(i), label: o.output ?? "name from page" }); });
-    if (node.op && !needsArg(node) && node.type !== "Document") { let els = elementsOf(values[node.id]); if (!els.length && node.parent) els = elementsOf(values[node.parent]); els = root && !selfMode ? els.filter((e) => root.contains(e) || e === root) : els; if (els.length) hls.push({ els, colour: "#2563eb", label: node.op.name }); }
-    if (building) { try { const els = [...(root ?? doc).querySelectorAll(building)]; hls.push({ els, colour: "#f59e0b", label: "match", dashed: true }); } catch { /* bad selector */ } }
+    outs.forEach((o, i) => { if (pageOf(graph, o.id)?.id !== pageKey) return; const v = values[o.id]; let els = elementsOf(v); if (!els.length && o.parent) els = elementsOf(values[o.parent]); els = els.filter(inRoots); if (els.length) hls.push({ els, colour: fieldColour(i), label: o.output ?? "name from page" }); });
+    if (node.op && !needsArg(node) && node.type !== "Document") { let els = elementsOf(values[node.id]); if (!els.length && node.parent) els = elementsOf(values[node.parent]); els = selfMode ? els : els.filter(inRoots); if (els.length) hls.push({ els, colour: "#2563eb", label: node.op.name }); }
+    if (building) { try { const els = (roots.length ? roots : [doc]).flatMap((r) => [...r.querySelectorAll(building)]); hls.push({ els, colour: "#f59e0b", label: "match", dashed: true }); } catch { /* bad selector */ } }
   }
   const [showGroups, setShowGroups] = React.useState(false);
   const patternGroups = React.useMemo(() => {
@@ -171,7 +192,31 @@ export function Author() {
   // -- picking: shift-click → the inspector (rooted at the focus) -------------------------------------
   const pick: Pick | null = pickEl ? describe(pickEl) : null;
   const pickGroups = React.useMemo(() => { if (!pickEl) return []; return patternGroups.filter((g) => { try { return !!pickEl.closest(g.selector); } catch { return false; } }).map((g) => ({ name: g.name, colour: g.colour, count: g.count })); }, [pickEl, patternGroups]);
-  const onFramePick = (p: { path: number[] }) => { if (!doc) return; const el = byPath(doc, p.path); if (el) { setPickEl(el); setNav(null); } };
+  const onFramePick = (p: { path: number[] }) => { if (!doc) return; const el = byPath(doc, p.path); if (el) setPickEl(el); };
+  /** a selector for an element the person acted on, rooted where it will be evaluated */
+  const selFor = (el: Element): string => { const r = rootFor(el); return selectors.uniqueCandidates(el, r ?? el.ownerDocument)[0]?.selector ?? describe(el).selector; };
+  /** the node an action hangs off: the focused page / action node, else the page */
+  const actionParent = (): graphLib.GNode | null => (node && node.type === "Document" ? node : pageNode);
+  /** actions need a browser to replay: the page opens with one */
+  const needBrowser = (g: Graph): Graph => { if (!pageNode?.op || pageNode.op.kwargs.browser?.value === true) return g; return updateNode(g, pageNode.id, { op: { ...pageNode.op, kwargs: { ...pageNode.op.kwargs, browser: { value: true } } } }); };
+  /** INTERACT mode: what the person did on the page becomes nodes of the plan */
+  const onFrameAction = (a: FrameAction) => {
+    if (!graph || !doc) return; const el = byPath(doc, a.pick.path); if (!el) return;
+    if (a.op === "navigate") {  // following a link: select it, read its href, open it -- the new page is the focus
+      const under = node && (node.type === "Document" || node.type === "Element" || node.type === "Collection") && inRoots(el) ? node : scope; if (!under) return;
+      let g = graph; const s = addNode(g, under.id, opOf("select", [selFor(el)]), returns); g = s.graph;
+      const h = addNode(g, s.id, opOf("attr", ["href"]), returns); g = h.graph;
+      const r = addNode(g, h.id, opOf("resolve", [], browserKw(tier)), returns); setGraph(() => r.graph); select(r.id); return;
+    }
+    const parent = actionParent(); if (!parent) return;
+    const sel = selFor(el);
+    if (a.op === "write") {  // typing into the same field again updates the value
+      const prev = children(graph, parent.id).find((c) => c.op?.name === "write" && c.op.args[0]?.value === sel);
+      if (prev) { setGraph((g) => updateNode(g, prev.id, { op: opOf("write", [sel, a.value ?? ""]) })); return; }
+      setGraph((g) => needBrowser(addNode(g, parent.id, opOf("write", [sel, a.value ?? ""]), returns).graph)); return;
+    }
+    setGraph((g) => needBrowser(addNode(g, parent.id, opOf("click", [sel]), returns).graph));
+  };
   const addReads = (g: Graph, under: string, reads: InspectRead[] | undefined, fallbackSel: string): Graph => {
     for (const rd of reads ?? []) {
       let at = under;
@@ -217,12 +262,18 @@ export function Author() {
     if (node.type === "Element" || node.type === "Collection") {
       edges.push({ label: '.attr("text")', hint: "read a value off it", onAdd: () => addEdge("attr", ["text"], {}, { output: selectors.nameFromSelector(String(node.op?.args[0]?.value ?? ""), el?.tagName.toLowerCase() ?? "") }) });
       if (el && (el.tagName === "A" || el.hasAttribute("href"))) edges.push({ label: '.attr("href").resolve()', tone: "io", hint: "open the link: a Document per element", onAdd: openLink });
+      if (node.type === "Collection" && el) {  // two cells per element (th/td, dt/dd, label/value): a key → value table as one dict
+        const k = el.querySelector("th, dt") ?? (el.children.length === 2 ? el.children[0] : null); const v = el.querySelector("td, dd") ?? (el.children.length === 2 ? el.children[1] : null);
+        if (k && v && k !== v) { const ks = k.tagName === "TH" || k.tagName === "DT" ? k.tagName.toLowerCase() : `${k.tagName.toLowerCase()}:first-child`; const vs = v.tagName === "TD" || v.tagName === "DD" ? v.tagName.toLowerCase() : `${v.tagName.toLowerCase()}:last-child`;
+          edges.push({ label: `.extract(${vs}.alias(${ks}))`, hint: `a key → value table: each ${ks} names its ${vs} -- the rows become one dict`, onAdd: () => { const s1 = addNode(graph, node.id, opOf("select", [vs]), returns); const a1 = addNode(s1.graph, s1.id, opOf("attr", ["text"]), returns, { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: ks }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }] }); setGraph(() => updateNode(a1.graph, node.id, { output: node.output ?? "info" })); } }); }
+      }
       if (node.type === "Collection") edges.push({ label: ".limit(n)", hint: "the first n", onAdd: () => { const n = Number(window.prompt("how many", "5")); if (n) setGraph((g) => setMod(g, node.id, opOf("limit", [n]))); } });
     }
     if (node.type === "Document") {
       for (const n of ["click", "write", "wait_for"]) edges.push({ label: `.${n}("…")`, tone: "io", hint: `${n} on the live page (the page goes live)`, onAdd: () => addEdge(n, n === "write" ? ["", ""] : [""]) });
       if (node.op?.name === "resolve") edges.push({ label: ".paginate(…)", tone: "io", hint: "walk the pages", onAdd: () => setGraph((g) => setMod(g, node.id, opOf("paginate", [], { by: "link", max_pages: 5 }))) });
-      for (const n of ["title", "text", "markdown", "links"]) if (returns[n]) edges.push({ label: `.${n}()`, hint: `the page's ${n}`, onAdd: () => addEdge(n, [], {}, { output: n }) });
+      for (const n of ["title", "text", "markdown", "html", "links"]) if (returns[n]) edges.push({ label: `.${n}()`, hint: `the page's ${n}`, onAdd: () => addEdge(n, [], {}, { output: n }) });
+      edges.push({ label: ".download()", hint: "the raw bytes as a file (a PDF, an image): url, filename, content type, size, base64", onAdd: () => addEdge("download", [], {}, { output: "file" }) });
     }
   }
   /** suggestions for the focused node's own argument */
@@ -257,6 +308,7 @@ export function Author() {
   const plan = React.useMemo<Plan | null>(() => (graph ? compile(graph) : null), [graph]);
   const missing = graph ? incomplete(graph) : [];
   const [tab, setTab] = React.useState("rows");
+  const [asJson, setAsJson] = React.useState(false);
   const planQ = useQuery({ queryKey: ["plan", plan ? JSON.stringify(plan) : ""], queryFn: () => api.plan({ plan: { ...plan!, session_id: sessionId } }), enabled: !!plan && plan.steps.length > 2 && !missing.length });
   const preview = React.useMemo(() => {
     if (!graph || !plan || !outs.length) return { rows: [] as Record<string, unknown>[] };
@@ -267,6 +319,13 @@ export function Author() {
     const cs = planLib.calls(plan);
     return { rows: planLib.localRows({ root: "Document", steps: plan.steps.slice(cs[1] ? cs[1].index : plan.steps.length) }, docs[rootPage.id]!, followed).rows };
   }, [graph, plan, docs, pages, outs.length]);
+  /** the preview as shown: exploded; on a page opened from a record, only the rows whose page is open */
+  const shown = React.useMemo(() => {
+    const nested = !!graph && !!pageNode && pageNode.parent !== graph.root;
+    let rows = preview.rows.flatMap((r) => explode(r));
+    if (nested) rows = rows.filter((r) => !Object.values(r).some((x) => typeof x === "string" && x.startsWith("→ ")));
+    return { rows, nested };
+  }, [preview.rows, graph, pageNode]);
   const runServer = async () => {
     if (!plan || !graph) return; setRun({ busy: true }); setTab("server"); const t0 = performance.now();
     try { const out = await api.execute({ plan: { ...plan, session_id: sessionId }, url: graph.url }); setRun({ rows: (Array.isArray(out.rows) ? out.rows : out.rows && typeof out.rows === "object" ? [out.rows as Record<string, unknown>] : []) as Record<string, unknown>[], ms: Math.round(performance.now() - t0), busy: false }); }
@@ -322,8 +381,7 @@ export function Author() {
         {/* the focused object, rendered */}
         <div className="relative flex min-w-0 flex-col gap-2">
           <div className="flex h-7 items-center gap-2 overflow-hidden whitespace-nowrap text-[12px]">
-            <Chip tone={selfMode ? "warn" : "accent"}>{selfMode ? `pick .${node?.op?.name}() in ${rootLabel}` : `focus: ${rootLabel}`}</Chip>
-            {!selfMode && recCount > 1 && <span className="inline-flex items-center gap-1 text-[11px]"><button type="button" className="rounded border border-line px-1" onClick={() => setRecIdx((i) => Math.max(0, i - 1))}>‹</button>record {recIdx + 1}/{recCount}<button type="button" className="rounded border border-line px-1" onClick={() => setRecIdx((i) => Math.min(recCount - 1, i + 1))}>›</button></span>}
+            <Chip tone={selfMode ? "warn" : "accent"}>{selfMode ? `click the page to pick .${node?.op?.name}() in ${rootLabel}` : `focus: ${rootLabel} · the page is interactive, actions are recorded (shift: not recorded)`}</Chip>
             <span className="flex-1" />
             {pageNode && <><span className="truncate font-mono text-[11px] text-muted" title={page?.url}>{page?.url ?? "…"}</span>{page?.docId && <Button size="sm" variant="ghost" onClick={reload} title="reload the page">⟳</Button>}{!page?.live ? <Button size="sm" variant="ghost" onClick={goLive}>go live</Button> : <><Chip tone="ok" dot>live</Chip><label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={recordActions} onChange={(e) => setRecordActions(e.target.checked)} />record clicks</label></>}</>}
             {patternGroups.length > 0 && <Chip tone={showGroups ? "accent" : "neutral"} interactive onClick={() => setShowGroups(!showGroups)}>{patternGroups.length} groups</Chip>}
@@ -337,36 +395,45 @@ export function Author() {
           ) : err && !views.data ? (
             <EmptyState title={`Could not open the page · ${err.code ?? err.status}`} hint={err.hint ?? err.message} action={<Button onClick={() => setPages((ps) => ({ ...ps, [pageKey]: { url: ps[pageKey]?.url ?? "" } }))}>Retry</Button>} />
           ) : page?.live ? (
-            <Player events={stream} live highlights={playerHls} pickable shiftPick focus={root} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p) => runAction("click", [p.path], recordActions, scope?.type === "Document" ? scope.id : pageNode.id)} onDocument={(d) => setDocs((ds) => (ds[pageKey] === d ? ds : { ...ds, [pageKey]: d }))} controls={false} controller={controller} maxHeight={760} />
+            <Player events={stream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={roots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const par = actionParent(); runAction("click", [p.el ? selFor(p.el) : p.path], recordActions && !m.shift, par?.id); }} onDocument={(d) => setDocs((ds) => (ds[pageKey] === d ? ds : { ...ds, [pageKey]: d }))} controls={false} controller={controller} maxHeight={760} />
+          ) : card && card.kind === "binary" ? (
+            <EmptyState title={`A file · ${(views.data as { card?: { content_type?: string } } | undefined)?.card?.content_type ?? "binary"}`} hint="Not a page to render: add the .download() edge to return its bytes (a file value: url, filename, content type, size, base64)." action={<Button onClick={() => node && addEdge("download", [], {}, { output: "file" })}>.download()</Button>} />
           ) : views.data?.content ? (
-            <PageFrame html={views.data.content} base={views.data.url ?? page?.url ?? graph.url} stripScripts={stripScripts} focusPath={root ? pathOf(root) : null} highlights={frameHls} onPick={onFramePick} onNavigate={(href, link) => setNav({ href, el: link && doc ? byPath(doc, link.path) : null })} maxHeight={760} />
+            <PageFrame html={views.data.content} base={views.data.url ?? page?.url ?? graph.url} stripScripts={stripScripts} focusPaths={roots.length ? roots.map(pathOf) : null} highlights={frameHls} picking={selfMode} onPick={onFramePick} onAction={onFrameAction} maxHeight={760} />
           ) : <EmptyState title={pageUrl(pageKey) || page?.url ? "Opening the page into your session…" : "This page's URL comes from the page before it: open that first"} />}
-          {nav && <div className="flex items-center gap-2 rounded border border-line bg-surface-2 px-2 py-1 text-[12px]"><span className="truncate">link → <code className="font-mono">{nav.href}</code></span><span className="flex-1" />{nav.el && <Button size="sm" variant="secondary" onClick={() => { const c = selectors.uniqueCandidates(nav.el!, root ?? doc!)[0]; if (c) onAdd({ op: "resolve", selector: c.selector }); setNav(null); }}>open it in the plan</Button>}<Button size="sm" variant="ghost" onClick={() => setNav(null)}>×</Button></div>}
           {actError && <div className="text-[12px]"><Chip tone="bad">{actError.detail?.code ?? actError.status}</Chip> {actError.detail?.hint ?? actError.message}</div>}
           {busy && <div className="text-[12px] text-muted">{busy}…</div>}
         </div>
         {/* the inspector / suggestions / the object, then the output */}
         <div className="flex min-w-0 flex-col gap-3">
           {pick && doc ? (
-            <ElementInspector pick={pick} scopeEl={root} scopeLabel={rootLabel} ops={opsQ.data?.Document ?? []} groups={pickGroups} live={!!page?.live} onSelector={(s) => setBuilding(s || null)} onAdd={onAdd} applyTo={selfMode && node?.op ? { label: `.${node.op.name}()` } : null} onApply={onApply} onClose={() => { setPickEl(null); setBuilding(null); }} />
+            <ElementInspector pick={pick} scopeEl={rootFor(pickEl)} scopeLabel={rootLabel} ops={opsQ.data?.Document ?? []} groups={pickGroups} live={!!page?.live} onSelector={(s) => setBuilding(s || null)} onAdd={onAdd} applyTo={selfMode && node?.op ? { label: `.${node.op.name}()` } : null} onApply={onApply} onClose={() => { setPickEl(null); setBuilding(null); }} />
           ) : selfMode && node?.op ? (
             <section className="rounded-lg border border-warn/50 p-2 text-[12px]">
               <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">.{node.op.name}() needs {node.op.name === "attr" ? "an attribute" : "a selector"} — shift-click the page, or:</div>
               <div className="flex flex-col gap-0.5">{suggestions.map((s) => <button key={s.value} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => applySuggestion(s.value)} onMouseEnter={() => node.op?.name !== "attr" && setBuilding(s.value)} onMouseLeave={() => setBuilding(null)}><code className="shrink-0 font-mono text-[11px] text-accent">{s.value}</code>{s.count != null && <span className="rounded bg-surface-2 px-1 text-[10px]">×{s.count}</span>}<span className="text-[10px] text-muted">{s.label}</span><span className="min-w-0 flex-1 truncate text-[11px] text-muted">{s.sample}</span></button>)}{!suggestions.length && <span className="text-muted">no suggestions here</span>}</div>
             </section>
-          ) : node && node.type !== "Reference" && (
+          ) : node && node.op && (
             <section className="rounded-lg border border-line p-2 text-[12px]">
               <div className="mb-1 flex items-center gap-2"><span className="text-[11px] font-semibold uppercase tracking-wide text-muted">{node.type}</span><span className="text-muted">{samples[node.id]}</span><span className="flex-1" />{takesSelector && <button type="button" className="text-[11px] text-accent underline" onClick={() => setEditing(true)}>re-pick its selector</button>}</div>
-              {node.type === "Collection" && <div className="flex flex-col gap-0.5"><div className="text-[11px] text-muted">Rendering record {recIdx + 1}; shift-click inside it -- what you build is read off EACH. The fields its records share:</div>{selectors.suggestFields(elementsOf(values[node.id]), 10).map((f) => <button key={f.selector + f.attr} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => { const s = addNode(graph, node.id, opOf("select", [f.selector]), returns); setGraph(() => addNode(s.graph, s.id, opOf("attr", [f.attr]), returns, { output: f.name }).graph); }}><span className="text-accent">+</span><code className="font-mono text-[10px]">{f.selector} · {f.attr}</code><span className="truncate text-[11px] text-muted">{f.sample}</span></button>)}</div>}
+              {node.type === "Collection" && <div className="flex flex-col gap-0.5"><div className="text-[11px] text-muted">All {elementsOf(values[node.id]).length} shown. Add an edge (select, attr…) and click inside any of them: it is read off EACH. The fields they share:</div>{selectors.suggestFields(elementsOf(values[node.id]), 10).map((f) => <button key={f.selector + f.attr} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => { const s = addNode(graph, node.id, opOf("select", [f.selector]), returns); setGraph(() => addNode(s.graph, s.id, opOf("attr", [f.attr]), returns, { output: f.name }).graph); }}><span className="text-accent">+</span><code className="font-mono text-[10px]">{f.selector} · {f.attr}</code><span className="truncate text-[11px] text-muted">{f.sample}</span></button>)}</div>}
               {node.type === "Element" && nodeEl && <div className="flex flex-col gap-0.5"><div className="text-[11px] text-muted">Read off it:</div>{selectors.attributesOf(nodeEl).map((a) => <button key={a.attr} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => addEdge("attr", [a.attr], {}, { output: a.attr === "text" ? selectors.nameFromSelector(String(node.op?.args[0]?.value ?? ""), nodeEl.tagName.toLowerCase()) : a.attr.replace(/[^a-z0-9]+/gi, "_") })}><span className="text-accent">+</span><code className="w-24 shrink-0 font-mono text-[10px]">{a.attr}</code><span className="truncate text-[11px] text-muted">{a.value}</span></button>)}</div>}
-              {node.type === "Document" && <div className="text-[11px] text-muted">Shift-click anything on the page to build a selector from it; the edges on the left are this page's ops.{node.op?.name === "resolve" && <Pager n={node} onChange={(mod) => setGraph((g) => setMod(g, node.id, mod, "paginate"))} />}</div>}
+              {node.type === "Document" && <div className="text-[11px] text-muted">The page is interactive: following a link, clicking a control or typing is recorded as a node (hold shift to do it without recording). To select, add an edge on the left, then click the page or a suggestion.{node.op?.name === "resolve" && <Pager n={node} onChange={(mod) => setGraph((g) => setMod(g, node.id, mod, "paginate"))} />}</div>}
+              {(node.type === "Value" || node.type === "Reference" || node.type === "Element") && node.op && (
+                <div className="mb-1 flex flex-wrap items-center gap-1 text-[11px]">
+                  <span className="text-muted">column name:</span>
+                  <input className="h-6 w-28 rounded border border-line bg-surface px-1" value={node.output ?? ""} placeholder="a name" onChange={(e) => setGraph((g) => updateNode(g, node.id, { output: e.target.value || undefined, alias: undefined }))} />
+                  <span className="text-muted">or from the page:</span>
+                  <input className="h-6 w-24 rounded border border-line bg-surface px-1 font-mono text-[10px]" placeholder="e.g. th" defaultValue={String(node.alias?.[1]?.args?.[0]?.value ?? "")} onBlur={(e) => { const v = e.target.value.trim(); setGraph((g) => updateNode(g, node.id, v ? { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: v }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }], output: undefined } : { alias: undefined })); }} title="a selector (relative to the record) whose text names this column: .alias(select(…).attr('text'))" />
+                </div>
+              )}
               {node.type === "Value" && <div className="flex flex-col gap-0.5">{(Array.isArray(values[node.id]) ? (values[node.id] as unknown[]).flat(3).slice(0, 12) : [values[node.id]]).map((x, i) => <div key={i} className="truncate font-mono text-[11px]">{isEl(x) ? `<${x.tagName.toLowerCase()}>` : String(x ?? "∅")}</div>)}</div>}
             </section>
           )}
           <section className="flex min-h-0 flex-1 flex-col rounded-lg border border-line">
-            <Tabs items={[{ value: "rows", label: "Rows", count: preview.rows.length }, { value: "server", label: "Server run", count: run.rows?.length }, { value: "plan", label: "Compiled" }, { value: "page", label: "Page" }, { value: "skeleton", label: "Skeleton" }, { value: "markdown", label: "Markdown" }, { value: "elements", label: "Elements" }, { value: "code", label: "As code" }]} value={tab} onValueChange={setTab} className="min-h-0 flex-1">
-              <TabPanel value="rows">{!outs.length ? <EmptyState title="No outputs yet" hint="Hover a line of the plan → output, or tick reads in the inspector." /> : <DataFrame rows={preview.rows} className="max-h-[420px]" emptyHint="The outputs matched nothing on the page yet." />}</TabPanel>
-              <TabPanel value="server">{run.error ? <div className="p-3 text-[12px]"><Chip tone="bad">{run.error.detail?.code ?? run.error.status}</Chip> {run.error.detail?.hint ?? run.error.message}</div> : run.rows ? <><div className="px-2 pt-1 text-[11px] text-muted">{run.rows.length} rows from the server in {run.ms} ms</div><DataFrame rows={run.rows} className="max-h-[400px]" /></> : <EmptyState title="Not run yet" />}</TabPanel>
+            <Tabs items={[{ value: "rows", label: "Rows", count: shown.rows.length }, { value: "server", label: "Server run", count: run.rows?.length }, { value: "plan", label: "Compiled" }, { value: "page", label: "Page" }, { value: "skeleton", label: "Skeleton" }, { value: "markdown", label: "Markdown" }, { value: "elements", label: "Elements" }, { value: "code", label: "As code" }]} value={tab} onValueChange={setTab} className="min-h-0 flex-1">
+              <TabPanel value="rows">{!outs.length ? <EmptyState title="No outputs yet" hint="Hover a line of the plan → output, or tick reads in the inspector." /> : <><div className="px-2 pt-1 text-[11px] text-muted">{shown.nested ? "The rows whose page is open here, with their parent row's columns -- the server run fetches every page." : "Preview on this page, nested values exploded into columns; the server run returns the nested JSON."}</div><DataFrame rows={shown.rows} className="max-h-[400px]" emptyHint="The outputs matched nothing on the page yet." /></>}</TabPanel>
+              <TabPanel value="server">{run.error ? <div className="p-3 text-[12px]"><Chip tone="bad">{run.error.detail?.code ?? run.error.status}</Chip> {run.error.detail?.hint ?? run.error.message}</div> : run.rows ? <><div className="flex items-center gap-2 px-2 pt-1 text-[11px] text-muted">{run.rows.length} rows from the server in {run.ms} ms<span className="flex-1" /><label className="flex items-center gap-1"><input type="checkbox" checked={asJson} onChange={(e) => setAsJson(e.target.checked)} />JSON</label></div>{asJson ? <CodeBlock lang="json" code={JSON.stringify(run.rows, null, 2)} className="m-2 max-h-[400px] overflow-auto" /> : <DataFrame rows={run.rows} className="max-h-[400px]" />}</> : <EmptyState title="Not run yet" />}</TabPanel>
               <TabPanel value="plan" className="max-h-[460px] overflow-auto p-2">{plan && <><CodeBlock lang="describe" code={planLib.describe(plan)} wrap /><PlanView plan={plan} url={graph.url} readOnly className="mt-2" /></>}</TabPanel>
               <TabPanel value="page" className="p-2 text-[12px]">
                 {card && <div className="mb-1 flex flex-wrap items-center gap-1"><Chip tone="neutral">{card.kind}</Chip><Chip tone={card.status_code && card.status_code < 400 ? "ok" : "bad"}>{card.status_code}</Chip><Chip tone="neutral">{(views.data?.tiers ?? [card.final_tier]).join(" → ")}</Chip><span className="truncate text-muted">{views.data?.title}</span></div>}

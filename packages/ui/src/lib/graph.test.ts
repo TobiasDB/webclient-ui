@@ -52,4 +52,15 @@ describe("graph → plan", () => {
     g = addNode(g, h.id, opOf("attr", ["text"]), {}, { output: "title" }).graph;
     expect(describePlan(compile(g))).toBe('Reference.resolve().extract(title=Document.select("h1").attr("text")).project()');
   });
+  it("a link read that is itself an output keeps its column; the page it opens nests beside it", () => {
+    let g = emptyGraph("https://x/");
+    const add = (parent: string, name: string, args: unknown[] = [], extra = {}) => { const r = addNode(g, parent, opOf(name, args), {}, extra); g = r.graph; return r.id; };
+    const page = add(g.root, "resolve"); const li = add(page, "select_all", ["li"]); const a = add(li, "select", ["a"]);
+    const href = add(a, "attr", ["href"], { output: "link" }); const d = add(href, "resolve", [], { output: "detail" });
+    const h1 = add(d, "select", ["h1"]); add(h1, "attr", ["text"], { output: "title" });
+    const plan = describePlan(compile(g));
+    expect(plan).not.toContain('attr("href").extract(');
+    expect(plan).toContain('link=Document.select("a").attr("href")');
+    expect(plan).toContain('detail=Document.select("a").attr("href").resolve().extract(title=Document.select("h1").attr("text")).project()');
+  });
 });

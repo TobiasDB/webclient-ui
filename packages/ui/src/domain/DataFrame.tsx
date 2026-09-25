@@ -49,8 +49,16 @@ export function DataFrame({ rows, columns, colours, className, emptyHint, emptyA
   );
 }
 
+/** a file value (Document.download()): {filename, content_type, size, base64} */
+const isFile = (v: unknown): v is { filename: string; content_type: string; size: number; base64: string } => isObj(v) && typeof v.base64 === "string" && typeof v.filename === "string";
+function FileCell({ f }: { f: { filename: string; content_type: string; size: number; base64: string } }) {
+  const href = React.useMemo(() => `data:${f.content_type || "application/octet-stream"};base64,${f.base64}`, [f]);
+  return <a href={href} download={f.filename} className="inline-flex items-center gap-1 rounded border border-line px-1.5 text-accent hover:bg-surface-2" title={`${f.content_type} · ${f.size} bytes`}>⬇ {f.filename} <span className="text-[10px] text-muted">{f.size < 1024 ? `${f.size} B` : f.size < 1048576 ? `${Math.round(f.size / 1024)} KB` : `${(f.size / 1048576).toFixed(1)} MB`}</span></a>;
+}
+
 function Cell({ value, depth = 0 }: { value: unknown; depth?: number }) {
   const [open, setOpen] = React.useState(depth < 1);
+  if (isFile(value)) return <FileCell f={value} />;
   if (value == null) return <span className="text-muted">—</span>;
   if (Array.isArray(value)) {
     if (!value.length) return <span className="text-muted">[]</span>;
