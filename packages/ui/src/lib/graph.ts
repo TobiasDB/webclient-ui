@@ -31,6 +31,8 @@ export type GNode = {
   alias?: Step[];
   /** a nested output (a page's dict, a collection's rows / merged dict): merge its keys into the parent row */
   flatten?: boolean;
+  /** a branch FORKED AWAY from: kept (switch back to it), but not part of the plan */
+  off?: boolean;
 };
 export type Graph = { url: string; root: string; nodes: Record<string, GNode> };
 export type OpReturns = Record<string, string>;  // op name -> "Document" | "Collection" | "Value" | "Reference" | "Value|Reference"
@@ -78,13 +80,34 @@ export function addNode(g: Graph, parent: string, op: Op, returns?: OpReturns, e
 export function updateNode(g: Graph, id: string, patch: Partial<GNode>): Graph { return { ...g, nodes: { ...g.nodes, [id]: { ...g.nodes[id]!, ...patch } } }; }
 export function removeNode(g: Graph, id: string): Graph { if (id === g.root) return g; const drop = new Set(subtree(g, id)); return { ...g, nodes: Object.fromEntries(Object.entries(g.nodes).filter(([k]) => !drop.has(k))) }; }
 export function setMod(g: Graph, id: string, mod: Mod | null, name?: string): Graph { const n = g.nodes[id]!; const others = (n.mods ?? []).filter((m) => m.name !== (mod?.name ?? name)); return updateNode(g, id, { mods: mod ? [...others, mod] : others }); }
-export function outputs(g: Graph): GNode[] { return Object.values(g.nodes).filter((n) => n.output || n.alias); }
+export function outputs(g: Graph): GNode[] { return Object.values(g.nodes).filter((n) => (n.output || n.alias) && !isOff(g, n.id)); }
+/** whether a node sits on a branch forked away from (it or an ancestor is `off`) */
+export function isOff(g: Graph, id: string): boolean { let n: GNode | undefined = g.nodes[id]; while (n) { if (n.off) return true; n = n.parent ? g.nodes[n.parent] : undefined; } return false; }
+/** the page ACTIONS: each one is a step of its page -- a state with its own snapshot */
+export const ACTIONS = new Set(["click", "write", "scroll", "wait_for", "hover", "press", "select_option", "goto"]);
+/** the STATE a node is evaluated on: the nearest page (resolve) or action at or above it */
+export function stateOf(g: Graph, id: string): GNode | null { for (const n of ancestors(g, id).reverse()) { if (n.op && (n.op.name === "resolve" || ACTIONS.has(n.op.name))) return n; } return null; }
+/** a page's STEPS: the page, then its chain of actions (the active branch), in order */
+export function stepsOfPage(g: Graph, pageId: string): GNode[] {
+  const out: GNode[] = []; let cur: GNode | undefined = g.nodes[pageId];
+  while (cur) { out.push(cur); cur = children(g, cur.id).find((c) => !c.off && c.op && ACTIONS.has(c.op.name)); }
+  return out;
+}
+/** evaluate a node on the snapshot of its STATE (the page, or the page after its last action) */
+export function evalAt(g: Graph, id: string, stateDoc: Document | null): unknown {
+  if (!stateDoc) return undefined;
+  const st = stateOf(g, id); if (!st) return undefined; if (st.id === id) return stateDoc;
+  const path = ancestors(g, id); const from = path.findIndex((n) => n.id === st.id);
+  let cur: unknown = stateDoc;
+  for (const n of path.slice(from + 1)) { if (!n.op) continue; cur = applyOp(cur, n.op); for (const m of n.mods ?? []) if (m.name === "limit") cur = applyOp(cur, m); if (cur === undefined) return undefined; }
+  return cur;
+}
 
 // -- compile: graph -> plan IR -------------------------------------------------------------
 const get = (name: string): Step => ({ kind: "get", name });
 const callStep = (op: Op): Step => ({ kind: "call", name: op.name, args: op.args, kwargs: op.kwargs });
 const stepsOf = (n: GNode): Step[] => [...(n.op ? [get(n.op.name), callStep(n.op)] : []), ...(n.mods ?? []).flatMap((m) => [get(m.name), callStep(m)])];
-const bearing = (g: Graph, id: string): boolean => { const n = g.nodes[id]!; return !!(n.output || n.alias) || children(g, id).some((c) => bearing(g, c.id)); };
+const bearing = (g: Graph, id: string): boolean => { const n = g.nodes[id]!; if (n.off) return false; return !!(n.output || n.alias) || children(g, id).some((c) => bearing(g, c.id)); };
 type Col = { name: string; alias?: Step[]; steps: Step[]; flatten?: boolean };
 const autoName = (n: GNode) => { const a = String(v(n.op?.args[0]) ?? n.op?.name ?? "field"); const leaf = a.split(/\s*[> ~+]\s*/).filter(Boolean).pop() ?? a; const m = /[.#]([a-zA-Z0-9_-]+)/.exec(leaf); return (m?.[1] ?? leaf.replace(/[^a-z0-9]+/gi, "_")).toLowerCase().replace(/^_+|_+$/g, "") || "field"; };
 

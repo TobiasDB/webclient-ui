@@ -21,3 +21,26 @@ describe("plan check", () => {
     expect(checkPlan(g, docOf, "https://x/")[li]?.short).toBe("no match");
   });
 });
+
+describe("plan check on steps", () => {
+  it("checks an action's target on the step before it, and what follows on its snapshot", () => {
+    let g = emptyGraph("https://x/");
+    const add = (p: string, n: string, a: unknown[] = []) => { const r = addNode(g, p, opOf(n, a), { click: "Document", resolve: "Document", select: "Element", attr: "Value" }); g = r.graph; return r.id; };
+    const page = add(g.root, "resolve"); const click = add(page, "click", ["button.more"]); const s = add(click, "select", ["p.new"]); add(s, "attr", ["text"]);
+    const before = new DOMParser().parseFromString('<button class="more">more</button>', "text/html");
+    const after = new DOMParser().parseFromString('<button class="more">more</button><p class="new">hi</p>', "text/html");
+    expect(checkPlan(g, (id) => (id === page ? before : null), "https://x/")).toEqual({ [click]: expect.objectContaining({ level: "info" }) });
+    expect(checkPlan(g, (id) => (id === page ? before : id === click ? after : null), "https://x/")).toEqual({});
+    g = updateNode(g, click, { op: opOf("click", ["button.gone"]) });
+    expect(checkPlan(g, (id) => (id === page ? before : id === click ? after : null), "https://x/")[click]?.short).toBe("no target");
+  });
+});
+
+import { uniqueCandidates } from "./selectors";
+describe("selector candidates", () => {
+  it("prefers an identifying attribute over position", () => {
+    const d = new DOMParser().parseFromString('<div><button data-tab="Upcoming">U</button><button data-tab="Past">P</button></div>', "text/html");
+    const el = d.querySelector('[data-tab="Past"]')!;
+    expect(uniqueCandidates(el, d)[0]?.selector).toBe('button[data-tab="Past"]');
+  });
+});

@@ -35,6 +35,14 @@ export function candidates(el: Element, root: ParentNode, depth = 3): Candidate[
   };
   // the element alone: tag · tag.class (each semantic class) · tag.all-semantic · #id · tag.utility (fallback)
   for (const p of own) tryOne(p.sel, 0, p.clean);
+  // a stable ATTRIBUTE of its own (data-*, name, aria-label, title, for, type…): button[data-tab="Past"]
+  const tag0 = el.tagName.toLowerCase();
+  for (const at of [...el.attributes]) {
+    const k = at.name; const v = at.value;
+    if (!v || v.length > 60 || /^(class|id|style|href|src|srcset|d|data-wc.*|on.*)$/.test(k)) continue;
+    if (!(/^data-/.test(k) || ["name", "aria-label", "title", "for", "type", "role", "placeholder", "value", "alt", "rel"].includes(k))) continue;
+    tryOne(`${tag0}[${k}="${v.replace(/"/g, '\\"')}"]`, 0, true);
+  }
   // positional forms, for an element with nothing of its own: after an id'd sibling (#desc ~ p),
   // the n-th of its kind under its parent (div > p:nth-of-type(2))
   const parent = el.parentElement;
@@ -86,6 +94,8 @@ function score(c: Candidate): number {
   const parts = c.selector.split(/\s+>?\s*/).filter(Boolean); const leaf = parts[parts.length - 1] ?? "";
   let s = 0;
   if (/#/.test(leaf)) s += 3; if (/\./.test(leaf)) s += c.clean ? 3 : 1;
+  if (/\[[a-z-]+="/.test(leaf)) s += /\[(data-|name=|aria-label=|for=)/.test(leaf) ? 3.5 : 2;  // an identifying attribute
+  if (/:nth-of-type/.test(c.selector)) s -= 2;  // position is the last resort: it breaks when the page shifts
   for (const a of parts.slice(0, -1)) s += /[.#]/.test(a) ? 2 : 1;
   return s - parts.length * 0.5 - c.selector.length * 0.01;
 }

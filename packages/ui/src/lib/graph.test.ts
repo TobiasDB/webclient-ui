@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as graphLib from "./graph";
 import { addNode, compile, decompile, emptyGraph, fieldAlias, opOf, setMod, updateNode, type Graph } from "./graph";
 import { describe as describePlan } from "./plan";
 
@@ -79,5 +80,22 @@ describe("graph → plan", () => {
     const d = describePlan(compile(g));
     expect(d.endsWith('.project(flatten=["detail"])')).toBe(true);
     expect(describePlan(compile(decompile(compile(g), "https://books.toscrape.com/")))).toBe(d);
+  });
+});
+
+describe("page steps + forks", () => {
+  it("chains actions as steps, evaluates below an action on its snapshot, and leaves a forked-away branch out of the plan", () => {
+    let g = emptyGraph("https://x/");
+    const add = (p: string, n: string, a: unknown[] = [], extra = {}) => { const r = addNode(g, p, opOf(n, a), { click: "Document", resolve: "Document", select: "Element", attr: "Value" }, extra); g = r.graph; return r.id; };
+    const page = add(g.root, "resolve"); const c1 = add(page, "click", ["button.more"]);
+    const s = add(c1, "select", ["p.new"]); add(s, "attr", ["text"], { output: "after" });
+    expect(graphLib.stepsOfPage(g, page).map((n) => n.id)).toEqual([page, c1]);
+    expect(graphLib.stateOf(g, s)?.id).toBe(c1);
+    expect(describePlan(compile(g))).toContain('.click("button.more").extract(after=');
+    // fork at the page: a new click; the old branch is kept but off
+    g = updateNode(g, c1, { off: true }); const c2 = add(page, "click", ["a.other"]); const s2 = add(c2, "select", ["h1"]); add(s2, "attr", ["text"], { output: "title" });
+    const d = describePlan(compile(g));
+    expect(d).toContain('.click("a.other")'); expect(d).not.toContain("button.more");
+    expect(graphLib.stepsOfPage(g, page).map((n) => n.id)).toEqual([page, c2]);
   });
 });

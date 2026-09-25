@@ -10,7 +10,7 @@ import { API_URL, api, ApiError } from "../lib/api";
 import { call as callBody, plan as planBody, useActive, useSession } from "../lib/session";
 import { encSpec } from "./Run";
 
-const { addNode, updateNode, setMod, opOf, emptyGraph, children, pageOf, evalNode, elementsOf, sample, hrefOf, compile, decompile, outputs, inputOf, pathOf, byPath, incomplete, isEl } = graphLib;
+const { addNode, updateNode, setMod, opOf, emptyGraph, children, pageOf, stateOf, stepsOfPage, evalAt, ACTIONS, evalNode, elementsOf, sample, hrefOf, compile, decompile, outputs, inputOf, pathOf, byPath, incomplete, isEl } = graphLib;
 const isPlain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v) && typeof (v as { base64?: unknown }).base64 !== "string";
 /** EXPLODE a nested row: a dict's keys become dotted columns; a list of dicts becomes one row per item
  * (the parent's columns repeated) -- how a nested page's rows read alongside their parent row. */
@@ -101,7 +101,20 @@ export function Author() {
   const pageNode = graph && node ? (pageOf(graph, node.id) ?? Object.values(graph.nodes).find((x) => x.parent === graph.root && x.op?.name === "resolve") ?? null) : null;
   const pageKey = pageNode?.id ?? "";
   const page = pages[pageKey];
-  const doc = docs[pageKey] ?? null;
+  // the STEP on screen: the page, or the page after one of its actions (each has its own snapshot)
+  const stateNode = graph && node ? (stateOf(graph, node.id) ?? pageNode) : pageNode;
+  const stateKey = stateNode?.id ?? pageKey;
+  const [snaps, setSnaps] = React.useState<Record<string, { html: string; url: string }>>({});
+  /** the LIVE browser page: only the head of a page's steps has one (acting elsewhere forks it) */
+  const [head, setHead] = React.useState<{ page: string; at: string; docId: string } | null>(null);
+  const pageSteps = graph && pageNode ? stepsOfPage(graph, pageNode.id) : [];
+  const stepIx = pageSteps.findIndex((x) => x.id === stateKey);
+  /** the HEAD: the last step of the page's plan -- it is always LIVE (earlier steps show their snapshots) */
+  const atHead = pageSteps.length > 0 && stepIx === pageSteps.length - 1;
+  const liveDocId = atHead && head && head.page === pageKey && head.at === stateKey ? head.docId : null;
+  /** actions done on the live page but not in the plan yet: they become steps as soon as a selector is used there */
+  const [pending, setPending] = React.useState<{ op: string; args: unknown[] }[]>([]);
+  const doc = docs[stateKey] ?? null;
   const pageUrl = React.useCallback((id: string): string | null => {
     if (!graph) return null; const n = graph.nodes[id]; if (!n || !n.parent) return null;
     if (n.parent === graph.root) return graph.url;
@@ -125,14 +138,19 @@ export function Author() {
   const more = useQuery({ queryKey: ["doc-views", sessionId, page?.docId, "more"], queryFn: () => api.docViews(sessionId!, page!.docId!, ["skeleton", "markdown", "elements"]), enabled: !!sessionId && !!page?.docId && views.isSuccess, staleTime: Infinity });
   // the static page, parsed: the workspace's copy of the DOM the frame renders (selectors, samples, previews)
   React.useEffect(() => {
-    const html = views.data?.content; if (!pageKey || !html || page?.live) return;
+    const html = views.data?.content; if (!pageKey || !html || (liveDocId && stateKey === pageKey)) return;
     const parsed = new DOMParser().parseFromString(html, "text/html");
     setDocs((ds) => ({ ...ds, [pageKey]: parsed }));
-  }, [views.data?.content, pageKey, page?.live]);
+  }, [views.data?.content, pageKey, liveDocId, stateKey]);
   const reload = async () => { if (!sessionId || !page?.docId) return; await api.docReload(sessionId, page.docId); qc.invalidateQueries({ queryKey: ["doc-views", sessionId, page.docId] }); qc.invalidateQueries({ queryKey: ["session-docs"] }); setStream([]); since.current = 0; };
 
   // -- live: the mirrored browser page; clicks go through ------------------------------------------
   const [stream, setStream] = React.useState<RREvent[]>([]);
+  // a live page that NAVIGATES starts a new recording (Meta + FullSnapshot): the mirror restarts there
+  // (replaying the new page's events onto the old page's picture is what left a white screen)
+  const liveStart = React.useMemo(() => { for (let i = stream.length - 1; i >= 0; i--) if ((stream[i] as { type?: number }).type === 4) return i; return 0; }, [stream]);
+  const liveStream = React.useMemo(() => stream.slice(liveStart), [stream, liveStart]);
+  const livePictured = liveStream.some((e) => (e as { type?: number }).type === 2);
   const since = React.useRef(0);
   const [recordActions, setRecordActions] = React.useState(true);
   const goLive = async (): Promise<string | null> => {
@@ -143,28 +161,79 @@ export function Author() {
     catch (e) { setOpenError(e as ApiError); return null; }
   };
   React.useEffect(() => {
-    if (!page?.live || !page.docId) return;
-    let on = true; const docId = page.docId;
+    if (!liveDocId) return;
+    let on = true; const docId = liveDocId; setStream([]); since.current = 0;
     const pull = async () => { try { const evs = await api.history({ since: since.current, document_id: docId, payload: true }); if (!on || !evs.length) return; since.current = Math.max(since.current, ...evs.map((c) => c.n ?? 0)); const out: RREvent[] = []; for (const e of evs) { if (e.topic === "rrweb") out.push(...((e.events ?? []) as RREvent[])); else if (e.topic !== "snapshot") { const { events: _d, content: _c, body: _b, ...payload } = e as any; out.push({ type: 5, data: { tag: e.topic, payload }, timestamp: Math.round((e.ts ?? Date.now() / 1000) * 1000) }); } } setStream((s) => [...s, ...out]); } catch { /* next tick */ } };
     pull(); const t = setInterval(pull, 700); return () => { on = false; clearInterval(t); };
-  }, [page?.live, page?.docId]);
+  }, [liveDocId]);
   const [busy, setBusy] = React.useState<string | null>(null);
   const [actError, setActError] = React.useState<ApiError | null>(null);
-  const runAction = async (op: string, args: unknown[], record: boolean, under?: string) => {
-    if (!sessionId || !graph) return;
-    let docId = page?.live ? page.docId : null; if (!docId) docId = await goLive(); if (!docId) return;
-    setBusy(op); setActError(null);
+  // -- STEPS: an action is performed on the live head, then snapshotted; any step can be viewed, and
+  // acting from an earlier one FORKS: a fresh live page replays the steps up to it (the old branch is kept, off)
+  const argsOf = (n: graphLib.GNode) => (n.op?.args ?? []).map((x) => x.value);
+  const snap = async (sid: string, docId: string, id: string) => {
+    const v = await api.docViews(sid, docId, ["content"]); const html = (v as { content?: string }).content ?? "";
+    setSnaps((m) => ({ ...m, [id]: { html, url: (v as { url?: string }).url ?? "" } }));
+    setDocs((ds) => ({ ...ds, [id]: new DOMParser().parseFromString(html, "text/html") }));
+  };
+  /** a live page AT `st` (a step of the focused page): the head when it is there, else replayed to it */
+  const liveAt = async (st: graphLib.GNode, g: Graph = graph!): Promise<string | null> => {
+    if (!sessionId || !pageNode) return null;
+    if (head && head.page === pageNode.id && head.at === st.id) return head.docId;
+    if (head) api.docClose(sessionId, head.docId).catch(() => undefined);
+    const url = page?.url ?? pageUrl(pageNode.id); if (!url) return null;
+    setBusy("opening a live page");
+    const h = await api.docOpen(sessionId, { url, browser: "always", live: true });
+    const steps = stepsOfPage(g, pageNode.id); const upto = steps.slice(1, steps.findIndex((x) => x.id === st.id) + 1);
+    for (const x of upto) {  // replay step by step, snapshotting each (the steps get their pictures back)
+      setBusy(`replaying .${x.op!.name}(…)`);
+      await api.executeDoc({ plan: planBody("Document", [callBody(x.op!.name, argsOf(x))], sessionId), document_id: h.id });
+      await snap(sessionId, h.id, x.id);
+    }
+    setHead({ page: pageNode.id, at: st.id, docId: h.id });
+    return h.id;
+  };
+  /** perform `op` from the step on screen, snapshot the result, and record it as the next step */
+  const act = async (op: string, args: unknown[], record = true) => {
+    if (!sessionId || !graph || !pageNode || !stateNode) return;
+    setActError(null);
     try {
+      const docId = await liveAt(stateNode); if (!docId) return;
+      setBusy(`.${op}(…)`);
       await api.executeDoc({ plan: planBody("Document", [callBody(op, args)], sessionId), document_id: docId });
-      if (record && under) { const r = addNode(graph, under, opOf(op, args), returns); setGraph(() => r.graph); select(r.id); }
+      if (!record) { await snap(sessionId, docId, stateNode.id); return; }
+      // a step already after this one: the new step FORKS (the old branch is kept, switched off)
+      let g = graph; for (const c of children(g, stateNode.id)) if (c.op && ACTIONS.has(c.op.name) && !c.off) g = updateNode(g, c.id, { off: true });
+      // at the head: the actions done there first (unrecorded) come before it
+      let at = stateNode.id; if (atHead && pending.length) { for (const a of pending) { const x = addNode(g, at, opOf(a.op, a.args), returns); g = x.graph; at = x.id; } setPending([]); }
+      const r = addNode(g, at, opOf(op, args), returns); g = needBrowser(r.graph);
+      await snap(sessionId, docId, r.id);
+      setGraph(() => g); setHead({ page: pageNode.id, at: r.id, docId }); select(r.id);
     } catch (e) { setActError(e as ApiError); } finally { setBusy(null); }
   };
+  /** a plain click on the live head: done on the page, NOT recorded yet (pending until a selector is used) */
+  const clickThrough = async (sel: string) => {
+    if (!sessionId || !liveDocId) return; setActError(null); setBusy(".click(…)");
+    try { await api.executeDoc({ plan: planBody("Document", [callBody("click", [sel])], sessionId), document_id: liveDocId }); setPending((ps) => [...ps, { op: "click", args: [sel] }]); }
+    catch (e) { setActError(e as ApiError); } finally { setBusy(null); }
+  };
+  // the HEAD is always live: open (or replay to) it when it comes on screen
+  const opening = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!active || !sessionId || !graph || !stateNode || !atHead || liveDocId) return;
+    const key = `${pageKey}|${stateKey}`; if (opening.current === key) return; opening.current = key;
+    setPending([]); setActError(null);
+    liveAt(stateNode).catch((e) => setActError(e as ApiError)).finally(() => { setBusy(null); opening.current = null; });
+  }, [active, sessionId, pageKey, stateKey, atHead, liveDocId]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** go live at the step on screen (a fork when it is not the head) */
+  const goLiveHere = async () => { if (!stateNode) return; setActError(null); try { await liveAt(stateNode); } catch (e) { setActError(e as ApiError); } finally { setBusy(null); } };
+  const runAction = async (op: string, args: unknown[], record: boolean, _under?: string) => act(op, args, record);
 
   // -- the focus: what renders, where selectors root -------------------------------------------------
   const takesSelector = !!node?.op && SELECTOR_OPS.includes(node.op.name);
   const selfMode = !!node && takesSelector && (needsArg(node) || editing);
   const attrMode = !!node?.op && node.op.name === "attr";  // an attr: its suggestions (every attribute, numbers) stay at hand   // picking the focused node's OWN selector
-  const values = React.useMemo(() => { const out: Record<string, unknown> = {}; if (!graph) return out; for (const n of Object.values(graph.nodes)) { const p = pageOf(graph, n.id); if (p && docs[p.id]) out[n.id] = n.id === p.id ? docs[p.id] : evalNode(graph, n.id, docs[p.id]!); } return out; }, [graph, docs]);
+  const values = React.useMemo(() => { const out: Record<string, unknown> = {}; if (!graph) return out; for (const n of Object.values(graph.nodes)) { const st = stateOf(graph, n.id); if (st && docs[st.id]) out[n.id] = evalAt(graph, n.id, docs[st.id]!); } return out; }, [graph, docs]);
   // -- the PLAN CHECK: every line evaluated on the pages we have; a page opened from a link that is not
   // on screen is fetched in the background from the FIRST item's link, as the example it is checked on
   const [checkDocs, setCheckDocs] = React.useState<Record<string, { url: string; doc: Document }>>({});
@@ -285,10 +354,9 @@ export function Author() {
       if (a.href) setPages((ps) => ({ ...ps, [r.id]: { url: absolute(a.href!) } }));
       select(r.id); return;
     }
-    const parent = actionParent(); if (!parent) return;
+    // a click / typing: PERFORMED on the live page at this step, snapshotted, recorded as the next step
     const sel = selFor(el);
-    const r = addNode(graph, parent.id, opOf(a.op, a.op === "write" ? [sel, a.value ?? ""] : [sel]), returns);
-    setGraph(() => needBrowser(r.graph)); select(r.id);
+    void act(a.op, a.op === "write" ? [sel, a.value ?? ""] : [sel]);
   };
   /** a READ under `at`: attr(name[, pattern]), then .number() when asked; the output sits on the last node */
   const addRead = (g: Graph, at: string, attr: string, extra: Partial<graphLib.GNode>, pattern?: string, number?: boolean, date?: boolean): { graph: Graph; id: string } => {
@@ -316,11 +384,13 @@ export function Author() {
   /** an op on the picked element, added under the focus */
   const onAdd = async (a: InspectAdd) => {
     if (!graph) return;
-    const under = !selfMode && node && (node.type === "Document" || node.type === "Element" || node.type === "Collection") ? node : scope; if (!under) return;
+    const under0 = !selfMode && node && (node.type === "Document" || node.type === "Element" || node.type === "Collection") ? node : scope; if (!under0 || !graph) return;
     setPickEl(null); setBuilding(null);
-    if (a.op === "paginate" && pageNode) { setGraph((g) => setMod(g, pageNode.id, opOf("paginate", [], { max_pages: 5, ...a.kwargs }))); if (a.kwargs?.by === "click" && !page?.live) await goLive(); return; }
+    const m = ACTION_OPS.includes(a.op) ? { g: graph, parent: under0.id } : materialize(graph, under0.id);
+    const under = m.g.nodes[m.parent]!;
+    if (a.op === "paginate" && pageNode) { setGraph((g) => setMod(g, pageNode.id, opOf("paginate", [], { max_pages: 5, ...a.kwargs }))); if (a.kwargs?.by === "click" && stateNode) await liveAt(stateNode); return; }
     if (ACTION_OPS.includes(a.op)) { await runAction(a.op, a.args ?? [a.selector], a.record !== false, under.id); return; }
-    let g = graph; let focus = under.id;
+    let g = m.g; let focus = under.id;
     if (a.op === "resolve") {
       const s = addNode(g, under.id, opOf("select", [a.selector]), returns); g = s.graph;
       const h = addNode(g, s.id, opOf("attr", ["href"]), returns); g = h.graph;
@@ -329,7 +399,18 @@ export function Author() {
     setGraph(() => g); select(focus);
   };
   /** an edge of the focused object: a new node; one that needs a selector waits for it (self mode) */
-  const addEdge = (name: string, args: unknown[] = [""], kwargs: Record<string, unknown> = {}, extra: Partial<graphLib.GNode> = {}) => { if (!graph || !node) return; const r = addNode(graph, node.id, opOf(name, args, kwargs), returns, extra); setGraph(() => r.graph); select(r.id, needsArg(r.graph.nodes[r.id]!)); };
+  /** a selector used on the LIVE head while actions were done there: those actions become the plan's
+   * steps first (the page the selector was made on is the page after them), the new node hangs after them */
+  const materialize = (g: Graph, parentId: string): { g: Graph; parent: string } => {
+    if (!pending.length || !liveDocId || parentId !== stateKey || !sessionId || !pageNode) return { g, parent: parentId };
+    let at = parentId; for (const a of pending) { const x = addNode(g, at, opOf(a.op, a.args), returns); g = x.graph; at = x.id; }
+    g = needBrowser(g); setPending([]);
+    const docId = liveDocId; const sid = sessionId; const pk = pageNode.id;
+    setDocs((ds) => (ds[parentId] ? { ...ds, [at]: ds[parentId]! } : ds));  // the mirror's DOM is this step's
+    void snap(sid, docId, at).catch(() => undefined); setHead({ page: pk, at, docId });
+    return { g, parent: at };
+  };
+  const addEdge = (name: string, args: unknown[] = [""], kwargs: Record<string, unknown> = {}, extra: Partial<graphLib.GNode> = {}) => { if (!graph || !node) return; const m = materialize(graph, node.id); const r = addNode(m.g, m.parent, opOf(name, args, kwargs), returns, extra); setGraph(() => r.graph); select(r.id, needsArg(r.graph.nodes[r.id]!)); };
   const openLink = () => { if (!graph || !node) return; const h = addNode(graph, node.id, opOf("attr", ["href"]), returns); const r = addNode(h.graph, h.id, opOf("resolve", [], browserKw(tier)), returns); setGraph(() => r.graph); select(r.id); };
   const edges: Edge[] = [];
   if (graph && node) {
@@ -471,7 +552,7 @@ export function Author() {
   React.useEffect(() => { if (graph?.url) setDraft(graph.url); }, [graph?.url]);
   const err = openError ?? (views.error as ApiError | null);
   const card = views.data?.card;
-  const liveSet = React.useMemo(() => new Set(Object.entries(pages).filter(([, p]) => p.live).map(([k]) => k)), [pages]);
+  const liveSet = React.useMemo(() => new Set(head ? [head.at] : []), [head]);
   const samples = React.useMemo(() => { const out: Record<string, string> = {}; if (!graph) return out; for (const [id, v] of Object.entries(values)) { const n = graph.nodes[id]!; out[id] = n.op?.name === "resolve" ? (pages[id]?.url ? new URL(pages[id]!.url).pathname.slice(0, 22) : "")
       : n.op?.name === "select_all" ? `×${elementsOf(v).length}`
       : n.op?.name === "select" && graphLib.eachOf(graph, id) && Array.isArray(v) ? `${(v as unknown[]).filter((x) => x != null && !(Array.isArray(x) && !x.length)).length}/${(v as unknown[]).length}`
@@ -525,7 +606,7 @@ export function Author() {
   const [rowsOpen, setRowsOpenRaw] = React.useState(() => remembered("wc.author.rows", true));
   const setRowsOpen = (v: boolean) => { setRowsOpenRaw(v); try { localStorage.setItem("wc.author.rows", v ? "1" : "0"); } catch { /* fine */ } };
   const rowsH = 210;
-  const pageH = Math.max(320, vh - 44 - 30 - 46 - (rowsOpen ? rowsH : 22) - 10);
+  const pageH = Math.max(320, vh - 44 - 30 - 46 - (rowsOpen ? rowsH : 22) - 10 - (pageSteps.length > 1 || pending.length > 0 ? 22 : 0));
   /** each output's colour -- the same on the plan line, the page outline and its rows column */
   const colourOf = React.useMemo(() => { const m: Record<string, string> = {}; outs.forEach((o, i) => { if (o.output) m[o.output] = fieldColour(i); }); return m; }, [outs]);
   const columnColours = (rows: Record<string, unknown>[]) => { const m: Record<string, string> = {}; for (const r of rows.slice(0, 5)) for (const k of Object.keys(r)) { const parts = k.split("."); for (let i = parts.length - 1; i >= 0; i--) { const c = colourOf[parts[i]!]; if (c) { m[k] = c; break; } } } return m; };
@@ -569,7 +650,7 @@ export function Author() {
               <span className="flex-1" />
               {pageNode && <><span className="max-w-[240px] truncate font-mono text-[10px] text-muted" title={page?.url}>{page?.url ?? "…"}</span>
                 {page?.docId && <button type="button" className="text-muted hover:text-ink" onClick={reload} title="reload the page">⟳</button>}
-                {!page?.live ? <button type="button" className="text-[11px] text-muted hover:text-ink" onClick={goLive}>go live</button> : <span className="rounded bg-ok-soft px-1 text-[10px] text-ok">live</span>}</>}
+                {head && head.page === pageKey && head.at === stateKey ? <span className="rounded bg-ok-soft px-1 text-[10px] text-ok" title="a live browser page is at this step: shift-click acts on it">● live</span> : <button type="button" className="text-[11px] text-muted hover:text-ink" onClick={goLiveHere} title={head && head.page === pageKey ? "fork: a fresh live page replays the steps up to here" : "open a live browser page at this step (shift-click then acts on it)"}>{head && head.page === pageKey ? "fork live here" : "go live here"}</button>}</>}
               {patternGroups.length > 0 && <button type="button" className={cn("rounded px-1 text-[10px]", showGroups ? "bg-accent-soft text-accent" : "text-muted hover:text-ink")} onClick={() => setShowGroups(!showGroups)}>{patternGroups.length} groups</button>}
             </div>
             <div className="flex h-5 flex-nowrap items-center gap-1 overflow-x-auto overflow-y-hidden whitespace-nowrap">
@@ -607,6 +688,19 @@ export function Author() {
               </>}
             </div>
           </section>
+          {/* the page's STEPS: the page, then each action; step back / forward; the live head is marked */}
+          {pageNode && (pageSteps.length > 1 || pending.length > 0) && <div className="flex h-[20px] shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap rounded border border-line px-1 text-[10px]">
+            <span className="mr-1 font-semibold uppercase tracking-wide text-muted">steps</span>
+            <button type="button" className="px-0.5 text-muted hover:text-ink disabled:opacity-30" disabled={stepIx <= 0} onClick={() => stepIx > 0 && select(pageSteps[stepIx - 1]!.id)} title="the step before">◀</button>
+            {pageSteps.map((x, i) => <React.Fragment key={x.id}>{i > 0 && <span className="text-muted">›</span>}
+              <button type="button" onClick={() => select(x.id)} className={cn("rounded px-1 font-mono", x.id === stateKey ? "bg-accent-soft text-accent ring-1 ring-accent" : "hover:bg-surface-2", i > 0 && !snaps[x.id] && "text-muted")} title={i === 0 ? "the page as it opened" : `${graphLib.describeOp(x)}${snaps[x.id] ? "" : " (no snapshot yet: replay to see it)"}`}>
+                {i === 0 ? "page" : `${x.op!.name}(${String(x.op!.args[0]?.value ?? "").slice(0, 18)})`}{head && head.at === x.id && head.page === pageKey ? <span className="ml-0.5 text-ok">●</span> : null}
+              </button></React.Fragment>)}
+            {atHead && pending.map((a, i) => <React.Fragment key={`p${i}`}><span className="text-muted">›</span><span className="rounded border border-dashed border-warn/70 px-1 font-mono text-warn" title="done on the live page, not in the plan yet: it becomes a step when you use a selector here (or shift-click to record an action)">{a.op}({String(a.args[0] ?? "").slice(0, 18)})</span></React.Fragment>)}
+            {atHead && pending.length > 0 && <button type="button" className="ml-0.5 rounded bg-warn-soft px-1 text-warn hover:brightness-95" onClick={() => { if (!graph) return; const m = materialize(graph, stateKey); setGraph(() => m.g); select(m.parent); }} title="make these actions steps of the plan now">add to plan</button>}
+            <button type="button" className="px-0.5 text-muted hover:text-ink disabled:opacity-30" disabled={stepIx < 0 || stepIx >= pageSteps.length - 1} onClick={() => stepIx < pageSteps.length - 1 && select(pageSteps[stepIx + 1]!.id)} title="the step after">▶</button>
+            <span className="ml-1 text-muted">{atHead ? "live: click to interact · shift-click to record a step" : "a snapshot: shift-click to fork from here (the later steps are kept as a branch)"}</span>
+          </div>}
           <div className="relative shrink-0 overflow-hidden" style={{ height: pageH }}>
           {!pageNode ? (
             <section className="rounded-md border border-line p-3 text-[12px]">
@@ -615,10 +709,15 @@ export function Author() {
             </section>
           ) : err && !views.data ? (
             <EmptyState title={`Could not open the page · ${err.code ?? err.status}`} hint={err.hint ?? err.message} action={<Button onClick={() => setPages((ps) => ({ ...ps, [pageKey]: { url: ps[pageKey]?.url ?? "" } }))}>Retry</Button>} />
-          ) : page?.live ? (
-            <Player events={stream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={shownRoots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const par = actionParent(); const hitNode = p.el ? matchOf({ op: "click", pick: { path: [], tag: p.tag, classes: p.classes, text: p.text }, shift: m.shift }, p.el) : null; if (hitNode) select(hitNode.id); runAction("click", [p.el ? selFor(p.el) : p.path], recordActions && m.shift && !hitNode, par?.id); }} onDocument={(d) => setDocs((ds) => (ds[pageKey] === d ? ds : { ...ds, [pageKey]: d }))} controls={false} controller={controller} maxHeight={pageH} />
+          ) : atHead && !liveDocId ? (
+            <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "opening the live page…"}</div>
+          ) : liveDocId ? (
+            livePictured ? <Player key={liveStart} events={liveStream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={shownRoots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const sel = p.el ? selFor(p.el) : null; if (!sel) return; if (m.shift) { void act("click", [sel]); return; } void clickThrough(sel); }} onDocument={(d) => setDocs((ds) => (ds[stateKey] === d ? ds : { ...ds, [stateKey]: d }))} controls={false} controller={controller} maxHeight={pageH} /> : <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "waiting for the live page to send its picture (it is loading or navigating)…"}</div>
           ) : card && card.kind === "binary" ? (
             <EmptyState title="A file" hint="Not a page to render: add .download() above to return its bytes (url, filename, content type, size, base64)." action={<Button onClick={() => node && addEdge("download", [], {}, { output: "file" })}>.download()</Button>} />
+          ) : stateKey !== pageKey ? (snaps[stateKey] ? (
+            <PageFrame html={snaps[stateKey]!.html} base={snaps[stateKey]!.url || page?.url || graph.url} stripScripts={stripScripts} focusPaths={shownRoots.length ? shownRoots.map(pathOf) : null} highlights={frameHls} picking={selfMode} onPick={onFramePick} onAction={onFrameAction} maxHeight={pageH} width={1180} />
+          ) : <div className="flex h-full flex-col items-center justify-center gap-1 rounded border border-dashed border-line text-[11px] text-muted">No snapshot of this step yet.<button type="button" className="rounded bg-accent px-2 py-0.5 text-white" onClick={goLiveHere}>Replay to here</button></div>
           ) : views.data?.content ? (
             <PageFrame html={views.data.content} base={views.data.url ?? page?.url ?? graph.url} stripScripts={stripScripts} focusPaths={shownRoots.length ? shownRoots.map(pathOf) : null} highlights={frameHls} picking={selfMode} onPick={onFramePick} onAction={onFrameAction} maxHeight={pageH} width={1180} />
           ) : <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{pageUrl(pageKey) || page?.url ? "opening the page into your session…" : "this page's URL comes from the page before it: open that first"}</div>}
@@ -664,7 +763,7 @@ export function Author() {
           )}
         </aside>)}
       </div>}
-      {page?.live && <MediaBar controller={controller} className="shrink-0" />}
+      {liveDocId && <MediaBar controller={controller} className="shrink-0" />}
     </div>
   );
 }

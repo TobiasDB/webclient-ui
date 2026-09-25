@@ -2,7 +2,7 @@ import * as React from "react";
 import type { Problem } from "../lib/check";
 import { X } from "lucide-react";
 import { cn } from "../lib/cn";
-import { children, lit, removeNode, setMod, updateNode, type GNode, type Graph, type NodeType } from "../lib/graph";
+import { ACTIONS, children, isOff, lit, removeNode, setMod, updateNode, type GNode, type Graph, type NodeType } from "../lib/graph";
 import { fieldColour } from "./Player";
 
 export type Edge = { label: string; hint?: string; onAdd: () => void; tone?: "io" | "data" };
@@ -64,10 +64,13 @@ function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, onEd
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const setArg = (i: number, value: unknown) => onChange?.(updateNode(graph, n.id, { op: { ...n.op!, args: n.op!.args.map((a, j) => (j === i ? lit(value) : a)) } }));
   const missing = needsArg(n);
+  const off = isOff(graph, n.id);
+  /** switch to this forked-away branch: its sibling action steps go off, it comes on */
+  const useBranch = () => { if (!onChange || !n.parent) return; let g = graph; for (const sib of children(graph, n.parent)) if (sib.id !== n.id && sib.op && ACTIONS.has(sib.op.name) && !sib.off) g = updateNode(g, sib.id, { off: true }); onChange(updateNode(g, n.id, { off: undefined })); };
   const pager = n.mods?.find((m) => m.name === "paginate"); const limit = n.mods?.find((m) => m.name === "limit");
   const kw = n.op ? Object.entries(n.op.kwargs) : [];
   return (
-    <div className={cn("group flex cursor-pointer items-center gap-x-1 overflow-hidden whitespace-nowrap rounded-sm px-0.5", selected ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-surface-2", missing && "ring-1 ring-bad/50")} onClick={(e) => { stop(e); onSelect(); }} title={n.output ? `output: ${n.output}` : n.alias ? "output (named from the page / a column)" : undefined}>
+    <div className={cn("group flex cursor-pointer items-center gap-x-1 overflow-hidden whitespace-nowrap rounded-sm px-0.5", selected ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-surface-2", missing && "ring-1 ring-bad/50", off && "opacity-45")} onClick={(e) => { stop(e); onSelect(); }} title={n.output ? `output: ${n.output}` : n.alias ? "output (named from the page / a column)" : undefined}>
       {!n.op ? <span className="min-w-0 truncate">Reference(<Str v={graph.url} max={40} />)</span> : <span className="min-w-0 truncate rounded-sm px-0.5" style={colour ? { boxShadow: `inset 0 0 0 1px ${colour}`, background: `${colour}14` } : undefined}>
         .{n.op.name}(
         {n.op.args.map((a, i) => <React.Fragment key={i}>{i > 0 && ", "}{a.plan ? "…" : typeof a.value === "string" ? <Str v={a.value} placeholder={missing && i === 0 ? "click the page" : ""} bad={missing && i === 0} editing={editing && i === 0} onEdit={onChange && onEditArg ? () => onEditArg(n.id) : undefined} /> : a.value && typeof a.value === "object" ? <button type="button" className="text-topic-network underline decoration-dotted" title="edit (JSON)" onClick={(e) => { stop(e); const t = window.prompt("the mapping, as JSON", JSON.stringify(a.value)); if (t) { try { setArg(i, JSON.parse(t)); } catch { window.alert("not JSON"); } } }}>{JSON.stringify(a.value).slice(0, 40)}</button> : <span className="text-topic-network">{JSON.stringify(a.value)}</span>}</React.Fragment>)}
@@ -79,6 +82,7 @@ function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, onEd
       {pager && <span className="text-topic-network">.paginate({pager.kwargs.next?.value ? `next="${String(pager.kwargs.next.value)}", ` : ""}max_pages={String(pager.kwargs.max_pages?.value ?? 20)}){onChange && <button type="button" className="ml-0.5 text-muted hover:text-bad" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "paginate")); }}>×</button>}</span>}
       {limit && <span className="text-topic-network">.limit({String(limit.args[0]?.value)}){onChange && <button type="button" className="ml-0.5 text-muted hover:text-bad" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "limit")); }}>×</button>}</span>}
       <span className="flex-1" />
+      {n.off && <span className="shrink-0 font-sans text-[9px] text-muted">forked away{onChange && <button type="button" className="ml-1 text-accent hover:underline" onClick={(e) => { stop(e); useBranch(); }} title="make this branch the plan's again">use this branch</button>}</span>}
       {problem && <span className={cn("shrink-0 rounded-sm px-0.5 font-sans text-[9px]", problem.level === "error" ? "bg-bad-soft text-bad" : problem.level === "warn" ? "bg-warn-soft text-warn" : "text-muted")} title={problem.message}>{problem.level === "error" ? "✕" : problem.level === "warn" ? "!" : "?"} {problem.short}</span>}
       {live && <span className="rounded bg-ok-soft px-1 font-sans text-[9px] text-ok">live</span>}
       {sample && (() => {
