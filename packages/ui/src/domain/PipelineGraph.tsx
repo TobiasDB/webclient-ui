@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../lib/cn";
-import { ACTION_COLOUR, actionOf, type Action, type Resources, type Stage, type StageStat } from "../lib/stages";
+import { ACTION_COLOUR, actionOf, itemGroups, type Action, type ItemGroups, type Resources, type Stage, type StageStat } from "../lib/stages";
 
 export type PipelineGraphProps = {
   stages: Stage[];
@@ -17,7 +17,7 @@ export type PipelineGraphProps = {
   className?: string;
 };
 
-const W = 166, H = 56, PW = 82, PH = 24, GX = 26, GY = 26;
+const W = 172, H = 66, PW = 82, PH = 24, GX = 26, GY = 26;
 const FAN = new Set(["select_all", "paginate", "links"]);
 const WHOLE = new Set(["extract", "project", "merge", "limit", "filter"]);
 const ACTION_LABEL: Record<Action, string> = { network: "fetch", fanout: "fan-out", find: "find", read: "read", interact: "interact", shape: "shape" };
@@ -85,6 +85,8 @@ function layout(stages: Stage[]): { nodes: Placed[]; lanes: Lane[]; w: number; h
 
 type St = "wait" | "run" | "done" | "fail";
 const STATUS: Record<St, string> = { wait: "#cbd5e1", run: "#2563eb", done: "#16a34a", fail: "#dc2626" };
+const CELL: Record<string, string> = { done: "#16a34a", missing: "#f59e0b", failed: "#dc2626", pending: "#e2e8f0" };
+const TIMED = new Set(["resolve", "paginate", "click", "write", "scroll", "wait_for", "goto", "download", "hover", "press"]);
 
 /** The run as a PIPELINE GRAPH (in the manner of Prefect / Dagster). Cards are coloured by what
  * they DO (fetch, fan-out, find, read, interact, shape) and bordered by their state (waiting,
@@ -130,7 +132,7 @@ export function PipelineGraph({ stages, stats, at, running, selected, onStage, r
   const pan = (dx: number, dy: number) => { setManual(true); setView((v) => ({ ...v, x: v.x + dx, y: v.y + dy })); };
 
   // -- state ---------------------------------------------------------------------------------
-  const stageState = (id: string): St => { const st = stats[id]; if (!st) return "wait"; if (st.errors.length) return "fail"; const active = st.last !== undefined && at - st.last < 15; if (running && active) return "run"; if (st.count > 0 || st.fanout > 0) return (st.expected && st.count < st.expected && running) ? "run" : "done"; return "wait"; };
+  const stageState = (id: string): St => { const st = stats[id]; if (!st) return "wait"; if (st.errors.some((e) => e.raised !== false)) return "fail"; const active = st.last !== undefined && at - st.last < 15; if (running && active) return "run"; if (st.count > 0 || st.fanout > 0) return (st.expected && st.count < st.expected && running) ? "run" : "done"; return "wait"; };
   const cardState = (c: Card): St => { const all = [...c.stages, ...c.names].map((s) => stageState(s.id)); if (all.includes("fail")) return "fail"; if (all.includes("run")) return "run"; if (all.every((x) => x === "wait")) return "wait"; if (all.some((x) => x === "wait") && running) return "run"; return "done"; };
   const lead = (c: Card): StageStat => stats[lastOf(c).id] ?? { count: 0, errors: [], fanout: 0 };
   /** a lane's progress: the least-complete of its cards, as items done out of the fan-out */
@@ -181,7 +183,7 @@ export function PipelineGraph({ stages, stats, at, running, selected, onStage, r
         {nodes.map((n) => {
           const c = n.c; const s = cardState(c); const st = lead(c); const first = c.stages[0]!; const last = lastOf(c);
           const act = actionOf(first.op); const colour = ACTION_COLOUR[act];
-          const errs = [...c.stages, ...c.names].reduce((k, x) => k + (stats[x.id]?.errors.length ?? 0), 0);
+          const errs = [...c.stages, ...c.names].reduce((k, x) => k + (stats[x.id]?.errors.filter((e) => e.raised !== false).length ?? 0), 0);
           const fan = FAN.has(last.op) ? stats[last.id]?.fanout ?? 0 : 0; const par = FAN.has(last.op) ? stats[last.id]?.parallel : undefined;
           const sel = c.stages.some((x) => x.id === selected);
           const tip = [...c.stages.map((x) => `${x.op}${x.arg ? ` ${x.arg}` : ""}${x.column ? ` → ${x.column}` : ""}: ${stats[x.id]?.count ?? 0}${stats[x.id]?.expected ? ` of ${stats[x.id]!.expected}` : ""}`), ...c.names.map((x) => `name from: ${x.op} ${x.arg ?? ""}`), fan ? `fanned out to ${fan}${par ? `, ${par.limit} at once` : ""}` : "", errs ? `${errs} errors` : ""].filter(Boolean).join("\n");
@@ -190,13 +192,19 @@ export function PipelineGraph({ stages, stats, at, running, selected, onStage, r
               <span className="size-1.5 shrink-0 rounded-full" style={{ background: colour }} /><span className="shrink-0">{first.op}</span>{first.column ? <span className="min-w-0 truncate text-accent">→{first.column}</span> : null}
             </button>
           );
-          // the fan-out strip: its items binned (≤ 36 cells), done / in flight / waiting
-          const lane = laneOf.get(c.id);
-          const strip = fan > 0 ? (() => {
-            const bins = Math.min(fan, 36); const done = lane ? laneDone(lane, fan) : fan; const flight = running && s !== "fail" ? Math.min(par?.limit ?? 1, fan - done) : 0;
-            return <div className="flex h-1.5 w-full gap-px overflow-hidden" title={`${done} of ${fan} items done${flight ? `, ${flight} in flight` : ""}`}>{Array.from({ length: bins }, (_, b) => { const lo = Math.floor((b * fan) / bins), hi = Math.floor(((b + 1) * fan) / bins); const bg = hi <= done ? STATUS.done : lo < done + flight ? STATUS.run : "#e2e8f0"; return <span key={b} className={cn("h-full flex-1 rounded-[1px]", bg === STATUS.run && "animate-pulse")} style={{ background: bg }} />; })}</div>;
-          })() : null;
+          // the items this card ran over: cells done / missing / failed / pending, grouped per parent item
+          const perItem = !!st.feed || Object.keys(st.items ?? {}).some((k) => k !== "");
+          // an item's state on the card is its WORST across the card's steps (a select that missed, then its attr ran on nothing)
+          const RANK = { done: 0, missing: 1, failed: 2 } as const;
+          const merged: Record<string, "done" | "missing" | "failed"> = {};
+          for (const x of c.stages) for (const [k, v] of Object.entries(stats[x.id]?.items ?? {})) if (!merged[k] || RANK[v] > RANK[merged[k]!]) merged[k] = v;
+          const ig = perItem ? itemGroups({ ...st, items: merged }, st.feed ? stats[st.feed] : undefined) : null;
+          type Tally = { done: number; missing: number; failed: number; pending: number };
+          const tally: Tally | null = ig ? ig.groups.reduce<Tally>((t, g) => { for (const x of g.cells) t[x] += 1; return t; }, { done: 0, missing: 0, failed: 0, pending: 0 }) : null;
           const pct = st.expected ? Math.min(1, st.count / st.expected) : s === "done" ? 1 : s === "run" ? 0.5 : 0;
+          const total = tally ? tally.done + tally.missing + tally.failed + tally.pending : 0;
+          const timed = TIMED.has(last.op) || TIMED.has(first.op);
+          const tStat = stats[(timed && TIMED.has(first.op) ? first : last).id];
           return (
             <button key={c.id} data-card="" type="button" onClick={() => onStage?.(last)} title={tip} className={cn("absolute flex min-w-0 flex-col justify-between overflow-hidden rounded-md border-2 bg-surface py-0.5 pl-2 pr-1.5 text-left shadow-sm transition-colors", sel && "ring-2 ring-accent/60", live && s === "wait" && "opacity-60")} style={{ left: n.x, top: n.y, width: n.w, height: n.h, borderColor: live ? STATUS[s] : "var(--color-line)" }}>
               <span className="absolute inset-y-0 left-0 w-1" style={{ background: colour }} />
@@ -206,10 +214,12 @@ export function PipelineGraph({ stages, stats, at, running, selected, onStage, r
                 <span className="min-w-0 flex-1" />
                 {s === "run" && <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />}
                 {errs > 0 && <span className="shrink-0 rounded-sm bg-bad-soft px-0.5 text-[9px] text-bad">✕{errs}</span>}
-                <span className="shrink-0 font-mono tabular-nums text-ink">{st.count ? st.count.toLocaleString() : s === "wait" ? "" : "·"}{st.expected ? <span className="text-muted">/{st.expected.toLocaleString()}</span> : null}</span>
+                {tally && (tally.missing > 0 || tally.failed > 0) && <span className="shrink-0 font-mono text-[9px]">{tally.missing > 0 && <span style={{ color: CELL.missing }}>{tally.missing}−</span>}{tally.failed > 0 && <span style={{ color: CELL.failed }}> {tally.failed}✕</span>}</span>}
+                <span className="shrink-0 font-mono tabular-nums text-ink">{tally && total ? <>{tally.done.toLocaleString()}<span className="text-muted">/{total.toLocaleString()}</span></> : <>{st.count ? st.count.toLocaleString() : s === "wait" ? "" : "·"}{st.expected ? <span className="text-muted">/{st.expected.toLocaleString()}</span> : null}</>}</span>
               </div>
               <div className="w-full min-w-0 truncate whitespace-nowrap font-mono text-[9.5px]">{c.stages.map((x, i) => <React.Fragment key={x.id}>{i ? <span className="text-muted"> · </span> : null}<span style={{ color: ACTION_COLOUR[actionOf(x.op)] }}>{x.op}</span>{x.arg ? <span className="text-ink"> {x.arg}</span> : null}</React.Fragment>)}</div>
-              {strip ?? <div className="h-1 w-full overflow-hidden rounded-full bg-surface-2"><div className="h-full rounded-full transition-all" style={{ width: `${pct * 100}%`, background: STATUS[s] }} /></div>}
+              {ig && ig.groups.length ? <ItemStrip ig={ig} /> : <div className="h-1 w-full overflow-hidden rounded-full bg-surface-2"><div className="h-full rounded-full transition-all" style={{ width: `${pct * 100}%`, background: STATUS[s] }} /></div>}
+              {timed && <Timing stat={tStat} running={running} />}
             </button>
           );
         })}
@@ -265,5 +275,51 @@ function Spark({ samples }: { samples: Resources[] }) {
       <polyline points={line((r) => r.httpUsed)} fill="none" stroke={ACTION_COLOUR.network} strokeWidth={1} />
       <polyline points={line((r) => r.pagesUsed)} fill="none" stroke={ACTION_COLOUR.interact} strokeWidth={1} />
     </svg>
+  );
+}
+
+/** A stage's items as cells: [x][x][f][-] -- done, missing (an optional miss), failed, pending. Nested
+ * fan-outs group per parent item ([[][][]] [[][][]]); past what fits, cells and groups are BINNED (a
+ * bin shows its worst state: failed, then missing, then pending), so 5,000 items stay one strip. */
+function ItemStrip({ ig }: { ig: ItemGroups }) {
+  const worst = (xs: string[]): string => (xs.includes("failed") ? "failed" : xs.includes("missing") ? "missing" : xs.includes("pending") ? (xs.includes("done") ? "partial" : "pending") : "done");
+  const colour = (k: string) => (k === "partial" ? "#86efac" : CELL[k]!);
+  const bin = <T,>(xs: T[], max: number): T[][] => { if (xs.length <= max) return xs.map((x) => [x]); const out: T[][] = []; for (let b = 0; b < max; b++) out.push(xs.slice(Math.floor((b * xs.length) / max), Math.floor(((b + 1) * xs.length) / max))); return out; };
+  const tally = (cells: string[]) => { const t: Record<string, number> = {}; cells.forEach((c) => { t[c] = (t[c] ?? 0) + 1; }); return Object.entries(t).map(([k, v]) => `${v} ${k}`).join(" · "); };
+  const all = ig.groups.flatMap((g) => g.cells);
+  const title = `${tally(all)}${ig.groups.length > 1 ? ` in ${ig.groups.length} groups` : ""}${ig.pendingGroups ? ` · ${ig.pendingGroups} groups to come` : ""}`;
+  if (ig.groups.length <= 1) {
+    const cells = bin(ig.groups[0]?.cells ?? [], 44);
+    return <div className="flex h-2 w-full gap-px overflow-hidden" title={title}>{cells.map((b, i) => <span key={i} className="h-full min-w-[2px] flex-1 rounded-[1px]" style={{ background: colour(worst(b)) }} />)}</div>;
+  }
+  // grouped: each parent's items in a bracket; many groups -> each group one mini bar of its states
+  const fitsCells = ig.groups.length <= 12 && all.length <= 48;
+  const groups = bin(ig.groups, 30);
+  return (
+    <div className="flex h-2.5 w-full items-stretch gap-[2px] overflow-hidden" title={title}>
+      {fitsCells ? ig.groups.map((g) => (
+        <span key={g.key} className="flex flex-1 gap-px rounded-[2px] border border-line/80 p-px">{g.cells.map((c, i) => <span key={i} className="h-full min-w-[1px] flex-1 rounded-[1px]" style={{ background: CELL[c] }} />)}</span>
+      )) : groups.map((gs, i) => {
+        const cells = gs.flatMap((g) => g.cells); const t = cells.length || 1; const f = (k: string) => (cells.filter((c) => c === k).length / t) * 100;
+        return <span key={i} className="flex min-w-[3px] flex-1 flex-col overflow-hidden rounded-[2px] border border-line/80">{(["failed", "missing", "done", "pending"] as const).map((k) => f(k) > 0 && <span key={k} style={{ height: `${f(k)}%`, background: CELL[k] }} />)}</span>;
+      })}
+      {ig.pendingGroups > 0 && <span className="shrink-0 self-center font-mono text-[8px] text-muted">+{ig.pendingGroups}</span>}
+    </div>
+  );
+}
+
+/** How long a fetch / an interaction takes: the typical time so far, and a bar for the slowest one still
+ * running against it (amber past twice the typical, red past five times). */
+function Timing({ stat, running }: { stat: StageStat | undefined; running: boolean }) {
+  const d = [...(stat?.durations ?? [])].sort((a, b) => a - b); const live = running ? stat?.inflight ?? [] : [];
+  const med = d.length ? d[Math.floor(d.length / 2)]! : 0; const slow = live.length ? Math.max(...live) : 0;
+  const scale = Math.max(med * 2, 1); const pct = Math.min(1, slow / scale);
+  const fmt = (x: number) => (x < 1 ? `${Math.round(x * 1000)}ms` : `${x.toFixed(1)}s`);
+  const tone = slow > med * 5 && med > 0 ? "#dc2626" : slow > med * 2 && med > 0 ? "#f59e0b" : "#2563eb";
+  return (
+    <div className="flex w-full min-w-0 items-center gap-1 whitespace-nowrap text-[8.5px] text-muted" title={d.length ? `${d.length} done · median ${fmt(med)} · slowest ${fmt(d[d.length - 1]!)}${live.length ? ` · ${live.length} running, the longest ${fmt(slow)}` : ""}` : live.length ? `${live.length} running` : "not run yet"}>
+      <span className="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-2">{live.length > 0 && <span className="absolute inset-y-0 left-0 rounded-full transition-all" style={{ width: `${pct * 100}%`, background: tone }} />}</span>
+      <span className="shrink-0 font-mono tabular-nums">{live.length ? `${live.length}▶ ${fmt(slow)}` : ""}{d.length ? `${live.length ? " · " : ""}~${fmt(med)}` : ""}</span>
+    </div>
   );
 }

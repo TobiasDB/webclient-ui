@@ -57,8 +57,12 @@ export function stagesOf(p: Plan): Stage[] {
 }
 export function flatStages(sts: Stage[]): Stage[] { const out: Stage[] = []; const go = (s: Stage) => { out.push(s); s.children.forEach(go); }; sts.forEach(go); return out; }
 
-export type RunEvent = { topic?: string; phase?: string; ts?: number; detail?: Record<string, unknown>; error?: { code?: string; op?: string; message?: string; subject?: string; hint?: string }; raised?: boolean; url?: string; [k: string]: unknown };
-export type StageStat = { count: number; errors: { code?: string; message?: string }[]; last?: number; /** items this stage fanned out to so far (a select_all's matches, a paginate's pages) */ fanout: number; /** how many times it is expected to run: the fan-out of the nearest EACH / PAGES above it */ expected?: number;
+export type RunEvent = { topic?: string; phase?: string; ts?: number; item?: number[]; detail?: Record<string, unknown>; error?: { code?: string; op?: string; message?: string; subject?: string; hint?: string }; raised?: boolean; url?: string; [k: string]: unknown };
+export type StageStat = { count: number; errors: { code?: string; message?: string; raised?: boolean }[]; last?: number;
+  /** each item's state at this stage, by its index path ("3", "3.1"; "" outside a fan-out) */ items?: Record<string, ItemState>;
+  /** a fan-out stage: how many items it fanned out to, per the item it ran in */ fanBy?: Record<string, number>;
+  /** the fan-out stage whose items this stage runs over */ feed?: string;
+  /** a timed stage (fetch, interaction): how long each finished run took, and the ones still running (seconds) */ durations?: number[]; inflight?: number[]; /** items this stage fanned out to so far (a select_all's matches, a paginate's pages) */ fanout: number; /** how many times it is expected to run: the fan-out of the nearest EACH / PAGES above it */ expected?: number;
   /** how many separate fan-outs made up `fanout` (a select_all run once per page: 40 fan-outs of ~7) */ fanouts?: number;
   /** the width its items run at: at most `limit` at once, bounded by the `bound` pool (http slots / browser pages) */ parallel?: { limit: number; bound: string } };
 
@@ -92,7 +96,7 @@ export const ACTION_COLOUR: Record<Action, string> = { network: "#2563eb", fanou
  * on the stage whose op it names; untraced stages (casts, columns, emit) count as their parent. */
 export function stageStats(sts: Stage[], events: RunEvent[], upTo = events.length): Record<string, StageStat> {
   const all = flatStages(sts); const out: Record<string, StageStat> = {};
-  for (const s of all) out[s.id] = { count: 0, errors: [], fanout: 0 };
+  for (const s of all) out[s.id] = { count: 0, errors: [], fanout: 0, items: {}, fanBy: {}, durations: [], inflight: [] };
   const seen: Record<string, number> = {};
   // what runs just before a stage (the stage it follows in a sequence, else the one it branches from),
   // skipping stages the executor does not trace: an event goes first to the stage that follows the last one
@@ -100,55 +104,81 @@ export function stageStats(sts: Stage[], events: RunEvent[], upTo = events.lengt
   const link2 = (list: Stage[], before: Stage | undefined) => { let b = before; for (const st of list) { pred[st.id] = b; st.children.filter((c) => !c.chain).forEach((c) => link2([c], st)); link2(st.children.filter((c) => c.chain), st); b = st; } };
   link2(sts, undefined);
   const traced = (st: Stage | undefined): Stage | undefined => { let x = st; while (x && UNTRACED.has(x.op)) x = pred[x.id]; return x; };
-  let lastStage: Stage | undefined; let lastFan: Stage | undefined;
-  for (let i = 0; i < Math.min(upTo, events.length); i++) {
-    const e = events[i]!;
+  // items run concurrently, so "the stage that ran last" is kept PER ITEM (its index path); an item's
+  // first step follows the last stage of the item it fanned out of
+  const lastBy: Record<string, Stage | undefined> = {};
+  const lastOf = (key: string): Stage | undefined => { let k: string | null = key; while (k !== null) { if (lastBy[k]) return lastBy[k]; k = k === "" ? null : k.includes(".") ? k.slice(0, k.lastIndexOf(".")) : ""; } return undefined; };
+  // a fetch / an interaction is TIMED: from its step to the next step (or the end) of the same item
+  const open: Record<string, { st: Stage; ts: number }> = {};
+  const close = (key: string, ts: number | undefined) => { const o = open[key]; if (!o) return; if (ts !== undefined) out[o.st.id]!.durations!.push(ts - o.ts); delete open[key]; };
+  let lastFan: Stage | undefined;
+  const n = Math.min(upTo, events.length);
+  for (let i = 0; i < n; i++) {
+    const e = events[i]!; const key = (e.item as number[] | undefined)?.join(".") ?? "";
     if (e.topic === "plan" && e.phase === "step") {
       const op = String(e.detail?.op ?? ""); const sel = e.detail?.selector as string | undefined;
       let cands = all.filter((s) => s.op === op && (sel ? s.arg === sel : true));
       if (!cands.length && !sel) cands = all.filter((s) => s.op === op);
-      if (!cands.length) { lastStage = undefined; continue; }
-      const next = lastStage ? cands.filter((s) => traced(pred[s.id]) === lastStage) : [];
-      if (next.length === 1) { const st = next[0]!; out[st.id]!.count++; out[st.id]!.last = i; lastStage = st; continue; }
-      if (next.length > 1) cands = next;
-      // several stages with the same op and argument (the root fetch and the per-record fetches; two
-      // attr("text") reads): the root takes the first event, the rest are shared round-robin
-      const key = `${op}|${sel ?? ""}`; const k = seen[key] ?? 0; seen[key] = k + 1;
-      const st = cands.length === 1 ? cands[0]! : !sel && cands[0]!.depth === 0 ? (k === 0 ? cands[0]! : cands[1 + ((k - 1) % (cands.length - 1))]!) : cands[k % cands.length]!;
-      out[st.id]!.count++; out[st.id]!.last = i; lastStage = st;
+      close(key, e.ts);
+      if (!cands.length) { lastBy[key] = undefined; continue; }
+      const last = lastOf(key);
+      const next = last ? cands.filter((s) => traced(pred[s.id]) === last) : [];
+      let st: Stage;
+      if (next.length === 1) st = next[0]!;
+      else {
+        if (next.length > 1) cands = next;
+        // several stages with the same op and argument (the root fetch and the per-record fetches):
+        // the root takes the un-itemed event; the rest are shared round-robin
+        const deep = cands.filter((s) => s.depth > 0);
+        if (cands.length > 1 && key === "" && cands[0]!.depth === 0) st = cands[0]!;
+        else { const pool = key !== "" && deep.length ? deep : cands; const sk = `${op}|${sel ?? ""}`; const k = seen[sk] ?? 0; seen[sk] = k + 1; st = pool[k % pool.length]!; }
+      }
+      const o = out[st.id]!; o.count++; o.last = i; lastBy[key] = st;
+      if (!o.items![key]) o.items![key] = "done";
+      if ((TIMED.has(op)) && e.ts !== undefined) open[key] = { st, ts: e.ts };
+    } else if (e.topic === "plan" && e.phase === "item") {
+      close(key, e.ts);
+    } else if (e.topic === "plan" && (e.phase === "done" || e.phase === "row") && key === "") {
+      close("", e.ts);
     } else if (e.topic === "plan" && e.phase === "fanout") {
-      const op = String(e.detail?.op ?? ""); const sel = e.detail?.selector as string | undefined; const n = Number(e.detail?.n ?? 0);
+      const op = String(e.detail?.op ?? ""); const sel = e.detail?.selector as string | undefined; const cnt = Number(e.detail?.n ?? 0);
       const st = all.find((s) => s.op === op && (!sel || s.arg === sel)) ?? all.find((s) => s.op === op);
-      if (st) { const o = out[st.id]!; o.fanout += n; o.fanouts = (o.fanouts ?? 0) + 1; o.last = i; lastFan = st; }
+      if (st) { const o = out[st.id]!; o.fanout += cnt; o.fanouts = (o.fanouts ?? 0) + 1; o.fanBy![key] = (o.fanBy![key] ?? 0) + cnt; o.last = i; lastFan = st; }
     } else if (e.topic === "plan" && e.phase === "parallel") {
       // a fan-out starting: its width belongs to the stage that just fanned out
       const lim = Number(e.detail?.limit ?? 0); const bound = String(e.detail?.bound ?? "http");
       if (lastFan && lim) { const o = out[lastFan.id]!; o.parallel = { limit: Math.max(o.parallel?.limit ?? 0, lim), bound }; }
     } else if (e.topic === "error" && e.error) {
-      // the failing stage: its op + selector (as the subject, or quoted in the message), else the
-      // step that just ran, else the first stage with that op
-      const op = e.error.op; const subj = e.error.subject; const msg = e.error.message ?? "";
-      const st = all.find((s) => s.op === op && !!s.arg && s.arg === subj) ?? all.find((s) => s.op === op && !!s.arg && msg.includes(`'${s.arg}'`))
-        ?? (lastStage && lastStage.op === op ? lastStage : undefined) ?? all.find((s) => s.op === op);
-      if (st) { out[st.id]!.errors.push({ code: e.error.code, message: e.error.message }); out[st.id]!.last = i; }
+      // the failing stage: the step this item just ran (when its op matches), else its op + selector
+      // (as the subject, or quoted in the message), else the first stage with that op
+      const op = e.error.op; const subj = e.error.subject; const msg = e.error.message ?? ""; const last = lastBy[key];
+      const st = (last && last.op === op ? last : undefined) ?? all.find((s) => s.op === op && !!s.arg && s.arg === subj) ?? all.find((s) => s.op === op && !!s.arg && msg.includes(`'${s.arg}'`)) ?? all.find((s) => s.op === op);
+      if (st) {
+        const o = out[st.id]!; o.errors.push({ code: e.error.code, message: e.error.message, raised: e.raised !== false }); o.last = i;
+        // raised: the item FAILED; returned (an optional miss): the value is MISSING
+        o.items![key] = e.raised === false ? "missing" : "failed";
+      }
     }
   }
+  // what is still running at this moment, and for how long
+  const now = n ? events[n - 1]!.ts : undefined;
+  if (now !== undefined) for (const o of Object.values(open)) out[o.st.id]!.inflight!.push(now - o.ts);
   // stages the executor does not trace (casts, columns, emit, merge): they run as often as the stage before them
   const walk = (st: Stage, parentCount: number) => { const o = out[st.id]!; if (UNTRACED.has(st.op) && o.count === 0 && parentCount > 0) o.count = parentCount; st.children.forEach((c) => walk(c, o.count)); };
   sts.forEach((st, i) => walk(st, i > 0 ? out[sts[i - 1]!.id]!.count : 0));
-  // expected runs: a stage under an EACH / PAGES runs once per item it fanned out to
-  // a stage in a sequence after an EACH / PAGES runs once per item it fanned out to: carry the
-  // fan-out along the sequence (the top-level list; a column's chained stages) and into branches
+  // expected runs: a stage in a sequence after an EACH / PAGES runs once per item it fanned out to:
+  // carry the fan-out (and WHICH stage fanned out -- `feed`) along the sequence and into branches
   const FAN = new Set(["select_all", "paginate", "links"]);
   // ops on the WHOLE collection (run once per collection; their columns run once per item)
   const WHOLE = new Set(["extract", "project", "merge", "limit", "filter"]);
-  const seq = (list: Stage[], outer: number | undefined, pending?: number) => {
-    let exp = outer; let items: number | undefined = pending;
+  type Src = { n: number; feed: string } | undefined;
+  const seq = (list: Stage[], outer: Src, pending?: Src) => {
+    let exp = outer; let items: Src = pending;
     for (const st of list) {
       const o = out[st.id]!;
       if (!WHOLE.has(st.op) && items !== undefined) { exp = items; items = undefined; }
-      if (exp !== undefined) o.expected = exp;
-      if (FAN.has(st.op) && o.fanout > 0) items = o.fanout;
+      if (exp !== undefined) { o.expected = exp.n; o.feed = exp.feed; }
+      if (FAN.has(st.op) && o.fanout > 0) items = { n: o.fanout, feed: st.id };
       const inner = WHOLE.has(st.op) ? items ?? exp : exp;
       st.children.filter((c) => !c.chain).forEach((c) => seq([c], inner));
       // the rest of a chain continues this sequence: what this stage fanned out to is still pending
@@ -158,4 +188,37 @@ export function stageStats(sts: Stage[], events: RunEvent[], upTo = events.lengt
   seq(sts, undefined);
   return out;
 }
+
+/** An item's state at a stage: it ran (done), its value was missing (an optional miss), it failed. */
+export type ItemState = "done" | "missing" | "failed";
+/** A stage's items as GROUPS of cells -- one group per item of the fan-out above (the table rows of
+ * each book), or a single group -- each cell done / missing / failed / pending (not reached yet). */
+export type ItemGroups = { groups: { key: string; cells: (ItemState | "pending")[] }[]; pendingGroups: number };
+export function itemGroups(stat: StageStat | undefined, feed: StageStat | undefined): ItemGroups {
+  const items = stat?.items ?? {}; const expected = stat?.expected ?? 0;
+  const keys = Object.keys(items);
+  const prefix = (k: string) => (k.includes(".") ? k.slice(0, k.lastIndexOf(".")) : "");
+  const idx = (k: string) => Number(k.includes(".") ? k.slice(k.lastIndexOf(".") + 1) : k);
+  const fanBy = feed?.fanBy ?? {};
+  // grouped when the items sit one level under the fan-out's own items (a table per book)
+  const grouped = keys.length > 0 && keys.every((k) => prefix(k) !== "" && prefix(k) in fanBy);
+  if (!grouped) {
+    const size = Math.max(expected, keys.length);
+    const cells: (ItemState | "pending")[] = Array.from({ length: size }, () => "pending");
+    const sorted = keys.sort((a, b) => idx(a) - idx(b));
+    // items without a fan-out index (the root) fill from the front; indexed ones sit at their index
+    sorted.forEach((k, j) => { const at = k === "" || prefix(k) !== "" ? j : idx(k); if (at < size) cells[at] = items[k]!; else cells.push(items[k]!); });
+    return { groups: keys.length || size ? [{ key: "", cells }] : [], pendingGroups: 0 };
+  }
+  const groups = Object.entries(fanBy).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true })).map(([g, size]) => {
+    const cells: (ItemState | "pending")[] = Array.from({ length: size }, () => "pending");
+    for (const k of keys) if (prefix(k) === g) { const at = idx(k); if (at < size) cells[at] = items[k]!; }
+    return { key: g, cells };
+  });
+  // parents that have not fanned out yet: their groups are still to come
+  const parents = feed?.expected ?? 0;
+  return { groups, pendingGroups: Math.max(0, parents - groups.length) };
+}
+/** ops whose DURATION is shown (they wait on the network or the page) */
+const TIMED = new Set(["resolve", "paginate", "click", "write", "scroll", "wait_for", "goto", "download", "hover", "press"]);
 const UNTRACED = new Set(["number", "date", "datetime", "map", "extract", "project", "merge", "limit", "filter", "alias", "download"]);
