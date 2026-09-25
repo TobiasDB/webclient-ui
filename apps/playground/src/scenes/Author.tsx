@@ -181,6 +181,9 @@ export function Author() {
     if (!sessionId || !pageNode) return null;
     if (head && head.page === pageNode.id && head.at === st.id) return head.docId;
     if (head) api.docClose(sessionId, head.docId).catch(() => undefined);
+    // Author holds ONE live page: any other live page of this session (an earlier load's head, a tab
+    // closed without releasing) goes back to the pool first -- else the pool runs dry and this waits forever
+    try { for (const d of await api.docs(sessionId)) if ((d as { live?: boolean }).live && d.id !== head?.docId) await api.docClose(sessionId, d.id).catch(() => undefined); } catch { /* best effort */ }
     const url = page?.url ?? pageUrl(pageNode.id); if (!url) return null;
     setBusy("opening a live page");
     const h = await api.docOpen(sessionId, { url, browser: "always", live: true });
@@ -217,6 +220,9 @@ export function Author() {
     try { await api.executeDoc({ plan: planBody("Document", [callBody("click", [sel])], sessionId), document_id: liveDocId }); setPending((ps) => [...ps, { op: "click", args: [sel] }]); }
     catch (e) { setActError(e as ApiError); } finally { setBusy(null); }
   };
+  // leaving Author: its live page goes back to the pool
+  const headRef = React.useRef(head); headRef.current = head;
+  React.useEffect(() => () => { const h = headRef.current; if (h && sessionId) api.docClose(sessionId, h.docId).catch(() => undefined); }, [sessionId]);
   // the HEAD is always live: open (or replay to) it when it comes on screen
   const opening = React.useRef<string | null>(null);
   React.useEffect(() => {

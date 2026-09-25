@@ -111,14 +111,17 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
       root.current.innerHTML = "";
       const Replayer = mod.Replayer;
       if (events.length < 2) return; // live: wait for the Meta + FullSnapshot pair
-      r = new Replayer(events, {
+      // live: rrweb's documented form -- an EMPTY replayer started at the recording's first moment, every
+      // event ADDED (a replayer built from the first batch and started "now" drops that batch's updates
+      // stamped before now: content a page fetched right after load never showed)
+      r = new Replayer(live ? [] : events, {
         root: root.current, speed, skipInactive: skip, showWarning: false, showDebug: false, liveMode: live,
         insertStyleRules: ["html { scroll-behavior: smooth !important; }"],
         mouseTail: false,
         UNSAFE_replayCanvas: false,
       });
       rep.current = r;
-      appended.current = events.length;
+      appended.current = live ? 0 : events.length;
       r.on("resize", (d: { width: number; height: number }) => setSize({ w: d.width, h: d.height }));
       r.on("fullsnapshot-rebuilded", () => { setReady(true); refreshRef.current(); const d = r.iframe?.contentDocument; if (d) cbs.current.onDocument?.(d); });
       r.on("custom-event", (e: any) => {
@@ -144,7 +147,11 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
       r.on("finish", () => setPlaying(false));
       r.on("state-change", (s: any) => { if (s?.player?.value) setPlaying(s.player.value === "playing"); });
       const m = live ? { startTime: events[0]!.timestamp, endTime: events[events.length - 1]!.timestamp, totalTime: 0 } : r.getMetaData(); setMeta(m);
-      if (live) { r.startLive(); setPlaying(true); }
+      if (live) {
+        r.startLive(events[0]!.timestamp - 500); setPlaying(true);
+        for (const e of events) { try { r.addEvent(e); } catch { /* a malformed chunk */ } }
+        appended.current = events.length;
+      }
       else if (autoPlay) { r.play(0); setPlaying(true); }
       else r.pause(0);
       const tick = () => { if (!rep.current) return; const t = rep.current.getCurrentTime(); setTime(t); cbs.current.onTime?.(toRecordedRef.current(m.startTime + t)); refreshRef.current(); raf = requestAnimationFrame(tick); };
