@@ -72,7 +72,7 @@ export function Author() {
   const [docs, setDocs] = React.useState<Record<string, Document>>({});
   const [pickEl, setPickEl] = React.useState<Element | null>(null);
   const [building, setBuilding] = React.useState<string | null>(null);
-  const [run, setRun] = React.useState<{ rows?: Record<string, unknown>[]; error?: ApiError; ms?: number; busy: boolean; replay?: RREvent[] }>({ busy: false });
+  const [run, setRun] = React.useState<{ rows?: Record<string, unknown>[]; error?: ApiError; ms?: number; busy: boolean; replay?: RREvent[]; trace?: string }>({ busy: false });
   const select = (id: string, edit = false) => { setSelectedRaw(id); setEditing(edit); setPickEl(null); setBuilding(null); };
   const reset = (s: State | null, sel = "root", keep: Record<string, Page> = {}) => { setStateRaw(s); history.current = []; setPages(keep); setDocs({}); select(sel); setRun({ busy: false }); };
   const start = (url: string, tier: Tier, keep?: Page) => { let g = emptyGraph(url); const r = addNode(g, g.root, opOf("resolve", [], browserKw(tier)), returns); g = r.graph; reset({ tier, graph: g }, r.id, keep ? { [r.id]: keep } : {}); };
@@ -378,11 +378,17 @@ export function Author() {
     if (nested) rows = rows.filter((r) => !Object.values(r).some((x) => typeof x === "string" && x.startsWith("→ ")));
     return { rows, nested };
   }, [preview.rows, graph, pageNode]);
-  const runServer = async () => {
+  /** run the plan through the session; `trace` also saves the run as a named trace */
+  const runServer = async (trace?: string) => {
     if (!plan || !graph) return; setRun({ busy: true }); setTab("server"); const t0 = performance.now();
-    try { const out = await api.execute({ plan: { ...plan, session_id: sessionId }, url: graph.url }); setRun({ rows: (Array.isArray(out.rows) ? out.rows : out.rows && typeof out.rows === "object" ? [out.rows as Record<string, unknown>] : []) as Record<string, unknown>[], ms: Math.round(performance.now() - t0), busy: false }); }
-    catch (e) { setRun({ error: e as ApiError, busy: false }); }
+    try {
+      const out = await api.execute({ plan: { ...plan, session_id: sessionId }, url: graph.url, ...(trace ? { trace } : {}) });
+      setRun({ rows: (Array.isArray(out.rows) ? out.rows : out.rows && typeof out.rows === "object" ? [out.rows as Record<string, unknown>] : []) as Record<string, unknown>[], ms: Math.round(performance.now() - t0), busy: false, trace: out.trace });
+      if (out.trace) qc.invalidateQueries({ queryKey: ["traces"] });
+    } catch (e) { setRun({ error: e as ApiError, busy: false }); }
   };
+  const runTraced = () => { const host = (() => { try { return new URL(graph?.url ?? "").hostname.replace(/^www\./, ""); } catch { return "run"; } })(); const name = window.prompt("save the run as a trace named", `${host}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}`); if (name) { setRowsOpen(true); runServer(name); } };
+
   const saved = useQuery({ queryKey: ["saved-graphs"], queryFn: () => { try { return JSON.parse(localStorage.getItem("wc.graphs") ?? "[]") as { name: string; state: State; at: number }[]; } catch { return []; } }, staleTime: 0 });
   const save = () => { if (!state) return; const name = window.prompt("save as", views.data?.title ?? state.graph.url); if (!name) return; const list = (saved.data ?? []).filter((x) => x.name !== name); list.unshift({ name, state, at: Date.now() }); localStorage.setItem("wc.graphs", JSON.stringify(list.slice(0, 50))); qc.invalidateQueries({ queryKey: ["saved-graphs"] }); };
   const load = (name: string) => { const x = (saved.data ?? []).find((s) => s.name === name); if (x) reset(x.state); };
@@ -540,6 +546,8 @@ export function Author() {
               <button type="button" className={cn("font-medium", tab !== "server" ? "text-ink" : "text-muted hover:text-ink")} onClick={() => { setTab("rows"); setRowsOpen(true); }}>Rows <span className="text-muted">{shown.rows.length}</span></button>
               <button type="button" className={cn("inline-flex items-center gap-1 font-medium", tab === "server" ? "text-ink" : "text-muted hover:text-ink")} onClick={() => { setTab("server"); setRowsOpen(true); }}>Run <span className="text-muted">{run.rows?.length ?? ""}</span></button>
               <button type="button" disabled={!outs.length || run.busy || missing.length > 0} onClick={() => { setRowsOpen(true); runServer(); }} className="rounded bg-accent px-1 text-[10px] leading-4 text-white disabled:opacity-40" title={missing.length ? `${missing.length} op(s) still need an argument` : "run the plan on the server"}>{run.busy ? "…" : "▶"}</button>
+              <button type="button" disabled={!outs.length || run.busy || missing.length > 0} onClick={runTraced} className="rounded border border-line px-1 text-[10px] leading-4 text-muted hover:text-ink disabled:opacity-40" title="run and save it as a trace (every request, action and page -- replayable in Traces)">⏺ trace</button>
+              {run.trace && <a href={`/traces/${encodeURIComponent(run.trace)}`} className="text-[10px] text-accent underline" title="open the saved trace">trace: {run.trace}</a>}
               <span className="min-w-0 flex-1 truncate text-[10px] text-muted">{tab === "server" ? (run.error ? `${run.error.detail?.code ?? run.error.status}: ${run.error.detail?.hint ?? run.error.message}` : run.rows ? `${run.rows.length} rows in ${run.ms} ms` : "the plan, run through your session") : shown.nested ? "rows whose page is open here, with the parent row's columns" : "preview on this page"}</span>
               {tab === "server" && run.rows && <label className="flex items-center gap-1 text-[10px] text-muted"><input type="checkbox" checked={asJson} onChange={(e) => setAsJson(e.target.checked)} />JSON</label>}
               <button type="button" className="text-muted hover:text-ink" onClick={() => setRowsOpen(!rowsOpen)} title={rowsOpen ? "hide the rows" : "show the rows"}>{rowsOpen ? "▾" : "▴"}</button>

@@ -65,7 +65,8 @@ export const api = {
   fields: (url: string, record: string) => api.tool<IndexedElement[]>("fields", { url, record }),
   extract: (url: string, result: string, fields: Record<string, string>, limit = 200) => api.tool<Record<string, unknown>[]>("extract", { url, result, fields, limit }),
   plan: (body: Record<string, unknown>) => call<{ valid: boolean; describe: string; plan: unknown; blob: string; wireframe?: string; explain?: string; rows?: unknown }>("/plan", { method: "POST", body: JSON.stringify(body) }),
-  execute: (body: Record<string, unknown>) => call<{ rows: unknown }>("/execute", { method: "POST", body: JSON.stringify(body) }),
+  /** run a plan; `trace: "<name>"` also saves the run as a trace (listed under /traces) */
+  execute: (body: Record<string, unknown>) => call<{ rows: unknown; trace?: string }>("/execute", { method: "POST", body: JSON.stringify(body) }),
   /** the doc handle a plan produced (a live page held by the session) */
   executeDoc: async (body: Record<string, unknown>): Promise<DocHandle> => { const out = await api.execute(body); const h = (out.rows as { __doc__?: DocHandle })?.__doc__; if (!h) throw new ApiError(500, { error: { message: "the plan did not yield a document" } }); return h; },
   sessionOpen: (opts: { record?: boolean; ttl?: number } = {}) => call<{ id: string; status: string }>("/sessions", { method: "POST", body: JSON.stringify(opts) }),
