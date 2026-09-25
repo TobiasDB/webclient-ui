@@ -29,6 +29,8 @@ export type GNode = {
   output?: string;
   /** …or its name is read off the enclosing element: these steps (relative to it) give the name */
   alias?: Step[];
+  /** a nested output (a page's dict, a collection's rows / merged dict): merge its keys into the parent row */
+  flatten?: boolean;
 };
 export type Graph = { url: string; root: string; nodes: Record<string, GNode> };
 export type OpReturns = Record<string, string>;  // op name -> "Document" | "Collection" | "Value" | "Reference" | "Value|Reference"
@@ -83,7 +85,7 @@ const get = (name: string): Step => ({ kind: "get", name });
 const callStep = (op: Op): Step => ({ kind: "call", name: op.name, args: op.args, kwargs: op.kwargs });
 const stepsOf = (n: GNode): Step[] => [...(n.op ? [get(n.op.name), callStep(n.op)] : []), ...(n.mods ?? []).flatMap((m) => [get(m.name), callStep(m)])];
 const bearing = (g: Graph, id: string): boolean => { const n = g.nodes[id]!; return !!(n.output || n.alias) || children(g, id).some((c) => bearing(g, c.id)); };
-type Col = { name: string; alias?: Step[]; steps: Step[] };
+type Col = { name: string; alias?: Step[]; steps: Step[]; flatten?: boolean };
 const autoName = (n: GNode) => { const a = String(v(n.op?.args[0]) ?? n.op?.name ?? "field"); const leaf = a.split(/\s*[> ~+]\s*/).filter(Boolean).pop() ?? a; const m = /[.#]([a-zA-Z0-9_-]+)/.exec(leaf); return (m?.[1] ?? leaf.replace(/[^a-z0-9]+/gi, "_")).toLowerCase().replace(/^_+|_+$/g, "") || "field"; };
 
 /** The columns a node's output-bearing children make (relative to the node's value). */
@@ -100,7 +102,7 @@ function colsOf(g: Graph, id: string): Col[] {
     // an element: its outputs are the parent's columns (the select is cheap to repeat)
     if (!c.output && !c.alias && c.type === "Element") { for (const x of inner) out.push({ ...x, steps: [...own, ...x.steps] }); continue; }
     // a page crossed (resolve) or a collection: ONE nested column (a dict / a list of rows), so the page is fetched once
-    out.push({ name: c.output ?? (c.type === "Document" ? "detail" : autoName(c)), alias: c.alias, steps: [...own, ...wrap(c.type, inner)] });
+    out.push({ name: c.output ?? (c.type === "Document" ? "detail" : autoName(c)), alias: c.alias, flatten: c.flatten, steps: [...own, ...wrap(c.type, inner)] });
   }
   return out;
 }
@@ -114,7 +116,8 @@ function wrap(type: NodeType, cols: Col[]): Step[] {
   // one dict when, over a collection, every column is aliased (a named one spent as a name counts)
   const spent = new Set(cols.map((c) => (c.alias && c.alias.length === 2 && c.alias[0]!.name === "field" ? String(c.alias[1]!.args?.[0]?.value ?? "") : "")).filter(Boolean));
   const term = type === "Collection" && args.length && Object.keys(kwargs).every((k) => spent.has(k)) ? "merge" : "project";
-  return [get("extract"), { kind: "call", name: "extract", args, kwargs }, get(term), { kind: "call", name: term, args: [], kwargs: {} }];
+  const flat = term === "project" ? cols.filter((c) => c.flatten && !c.alias).map((c) => c.name) : [];
+  return [get("extract"), { kind: "call", name: "extract", args, kwargs }, get(term), { kind: "call", name: term, args: [], kwargs: flat.length ? { flatten: { value: flat } } : {} }];
 }
 
 /** The plan the graph means. `upTo` compiles only the path to that node (a preview of one object). */
@@ -144,7 +147,11 @@ export function decompile(p: Plan, url: string, returns: OpReturns = {}): Graph 
     const cs = calls({ root: "Document", steps }); let cur = from;
     for (let i = 0; i < cs.length; i++) {
       const c = cs[i]!; const node = g.nodes[cur]!;
-      if (c.name === "project" || c.name === "merge") continue;
+      if (c.name === "project" || c.name === "merge") {
+        const fl = c.kwargs.flatten?.value; const names = Array.isArray(fl) ? fl.map(String) : [];
+        if (names.length) for (const id of subtree(g, cur)) { const nn = g.nodes[id]!; if (nn.output && names.includes(nn.output)) g = updateNode(g, id, { flatten: true }); }
+        continue;
+      }
       if (c.name === "alias") continue;
       if (MODS[c.name]?.includes(node.type)) { g = setMod(g, cur, { name: c.name, args: c.args, kwargs: c.kwargs }); continue; }
       if (c.name === "extract") {
@@ -156,6 +163,8 @@ export function decompile(p: Plan, url: string, returns: OpReturns = {}): Graph 
           if (al) { const ap = al.args[0]; walk(a.plan.steps.slice(0, al.index), cur, { alias: ap?.plan?.steps, name: typeof ap?.value === "string" ? ap.value : undefined }); }
           else walk(a.plan.steps, cur, { name: k });
         }
+        const pj = cs[i + 1]; const fl = pj?.name === "project" ? pj.kwargs.flatten?.value : undefined;  // project(flatten=[…]) after it
+        if (Array.isArray(fl)) for (const id of subtree(g, cur)) { const nn = g.nodes[id]!; if (nn.output && fl.map(String).includes(nn.output) && nn.parent !== null) g = updateNode(g, id, { flatten: true }); }
         return;
       }
       const r = addNode(g, cur, { name: c.name, args: c.args, kwargs: c.kwargs }, returns); g = r.graph; cur = r.id;

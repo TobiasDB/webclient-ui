@@ -402,13 +402,30 @@ export function Author() {
   const err = openError ?? (views.error as ApiError | null);
   const card = views.data?.card;
   const liveSet = React.useMemo(() => new Set(Object.entries(pages).filter(([, p]) => p.live).map(([k]) => k)), [pages]);
-  const samples = React.useMemo(() => { const out: Record<string, string> = {}; if (!graph) return out; for (const [id, v] of Object.entries(values)) { const n = graph.nodes[id]!; out[id] = n.op?.name === "resolve" ? (pages[id]?.url ? new URL(pages[id]!.url).pathname.slice(0, 22) : "") : n.type === "Collection" ? sample(v) : ""; /* counts where they mean something; the rest reads in the rows */ } return out; }, [values, graph, pages]);
+  const samples = React.useMemo(() => { const out: Record<string, string> = {}; if (!graph) return out; for (const [id, v] of Object.entries(values)) { const n = graph.nodes[id]!; out[id] = n.op?.name === "resolve" ? (pages[id]?.url ? new URL(pages[id]!.url).pathname.slice(0, 22) : "")
+      : n.op?.name === "select_all" ? `×${elementsOf(v).length}`
+      : n.op?.name === "select" && graphLib.eachOf(graph, id) && Array.isArray(v) ? `${(v as unknown[]).filter((x) => x != null && !(Array.isArray(x) && !x.length)).length}/${(v as unknown[]).length}`
+      : ""; /* counts where they mean something; the rest reads in the rows */ } return out; }, [values, graph, pages]);
   const stripScripts = (views.data?.tiers ?? []).slice(-1)[0] === "browser";
   const nodeEl = node ? elementsOf(values[node.id])[0] : undefined;
 
   // the page gets the height the window has (the app header, the toolbar and the action bar aside)
   const [vh, setVh] = React.useState(() => (typeof window !== "undefined" ? window.innerHeight : 900));
   React.useEffect(() => { const h = () => setVh(window.innerHeight); window.addEventListener("resize", h); return () => window.removeEventListener("resize", h); }, []);
+  /** clicking an argument in the plan: select its line and open the selector panel on the element
+   * its selector matches now (the editor starts from the current selector) */
+  const editArg = (id: string) => {
+    if (!graph) return; const n = graph.nodes[id]; if (!n?.op) return;
+    select(id, true);
+    const val = String(n.op.args[0]?.value ?? ""); const pg0 = pageOf(graph, id); const d = pg0 ? docs[pg0.id] : null;
+    if (!val || !d || !SELECTOR_OPS.includes(n.op.name)) return;
+    const par = n.parent ? graph.nodes[n.parent] : undefined; const bases: ParentNode[] = par && (par.type === "Collection" || par.type === "Element") ? elementsOf(values[par.id]) : [d];
+    let first: Element | null = null; for (const b0 of bases) { try { first = b0.querySelector(val); } catch { first = null; } if (first) break; }
+    if (first) setPickEl(first);
+  };
+  const [manual, setManual] = React.useState<{ a: string; b: string }>({ a: "", b: "" });
+  React.useEffect(() => { setManual({ a: String(node?.op?.args[0]?.value ?? ""), b: String(node?.op?.args[1]?.value ?? "") }); }, [node?.id, editing]); // eslint-disable-line react-hooks/exhaustive-deps
+  const applyManual = () => { if (!node?.op) return; const args = node.op.name === "attr" ? (manual.b ? [{ value: manual.a }, { value: manual.b }] : [{ value: manual.a }]) : node.op.args.map((x, i) => (i === 0 ? { value: manual.a } : x)); setGraph((g) => updateNode(g, node.id, { op: { ...node.op!, args } })); setEditing(false); setPickEl(null); setBuilding(null); };
   const cancelPick = () => { setPickEl(null); setBuilding(null); if (node && needsArg(node) && node.parent) { const parent = node.parent; setGraph((g) => graphLib.removeNode(g, node.id)); select(parent); } else setEditing(false); };
   /** the outputs worth adding off the focused object (the "+ output" menu) */
   const fieldMenu = React.useMemo(() => {
@@ -422,7 +439,7 @@ export function Author() {
   const remembered = (k: string, d: boolean) => { try { const v = localStorage.getItem(k); return v === null ? d : v === "1"; } catch { return d; } };
   const [planOpen, setPlanOpenRaw] = React.useState(() => remembered("wc.author.plan", true));
   const setPlanOpen = (v: boolean) => { setPlanOpenRaw(v); try { localStorage.setItem("wc.author.plan", v ? "1" : "0"); } catch { /* fine */ } };
-  const sideShown = selfMode;  // the picking tools, only while an op waits for its selector
+  const sideShown = selfMode || (attrMode && editing);  // the picking tools: an op waiting for / re-editing its argument
   const [rowsOpen, setRowsOpenRaw] = React.useState(() => remembered("wc.author.rows", true));
   const setRowsOpen = (v: boolean) => { setRowsOpenRaw(v); try { localStorage.setItem("wc.author.rows", v ? "1" : "0"); } catch { /* fine */ } };
   const rowsH = 210;
@@ -455,7 +472,7 @@ export function Author() {
         {!planOpen ? <button type="button" onClick={() => setPlanOpen(true)} className="flex min-h-0 items-start justify-center rounded border border-line pt-2 text-[10px] text-muted hover:bg-surface-2" title="show the plan"><span style={{ writingMode: "vertical-rl" }}>plan ›</span></button> :
         <section className="flex min-h-0 flex-col rounded border border-line">
           <div className="flex items-center border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Plan<span className="flex-1" /><button type="button" className="font-normal hover:text-ink" onClick={() => setPlanOpen(false)} title="hide the plan">‹</button></div>
-          <GraphView graph={graph} selected={node?.id ?? graph.root} onSelect={(id) => select(id)} onChange={(g) => setGraph(() => g)} samples={samples} live={liveSet} editing={selfMode} onEditArg={(id) => { if (id !== selected) setSelectedRaw(id); setEditing(true); }} className="min-h-0 flex-1 overflow-auto px-0.5 py-0.5" />
+          <GraphView graph={graph} selected={node?.id ?? graph.root} onSelect={(id) => select(id)} onChange={(g) => setGraph(() => g)} samples={samples} live={liveSet} editing={selfMode} onEditArg={editArg} className="min-h-0 flex-1 overflow-auto px-0.5 py-0.5" />
           {missing.length > 0 && <div className="border-t border-line px-1.5 py-0.5 text-[10px] text-bad">{missing.length} op(s) still need an argument</div>}
         </section>}
 
@@ -486,7 +503,7 @@ export function Author() {
                   </div>}
                 </div>}
                 <span className="flex-1" />
-                {node?.op && node.id !== pageNode?.id && <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={isOutput} onChange={(e) => setGraph((g) => updateNode(g, node.id, e.target.checked ? { output: outputName(node) } : { output: undefined, alias: undefined }))} />output</label>}
+                {node?.op && !(node.op.name === "resolve" && node.parent === graph.root) && <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={isOutput} onChange={(e) => setGraph((g) => updateNode(g, node.id, e.target.checked ? { output: outputName(node) } : { output: undefined, alias: undefined }))} />output</label>}
                 {isOutput && node && <>
                   <select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={namedBy} onChange={(e) => setNaming(e.target.value, e.target.value === "column" ? (siblingCols[0]?.output ?? "") : e.target.value === "page" ? "th" : (node.output ?? ""))} title="how the column is named">
                     <option value="name">named</option>{siblingCols.length > 0 && <option value="column">named by a column</option>}<option value="page">named from the page</option>
@@ -495,6 +512,7 @@ export function Author() {
                   {namedBy === "column" && <select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={graphLib.aliasField(node.alias) ?? ""} onChange={(e) => setNaming("column", e.target.value)}>{siblingCols.map((o) => <option key={o.id} value={o.output}>{o.output}</option>)}</select>}
                   {namedBy === "page" && <input className="h-6 w-24 rounded border border-line bg-surface px-1 font-mono text-[10px]" defaultValue={String(node.alias?.[1]?.args?.[0]?.value ?? "")} onBlur={(e) => e.target.value.trim() && setNaming("page", e.target.value.trim())} title="a selector (relative to the record) whose text names the column" />}
                 </>}
+                {isOutput && node && (node.type === "Document" || node.type === "Collection") && !node.alias && <label className="flex items-center gap-1 text-[11px]" title="merge this nested output's keys into the parent row (project(flatten=[…])): detail.description, detail.info…"><input type="checkbox" checked={!!node.flatten} onChange={(e) => setGraph((g) => updateNode(g, node.id, { flatten: e.target.checked || undefined }))} />flatten</label>}
                 {node?.type === "Document" && node.op?.name === "resolve" && <Pager n={node} onChange={(mod) => setGraph((g) => setMod(g, node.id, mod, "paginate"))} />}
               </>}
             </div>
@@ -535,15 +553,20 @@ export function Author() {
         </div>
 
         {/* while an op waits for its selector: its suggestions / the selector editor, beside the page */}
-        {selfMode && node?.op && (
+        {sideShown && node?.op && (
         <aside className="flex min-h-0 min-w-0 flex-col rounded border border-warn/50">
           {pick && doc ? (
             <div className="flex min-h-0 flex-col overflow-auto p-1.5">
               <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Selector for .{node.op.name}()</div>
-              <ElementInspector pick={pick} scopeEl={rootFor(pickEl)} scopeLabel={rootLabel} op={node.op.name} groups={pickGroups} onSelector={(sel) => setBuilding(sel || null)} onAdd={onApply} onCancel={() => { setPickEl(null); setBuilding(null); }} />
+              <ElementInspector pick={pick} scopeEl={rootFor(pickEl)} scopeLabel={rootLabel} op={node.op.name} initial={editing && !needsArg(node) ? String(node.op.args[0]?.value ?? "") : undefined} groups={pickGroups} onSelector={(sel) => setBuilding(sel || null)} onAdd={onApply} onCancel={() => { setPickEl(null); setBuilding(null); }} />
             </div>
           ) : (
             <div className="flex min-h-0 flex-col overflow-auto p-1.5">
+              <form className="mb-1 flex items-center gap-1" onSubmit={(e) => { e.preventDefault(); applyManual(); }}>
+                <input className="h-5 min-w-0 flex-1 rounded border border-line bg-surface px-1 font-mono text-[10px]" value={manual.a} placeholder={node.op.name === "attr" ? "attribute (text, href, data-id…)" : "a selector"} onChange={(e) => { setManual((m) => ({ ...m, a: e.target.value })); if (node.op?.name !== "attr") setBuilding(e.target.value || null); }} />
+                {node.op.name === "attr" && <input className="h-5 w-24 rounded border border-line bg-surface px-1 font-mono text-[10px]" value={manual.b} placeholder="pattern (regex)" onChange={(e) => setManual((m) => ({ ...m, b: e.target.value }))} />}
+                <button type="submit" className="rounded bg-accent px-1.5 text-[10px] leading-5 text-white disabled:opacity-40" disabled={!manual.a.trim()}>Apply</button>
+              </form>
               <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">{node.op.name === "attr" ? "What to read" : `Suggestions for .${node.op.name}()`}</div>
               <div className="mb-1 text-[10px] text-muted">{node.op.name === "attr" ? "every attribute of the elements, as a number where it holds one" : "or click the page"}</div>
               <div className="flex flex-col">{suggestions.map((sg) => <button key={sg.value + (sg.number ? "#n" : "") + (sg.pattern ?? "")} type="button" className="flex items-center gap-1 rounded px-1 py-px text-left hover:bg-surface-2" onClick={() => applySuggestion(sg.value, sg)} onMouseEnter={() => node.op?.name !== "attr" && setBuilding(sg.value)} onMouseLeave={() => setBuilding(null)}><code className="shrink-0 font-mono text-[10.5px] text-accent">{sg.value}</code>{sg.count != null && <span className="rounded bg-surface-2 px-0.5 text-[9.5px]">×{sg.count}</span>}<span className="text-[9.5px] text-muted">{sg.label}</span><span className="min-w-0 flex-1 truncate text-[10px] text-muted">{sg.sample}</span></button>)}{!suggestions.length && <span className="text-muted">no suggestions here</span>}</div>

@@ -17,6 +17,8 @@ export type ElementInspectorProps = {
   scopeLabel: string;
   /** the op being added: `select_all` shows groups first, `select` unique forms first */
   op: string;
+  /** re-editing: the selector the op has now (the editor starts from it) */
+  initial?: string;
   groups?: { name: string; colour: string; count: number }[];
   /** the selector under construction (the page outlines every match) */
   onSelector?: (selector: string) => void;
@@ -33,7 +35,7 @@ const esc = (c: string) => (typeof CSS !== "undefined" && CSS.escape ? CSS.escap
  * toggles; ↑ re-targets a parent), the candidates -- one per group it belongs to, or its unique
  * forms -- the selector text with its live count (every match outlined on the page), optional
  * reads to add with it, and ONE action: Add. */
-export function ElementInspector({ pick, scopeEl, scopeLabel, op, groups = [], onSelector, onAdd, onCancel, className }: ElementInspectorProps) {
+export function ElementInspector({ pick, scopeEl, scopeLabel, op, initial, groups = [], onSelector, onAdd, onCancel, className }: ElementInspectorProps) {
   const [target, setTarget] = React.useState<Element | null>(pick.el ?? null);
   React.useEffect(() => { setTarget(pick.el ?? null); }, [pick.el]);
   const el = target;
@@ -44,8 +46,8 @@ export function ElementInspector({ pick, scopeEl, scopeLabel, op, groups = [], o
   const many = op === "select_all";
   const cands = React.useMemo<Candidate[]>(() => { if (!el || !root) return []; return many ? groupCandidates(el, root, prefer) : uniqueCandidates(el, root); }, [el, root, prefer, many]);
   const [selector, setSelector] = React.useState("");
-  React.useEffect(() => { setSelector(cands[0]?.selector ?? pick.selector); setTicks({}); setNames({}); setFrom({}); setToggled({}); // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [el, op]);
+  React.useEffect(() => { setSelector(initial || cands[0]?.selector || pick.selector); setTicks({}); setNames({}); setFrom({}); setToggled({}); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [el, op, initial]);
   React.useEffect(() => { onSelector?.(selector); }, [selector, onSelector]);
   const matches = React.useMemo<Element[]>(() => { if (!root || !selector) return []; try { return [...root.querySelectorAll(selector)]; } catch { return []; } }, [root, selector]);
   const bad = React.useMemo(() => { if (!root || !selector) return false; try { root.querySelectorAll(selector); return false; } catch { return true; } }, [root, selector]);
@@ -106,7 +108,7 @@ export function ElementInspector({ pick, scopeEl, scopeLabel, op, groups = [], o
         {shared.map((f) => <Row key={keyOf(f)} k={keyOf(f)} label={<>{f.selector} <span className="text-muted">· {f.attr}{f.number ? " → n" : f.date ? " → date" : ""}</span></>} value={f.sample} hint={f.name} />)}
       </div>}
       <div className="flex items-center gap-1 border-t border-line pt-1">
-        <button type="button" data-act="" disabled={bad || !selector} onClick={() => onAdd(selector, reads())} className="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-white hover:brightness-110 disabled:opacity-40">Add .{op}("{selector.length > 28 ? selector.slice(0, 28) + "…" : selector}"){nReads ? ` + ${nReads}` : ""}</button>
+        <button type="button" data-act="" disabled={bad || !selector} onClick={() => onAdd(selector, reads())} className="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-white hover:brightness-110 disabled:opacity-40">{initial ? "Update" : "Add"} .{op}("{selector.length > 28 ? selector.slice(0, 28) + "…" : selector}"){nReads ? ` + ${nReads}` : ""}</button>
         <button type="button" onClick={onCancel} className="rounded px-1.5 py-0.5 text-[11px] text-muted hover:text-ink">cancel</button>
       </div>
     </section>

@@ -29,17 +29,17 @@ export function DataFrame({ rows, columns, colours, className, emptyHint, emptyA
   if (!rows.length) return <EmptyState title="0 rows" hint={emptyHint ?? "The record selector matched nothing on this page."} action={emptyAction} />;
   return (
     <div className={cn("overflow-auto", className)}>
-      <table className={cn("w-full border-collapse", dense ? "text-[10.5px] leading-4" : "text-[12px]")}>
+      <table className={cn("w-full border-collapse", dense ? "text-[10px] leading-[14px]" : "text-[12px]")}>
         <thead className="sticky top-0 z-[1] bg-surface text-left shadow-[0_1px_0_var(--color-line)]">
           <tr><th className="w-8 px-2 py-1 text-[11px] text-muted">#</th>
-            {cols.map((c, i) => { const col = colour(c, i); return <th key={c} className={cn("px-2 py-1 text-[11px] font-semibold uppercase tracking-wide", !col && "text-muted", dense && "px-1.5 py-0.5 text-[10px]")} style={col ? { color: col, boxShadow: `inset 0 -2px 0 ${col}`, background: `${col}14` } : undefined}>{c}</th>; })}
+            {cols.map((c, i) => { const col = colour(c, i); return <th key={c} className={cn("px-2 py-1 text-[11px] font-semibold uppercase tracking-wide", !col && "text-muted", dense && "px-1 py-px text-[9.5px]")} style={col ? { color: col, boxShadow: `inset 0 -2px 0 ${col}`, background: `${col}14` } : undefined}>{c}</th>; })}
           </tr>
         </thead>
         <tbody>
           {rows.slice(0, max).map((r, i) => (
             <tr key={i} onClick={onRow ? () => onRow(i) : undefined} className={cn("border-t border-line/70 align-top", onRow && "cursor-pointer hover:bg-surface-2", selected === i && "bg-accent-soft")}>
-              <td className={cn("px-2 py-1 font-mono text-[10px] text-muted", dense && "px-1.5 py-0.5")}>{i + 1}</td>
-              {cols.map((c, ci) => { const col = colour(c, ci); return <td key={c} className={cn("max-w-[360px] px-2 py-1", dense && "px-1.5 py-0.5")} style={col ? { background: `${col}0d`, boxShadow: `inset 1px 0 0 ${col}33` } : undefined}><Cell value={r[c]} /></td>; })}
+              <td className={cn("px-2 py-1 font-mono text-[10px] text-muted", dense && "px-1 py-px text-[9px]")}>{i + 1}</td>
+              {cols.map((c, ci) => { const col = colour(c, ci); return <td key={c} className={cn("max-w-[360px] px-2 py-1", dense && "px-1 py-px")} style={col ? { background: `${col}0d`, boxShadow: `inset 1px 0 0 ${col}33` } : undefined}><Cell value={r[c]} /></td>; })}
             </tr>
           ))}
         </tbody>

@@ -73,4 +73,11 @@ describe("graph → plan", () => {
     expect(d).toContain('info=Document.select_all("tr").extract(Document.select("td").attr("text").alias(Document.field("name")), name=Document.select("th").attr("text")).merge()');
     expect(describePlan(compile(decompile(compile(g), "https://x/")))).toBe(d);
   });
+  it("a nested output can be flattened into its parent row: project(flatten=[…])", () => {
+    let g = books(); const detail = Object.values(g.nodes).find((n) => n.output === "detail")!;
+    g = updateNode(g, detail.id, { flatten: true });
+    const d = describePlan(compile(g));
+    expect(d.endsWith('.project(flatten=["detail"])')).toBe(true);
+    expect(describePlan(compile(decompile(compile(g), "https://books.toscrape.com/")))).toBe(d);
+  });
 });
