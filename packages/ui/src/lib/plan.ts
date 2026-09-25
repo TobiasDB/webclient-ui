@@ -116,6 +116,30 @@ export function toNumber(v: unknown, dflt: unknown = null): unknown {
   for (const w of t.match(/[A-Za-z]+/g) ?? []) { const i = WORDS.indexOf(w.toLowerCase()); if (i >= 0) return i; }
   return dflt;
 }
+const MONTHS = "jan feb mar apr may jun jul aug sep oct nov dec".split(" ");
+const pad = (n: number) => String(n).padStart(2, "0");
+/** Field.date() / .datetime() (the same readings as the package, for the preview): ISO, written
+ * (18 Sep 2026, Sep 18, 2026), numeric (dayfirst), relative (today, 3 days ago); ISO out. */
+export function toWhen(v: unknown, opts: { dayfirst?: boolean; time?: boolean } = {}, dflt: unknown = null): unknown {
+  const t = String(v ?? "").replace(/\s+/g, " ").trim(); if (!t) return dflt;
+  const out = (y: number, m: number, d: number, h = 0, mi = 0, s = 0, tz = "") => { if (m < 1 || m > 12 || d < 1 || d > 31) return dflt; return opts.time ? `${y}-${pad(m)}-${pad(d)}T${pad(h)}:${pad(mi)}:${pad(s)}${tz}` : `${y}-${pad(m)}-${pad(d)}`; };
+  const clock = /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([ap]\.?m\.?)?/i.exec(t);
+  const hms = (): [number, number, number] => { if (!clock) return [0, 0, 0]; let h = Number(clock[1]); const ap = (clock[4] ?? "").toLowerCase().replace(/\./g, ""); if (ap === "pm" && h < 12) h += 12; if (ap === "am" && h === 12) h = 0; return [h, Number(clock[2]), Number(clock[3] ?? 0)]; };
+  let m = /(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?/.exec(t);
+  if (m) return out(+m[1]!, +m[2]!, +m[3]!, +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0), m[7] ? (m[7] === "Z" ? "+00:00" : m[7]) : "");
+  const mon = "(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?";
+  m = new RegExp("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+" + mon + ",?\\s+(\\d{4})", "i").exec(t); if (m) return out(+m[3]!, MONTHS.indexOf(m[2]!.toLowerCase().slice(0, 3)) + 1, +m[1]!, ...hms());
+  m = new RegExp(mon + "\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})", "i").exec(t); if (m) return out(+m[3]!, MONTHS.indexOf(m[1]!.toLowerCase().slice(0, 3)) + 1, +m[2]!, ...hms());
+  m = /\b(\d{4})[/.](\d{1,2})[/.](\d{1,2})\b/.exec(t); if (m) return out(+m[1]!, +m[2]!, +m[3]!, ...hms());
+  m = /\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\b/.exec(t); if (m) { const a = +m[1]!, b = +m[2]!; let y = +m[3]!; if (y < 100) y += 2000; const [d, mo] = opts.dayfirst || a > 12 ? [a, b] : [b, a]; return out(y, mo, d, ...hms()); }
+  const now = new Date(); const low = t.toLowerCase();
+  for (const [w, dd] of [["today", 0], ["yesterday", -1], ["tomorrow", 1]] as const) if (new RegExp(`\\b${w}\\b`).test(low)) { const x = new Date(now.getTime() + dd * 86400000); return out(x.getFullYear(), x.getMonth() + 1, x.getDate(), ...hms()); }
+  m = /\b(\d+|an?|one)\s+(second|sec|minute|min|hour|hr|day|week|month|year)s?\s+ago\b/.exec(low);
+  if (m) { const u: Record<string, number> = { second: 1, sec: 1, minute: 60, min: 60, hour: 3600, hr: 3600, day: 86400, week: 604800, month: 2629800, year: 31557600 }; const n = /^\d+$/.test(m[1]!) ? +m[1]! : 1; const x = new Date(now.getTime() - n * u[m[2]!]! * 1000); return out(x.getFullYear(), x.getMonth() + 1, x.getDate(), x.getHours(), x.getMinutes(), x.getSeconds()); }
+  return dflt;
+}
+/** Does a read look like a date (so the suggestions offer it as one)? */
+export const looksLikeDate = (v: string) => toWhen(v) !== null && !/^\d+(\.\d+)?$/.test(v.trim());
 /** Field.map(mapping): the value looked up (case-insensitive for text). */
 export function mapValue(v: unknown, mapping: Record<string, unknown>, dflt: unknown = null): unknown {
   const k = String(v ?? ""); if (k in mapping) return mapping[k];
@@ -165,6 +189,7 @@ export function evalLocal(p: Plan, el: Element, followed: (href: string, sub: Pl
     }
     else if (c.name === "project") { /* rows already dicts */ }
     else if (c.name === "alias") { /* the column's name rides on the chain; extract reads it */ }
+    else if (c.name === "date" || c.name === "datetime") { const o = { dayfirst: !!v(c.kwargs.dayfirst), time: c.name === "datetime" }; cur = Array.isArray(cur) ? (cur as unknown[]).map((x) => toWhen(x, o)) : toWhen(cur, o); }
     else if (c.name === "number") { cur = Array.isArray(cur) ? (cur as unknown[]).map((x) => toNumber(x, v(c.args[0]) ?? null)) : toNumber(cur, v(c.args[0]) ?? null); }
     else if (c.name === "map") { const mp = (v(c.args[0]) ?? {}) as Record<string, unknown>; cur = Array.isArray(cur) ? (cur as unknown[]).map((x) => mapValue(x, mp, v(c.args[1]) ?? null)) : mapValue(cur, mp, v(c.args[1]) ?? null); }
     else if (c.name === "merge") { cur = Array.isArray(cur) ? Object.assign({}, ...(cur as unknown[]).filter((r) => r && typeof r === "object" && !(isEl(r)))) : cur; }

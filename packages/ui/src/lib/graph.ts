@@ -12,7 +12,7 @@
  * its column. A plan DECOMPILES back into a graph, so a saved / imported / traced plan opens
  * in the builder. */
 
-import { calls, mapValue, pyRegex, toNumber, type Arg, type Plan, type Step } from "./plan";
+import { calls, mapValue, pyRegex, toNumber, toWhen, type Arg, type Plan, type Step } from "./plan";
 
 export type NodeType = "Reference" | "Document" | "Element" | "Collection" | "Value";
 export type Op = { name: string; args: Arg[]; kwargs: Record<string, Arg> };
@@ -57,7 +57,7 @@ export function typeAfter(parent: NodeType, op: Op, returns: OpReturns = {}): No
   if (n === "select_all" || n === "links" || n === "paginate") return "Collection";
   if (n === "attr") return RESOLVABLE.has(String(v(op.args[0]))) ? "Reference" : "Value";
   if (n === "resolve") return "Document";
-  if (n === "number" || n === "map") return "Value";
+  if (n === "number" || n === "map" || n === "date" || n === "datetime") return "Value";
   if (["click", "write", "scroll", "wait_for", "goto", "reload"].includes(n)) return parent === "Element" ? "Element" : "Document";
   const r = returns[n] ?? "Value";
   if (r === "Document") return parent === "Element" ? "Element" : "Document";
@@ -183,6 +183,7 @@ function applyOp(cur: unknown, op: Op): unknown {
   if (Array.isArray(cur) && !["limit", "count"].includes(op.name)) return cur.map((x) => applyOp(x, op));
   const a0 = v(op.args[0]);
   if (op.name === "number") return toNumber(cur, v(op.args[0]) ?? null);
+  if (op.name === "date" || op.name === "datetime") return toWhen(cur, { dayfirst: !!v(op.kwargs.dayfirst), time: op.name === "datetime" });
   if (op.name === "map") return mapValue(cur, (a0 ?? {}) as Record<string, unknown>, v(op.args[1]) ?? null);
   if (cur == null) return null;
   if (op.name === "limit") return Array.isArray(cur) ? cur.slice(0, Number(a0)) : cur;

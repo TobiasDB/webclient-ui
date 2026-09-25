@@ -50,7 +50,7 @@ function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, samp
   const pager = n.mods?.find((m) => m.name === "paginate"); const limit = n.mods?.find((m) => m.name === "limit");
   const kw = n.op ? Object.entries(n.op.kwargs) : [];
   return (
-    <div className={cn("group flex cursor-pointer items-center gap-x-1 overflow-hidden whitespace-nowrap rounded px-1 py-px", selected ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-surface-2", missing && "ring-1 ring-bad/50")} onClick={(e) => { stop(e); onSelect(); }} style={colour ? { boxShadow: `inset 3px 0 0 ${colour}` } : undefined}>
+    <div className={cn("group flex cursor-pointer items-center gap-x-1 overflow-hidden whitespace-nowrap rounded px-1 py-px", selected ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-surface-2", missing && "ring-1 ring-bad/50")} onClick={(e) => { stop(e); onSelect(); }} style={colour ? { boxShadow: `inset 0 0 0 1px ${colour}`, background: `${colour}12` } : undefined} title={n.output ? `output: ${n.output}` : n.alias ? "output (named from the page / a column)" : undefined}>
       {!n.op ? <span className="min-w-0 truncate">Reference(<Str v={graph.url} onChange={onChange ? (v) => onChange({ ...graph, url: v }) : undefined} />)</span> : <span className="min-w-0 truncate">
         .{n.op.name}(
         {n.op.args.map((a, i) => <React.Fragment key={i}>{i > 0 && ", "}{a.plan ? "…" : typeof a.value === "string" ? <Str v={a.value} placeholder={missing && i === 0 ? "click the page" : i === 1 && n.op!.name === "attr" ? "pattern" : ""} bad={missing && i === 0} editing={editing && i === 0} onFocus={() => onEditArg?.(n.id)} onChange={onChange ? (v) => setArg(i, v) : undefined} /> : a.value && typeof a.value === "object" ? <button type="button" className="text-topic-network underline decoration-dotted" title="edit (JSON)" onClick={(e) => { stop(e); const t = window.prompt("the mapping, as JSON", JSON.stringify(a.value)); if (t) { try { setArg(i, JSON.parse(t)); } catch { window.alert("not JSON"); } } }}>{JSON.stringify(a.value).slice(0, 40)}</button> : <span className="text-topic-network">{JSON.stringify(a.value)}</span>}</React.Fragment>)}
@@ -63,14 +63,13 @@ function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, samp
       <span className="flex-1" />
       {live && <span className="rounded bg-ok-soft px-1 font-sans text-[9px] text-ok">live</span>}
       {sample && <span className="max-w-[80px] truncate text-[9.5px] text-muted" title={sample}>{sample}</span>}
-      {(n.output !== undefined || n.alias) && <span className="max-w-[90px] truncate rounded px-1 font-sans text-[10px] text-white" style={{ background: colour }} title={n.alias ? "an output, named from the page / a column" : `the output "${n.output}"`}>→ {n.alias ? "(named)" : n.output}</span>}
       {onChange && n.op && <button type="button" className="text-muted opacity-0 group-hover:opacity-100 hover:text-bad" onClick={(e) => { stop(e); onChange(removeNode(graph, n.id)); }} title="remove this and what hangs off it"><X size={11} /></button>}
     </div>
   );
 }
 function Str({ v, onChange, placeholder, bad, editing, onFocus }: { v: string; onChange?: (v: string) => void; placeholder?: string; bad?: boolean; editing?: boolean; onFocus?: () => void }) {
   if (!onChange) return <span className="text-ok">"{v}"</span>;
-  return <span className={cn(bad ? "text-bad" : "text-ok")}>"<input className={cn("bg-transparent outline-none", editing && "rounded bg-warn-soft")} size={Math.max(2, Math.min(34, (v || placeholder || "").length))} style={{ fieldSizing: "content", maxWidth: "26ch" } as React.CSSProperties} value={v} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} onClick={(e) => e.stopPropagation()} onFocus={onFocus} title={v} />"</span>;
+  return <span className={cn(bad ? "text-bad" : "text-ok")}>"<input className={cn("bg-transparent outline-none", editing && "rounded bg-warn-soft")} size={Math.max(2, Math.min(30, (v || placeholder || "").length + 1))} style={{ fieldSizing: "content", maxWidth: "26ch" } as React.CSSProperties} value={v} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} onClick={(e) => e.stopPropagation()} onFocus={onFocus} title={v} />"</span>;
 }
 /** a default output name for a node (from its selector / attribute) */
 export function outputName(n: GNode): string {

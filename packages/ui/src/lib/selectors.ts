@@ -5,6 +5,14 @@
  * ones (count 1) come first. Utility classes (tailwind-like) are kept out of the defaults
  * but stay available as toggles. */
 
+import { looksLikeDate, toWhen } from "./plan";
+
+/** Is a read MOSTLY a number (a price, a count, "In stock (22 available)") -- not a title that
+ * happens to hold one? At most a few words around the digits. */
+export const mostlyNumber = (v: string) => /\d/.test(v) && v.replace(/[\d.,\s£$€%()+-]/g, "").length <= 18 && v.length < 40;
+/** Is a read MOSTLY a date (not a sentence that mentions one)? */
+export const mostlyDate = (v: string) => looksLikeDate(v) && v.length <= 40;
+
 export const UTILITY = /^(data-wc|wc-)|[0-9]|^(flex|grid|block|hidden|relative|absolute|border|rounded|text|font|p|m|px|py|mt|mb|ml|mr|w|h|gap|items|justify|bg|shadow|hover|focus|inline|min|max|overflow|truncate|whitespace|leading|tracking|uppercase|sm|md|lg|xl|space|divide|ring|outline|transition|duration|cursor|select|pointer|z|top|left|right|bottom|inset|col|row|order|flex-1|shrink|grow|self|place|content|list|decoration|underline|italic|not|group|peer|prose|container|sr-only|antialiased|table|align|object|aspect|opacity|mix|blur|filter|backdrop|scroll|snap|touch|will|resize|appearance|columns|break|box|float|clear|isolate|visible|invisible|collapse|static|fixed|sticky)(-|$)/;
 export const semantic = (classes: string[]) => classes.filter((c) => !UTILITY.test(c));
 const esc = (c: string) => (typeof CSS !== "undefined" && CSS.escape ? CSS.escape(c) : c.replace(/([^\w-])/g, "\\$1"));
@@ -105,7 +113,7 @@ export function uniqueCandidates(el: Element, root: ParentNode): Candidate[] {
   return [...unique, ...groupCandidates(el, root)];
 }
 
-export type FieldSuggestion = { name: string; selector: string; attr: string; sample: string; coverage: number; /** read with a pattern */ pattern?: string; /** then .number() */ number?: boolean };
+export type FieldSuggestion = { name: string; selector: string; attr: string; sample: string; coverage: number; /** read with a pattern */ pattern?: string; /** then .number() */ number?: boolean; /** then .date() */ date?: boolean };
 /** a class that codes a number as a word (books.toscrape.com: `star-rating Three`) */
 export const NUMBER_WORD = "(?i)\\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\\b";
 
@@ -143,8 +151,10 @@ export function suggestFields(records: Element[], max = 8): FieldSuggestion[] {
     // a number coded as a word in a class: offer it AS a number first (the star rating)
     if (s.attr === "class" && /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(s.sample)) out.push({ name: s.name.replace(/_?rating$/, "") + (s.name.includes("rating") ? "_rating" : "_number"), selector: sel, attr: "class", pattern: NUMBER_WORD, number: true, sample: `${/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.exec(s.sample)![0]} → ${["zero","one","two","three","four","five","six","seven","eight","nine","ten"].indexOf(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.exec(s.sample)![0].toLowerCase())}`, coverage: s.hits / sample.length });
     out.push({ name: s.name, selector: sel, attr: s.attr, sample: s.sample, coverage: s.hits / sample.length });
+    // a date (a datetime attribute, a written date): offer it as a date too
+    if ((s.attr === "datetime" || s.attr === "text") && mostlyDate(s.sample)) out.push({ name: `${s.name}_date`, selector: sel, attr: s.attr, date: true, sample: `${s.sample} → ${String(toWhen(s.sample))}`, coverage: s.hits / sample.length });
     // text with a number in it (a price, a stock count): offer the number too
-    if (s.attr === "text" && /\d/.test(s.sample) && s.sample.length < 60) out.push({ name: `${s.name}_number`, selector: sel, attr: "text", number: true, sample: `${s.sample} → ${/-?\d[\d,]*(?:\.\d+)?/.exec(s.sample)![0].replace(/,/g, "")}`, coverage: s.hits / sample.length });
+    else if (s.attr === "text" && mostlyNumber(s.sample)) out.push({ name: `${s.name}_number`, selector: sel, attr: "text", number: true, sample: `${s.sample} → ${/-?\d[\d,]*(?:\.\d+)?/.exec(s.sample)![0].replace(/,/g, "")}`, coverage: s.hits / sample.length });
   }
   // unique names
   const taken = new Set<string>();
@@ -169,7 +179,7 @@ export function nameFromSelector(selector: string, tag: string): string {
   return raw.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 24) || "field";
 }
 
-export type AttrRow = { attr: string; value: string; kind: "text" | "count" | "attribute"; /** read with a pattern, then .number() */ pattern?: string; number?: boolean; label?: string };
+export type AttrRow = { attr: string; value: string; kind: "text" | "count" | "attribute"; /** read with a pattern, then .number() */ pattern?: string; number?: boolean; /** then .date() */ date?: boolean; label?: string };
 /** Every attribute ANY of the elements has (text, own text, count, label, href, data-*, aria-*…),
  * the first value as the sample, plus the numeric reads worth having. */
 export function attributesOfAll(els: Element[]): AttrRow[] {
@@ -178,7 +188,8 @@ export function attributesOfAll(els: Element[]): AttrRow[] {
   const extra: AttrRow[] = [];
   for (const a of out) {
     if (a.attr === "class" && /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(a.value)) extra.push({ attr: "class", value: a.value, kind: "attribute", pattern: NUMBER_WORD, number: true, label: "the number word in the class, as a number" });
-    if ((a.attr === "text" || a.kind === "attribute") && /\d/.test(a.value) && a.value.length < 60 && a.attr !== "class") extra.push({ attr: a.attr, value: a.value, kind: a.kind, number: true, label: `${a.attr} as a number` });
+    if ((a.attr === "text" || a.kind === "attribute") && a.attr !== "class" && mostlyDate(a.value)) extra.push({ attr: a.attr, value: a.value, kind: a.kind, date: true, label: `${a.attr} as a date → ${String(toWhen(a.value))}` });
+    else if ((a.attr === "text" || a.kind === "attribute") && a.attr !== "class" && mostlyNumber(a.value)) extra.push({ attr: a.attr, value: a.value, kind: a.kind, number: true, label: `${a.attr} as a number` });
   }
   return [...extra, ...out];
 }

@@ -31,7 +31,7 @@ type Tier = "false" | "auto" | "always";
 type Page = { docId?: string; live?: boolean; url: string };
 type State = { tier: Tier; graph: Graph };
 type HL = { els: Element[]; colour: string; label?: string; dashed?: boolean };
-type Suggestion = { label: string; value: string; sample?: string; count?: number; pattern?: string; number?: boolean };
+type Suggestion = { label: string; value: string; sample?: string; count?: number; pattern?: string; number?: boolean; date?: boolean };
 
 const enc = (s: State) => btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const dec = (s: string): State | null => { try { const o = JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))))); return o && o.graph && o.graph.nodes ? o : null; } catch { return null; } };
@@ -250,17 +250,17 @@ export function Author() {
     setGraph(() => needBrowser(r.graph)); select(r.id);
   };
   /** a READ under `at`: attr(name[, pattern]), then .number() when asked; the output sits on the last node */
-  const addRead = (g: Graph, at: string, attr: string, extra: Partial<graphLib.GNode>, pattern?: string, number?: boolean): { graph: Graph; id: string } => {
-    const a = addNode(g, at, opOf("attr", pattern ? [attr, pattern] : [attr]), returns, number ? {} : extra);
-    if (!number) return a;
-    return addNode(a.graph, a.id, opOf("number"), returns, extra);
+  const addRead = (g: Graph, at: string, attr: string, extra: Partial<graphLib.GNode>, pattern?: string, number?: boolean, date?: boolean): { graph: Graph; id: string } => {
+    const a = addNode(g, at, opOf("attr", pattern ? [attr, pattern] : [attr]), returns, number || date ? {} : extra);
+    if (!number && !date) return a;
+    return addNode(a.graph, a.id, opOf(date ? "date" : "number"), returns, extra);
   };
   const addReads = (g: Graph, under: string, reads: InspectRead[] | undefined, fallbackSel: string): Graph => {
     for (const rd of reads ?? []) {
       let at = under;
       if (rd.select) { const s = addNode(g, at, opOf("select", [rd.select]), returns); g = s.graph; at = s.id; }
       const name = rd.name || (rd.attr === "text" ? selectors.nameFromSelector(rd.select ?? fallbackSel, pickEl?.tagName.toLowerCase() ?? "") : rd.attr.replace(/[^a-z0-9]+/gi, "_"));
-      g = addRead(g, at, rd.attr, rd.nameFrom ? { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: rd.nameFrom }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }] } : { output: name }, rd.pattern, rd.number).graph;
+      g = addRead(g, at, rd.attr, rd.nameFrom ? { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: rd.nameFrom }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }] } : { output: name }, rd.pattern, rd.number, rd.date).graph;
     }
     return g;
   };
@@ -310,6 +310,7 @@ export function Author() {
     }
     if (node.type === "Value") {
       edges.push({ label: ".number()", hint: "the first number in it, or a number word (Three → 3)", onAdd: () => { if (!graph) return; const out = node.output ?? `${node.op?.args[0]?.value ?? "value"}_number`; const g = updateNode(graph, node.id, { output: undefined }); const r = addNode(g, node.id, opOf("number"), returns, { output: String(out).replace(/[^a-z0-9_]+/gi, "_") }); setGraph(() => r.graph); select(r.id); } });
+      for (const op of ["date", "datetime"]) edges.push({ label: `.${op}()`, hint: op === "date" ? "the value as a date (YYYY-MM-DD): ISO, written, numeric, relative" : "the value as an ISO datetime", onAdd: () => { if (!graph) return; const out = node.output ?? `${node.op?.args[0]?.value ?? "value"}_${op}`; const g = updateNode(graph, node.id, { output: undefined }); const r = addNode(g, node.id, opOf(op), returns, { output: String(out).replace(/[^a-z0-9_]+/gi, "_") }); setGraph(() => r.graph); select(r.id); } });
       edges.push({ label: ".map({…})", hint: "look the value up in a table (JSON)", onAdd: () => { if (!graph) return; const t = window.prompt("the mapping, as JSON", '{"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}'); if (!t) return; let m: unknown; try { m = JSON.parse(t); } catch { window.alert("not JSON"); return; } const g = updateNode(graph, node.id, { output: undefined }); const r = addNode(g, node.id, opOf("map", [m]), returns, { output: node.output ?? "mapped" }); setGraph(() => r.graph); select(r.id); } });
     }
     if (node.type === "Document") {
@@ -335,7 +336,7 @@ export function Author() {
       else for (const e of [...doc.querySelectorAll("h1, h2, [id], main, article, table, form")].slice(0, 40)) { const c = selectors.uniqueCandidates(e, doc)[0]; if (c && !out.some((o) => o.value === c.selector)) out.push({ label: e.tagName.toLowerCase(), value: c.selector, count: c.count, sample: (e.textContent ?? "").trim().slice(0, 50) }); }
     } else if (node.op.name === "attr") {
       const par = node.parent ? graph.nodes[node.parent] : undefined; const els = par ? elementsOf(values[par.id]) : []; const one = inputOf(graph, node.id, doc);
-      for (const a of selectors.attributesOfAll(els.length ? els : one ? [one] : [])) out.push({ label: a.number ? "→ number" : a.kind, value: a.attr, sample: a.label ?? a.value, pattern: a.pattern, number: a.number });
+      for (const a of selectors.attributesOfAll(els.length ? els : one ? [one] : [])) out.push({ label: a.number ? "→ number" : a.date ? "→ date" : a.kind, value: a.attr, sample: a.label ?? a.value, pattern: a.pattern, number: a.number, date: a.date });
     } else if (["click", "write", "wait_for"].includes(node.op.name)) {
       for (const c of views.data?.controls ?? []) out.push({ label: c.role, value: c.selector, sample: c.name, count: count(c.selector) });
     }
@@ -343,9 +344,9 @@ export function Author() {
   }, [graph, node, doc, root, patternGroups, views.data?.controls]);
   const applySuggestion = (value: string, sg?: Suggestion) => {
     if (!graph || !node?.op) return;
-    if (node.op.name === "attr" && (sg?.pattern || sg?.number)) {  // a read through a pattern / as a number: the output moves to the number
-      let g = updateNode(graph, node.id, { op: { ...node.op, args: sg.pattern ? [{ value }, { value: sg.pattern }] : [{ value }] }, ...(sg.number ? { output: undefined } : {}) });
-      if (sg.number) { const r = addNode(g, node.id, opOf("number"), returns, { output: node.output ?? `${value.replace(/[^a-z0-9]+/gi, "_")}_number` }); g = r.graph; setGraph(() => g); select(r.id); return; }
+    if (node.op.name === "attr" && (sg?.pattern || sg?.number || sg?.date)) {  // a read through a pattern / as a number or date: the output moves to it
+      let g = updateNode(graph, node.id, { op: { ...node.op, args: sg.pattern ? [{ value }, { value: sg.pattern }] : [{ value }] }, ...(sg.number || sg.date ? { output: undefined } : {}) });
+      if (sg.number || sg.date) { const r = addNode(g, node.id, opOf(sg.date ? "date" : "number"), returns, { output: node.output ?? `${value.replace(/[^a-z0-9]+/gi, "_")}_${sg.date ? "date" : "number"}` }); g = r.graph; setGraph(() => g); select(r.id); return; }
       setGraph(() => g); setEditing(false); return;
     }
     setGraph((g) => updateNode(g, node.id, { op: { ...node.op!, args: node.op!.args.map((a, i) => (i === 0 ? { value } : a)) } })); setEditing(false); setBuilding(null); if (node.op.name === "click" || node.op.name === "write" || node.op.name === "wait_for") { const args = node.op.name === "write" ? [value, String(node.op.args[1]?.value ?? "")] : [value]; runAction(node.op.name, args, false); } };
@@ -401,35 +402,45 @@ export function Author() {
   const err = openError ?? (views.error as ApiError | null);
   const card = views.data?.card;
   const liveSet = React.useMemo(() => new Set(Object.entries(pages).filter(([, p]) => p.live).map(([k]) => k)), [pages]);
-  const samples = React.useMemo(() => { const out: Record<string, string> = {}; if (!graph) return out; for (const [id, v] of Object.entries(values)) { const n = graph.nodes[id]!; out[id] = n.op?.name === "resolve" ? (pages[id]?.url ? new URL(pages[id]!.url).pathname.slice(0, 26) : "") : sample(v); } return out; }, [values, graph, pages]);
+  const samples = React.useMemo(() => { const out: Record<string, string> = {}; if (!graph) return out; for (const [id, v] of Object.entries(values)) { const n = graph.nodes[id]!; out[id] = n.op?.name === "resolve" ? (pages[id]?.url ? new URL(pages[id]!.url).pathname.slice(0, 22) : "") : n.type === "Collection" ? sample(v) : ""; /* counts where they mean something; the rest reads in the rows */ } return out; }, [values, graph, pages]);
   const stripScripts = (views.data?.tiers ?? []).slice(-1)[0] === "browser";
   const nodeEl = node ? elementsOf(values[node.id])[0] : undefined;
 
   // the page gets the height the window has (the app header, the toolbar and the action bar aside)
   const [vh, setVh] = React.useState(() => (typeof window !== "undefined" ? window.innerHeight : 900));
   React.useEffect(() => { const h = () => setVh(window.innerHeight); window.addEventListener("resize", h); return () => window.removeEventListener("resize", h); }, []);
-  const pageH = Math.max(420, vh - 44 - 38 - 64 - 16);
   const cancelPick = () => { setPickEl(null); setBuilding(null); if (node && needsArg(node) && node.parent) { const parent = node.parent; setGraph((g) => graphLib.removeNode(g, node.id)); select(parent); } else setEditing(false); };
   /** the outputs worth adding off the focused object (the "+ output" menu) */
   const fieldMenu = React.useMemo(() => {
     if (!graph || !node) return [] as { label: string; sample: string; add: () => void }[];
     const els = elementsOf(values[node.id]);
-    if (node.type === "Collection") return selectors.suggestFields(els, 16).map((f) => ({ label: `${f.selector} · ${f.attr}${f.number ? " → number" : ""}`, sample: f.sample, add: () => { const s1 = addNode(graph, node.id, opOf("select", [f.selector]), returns); setGraph(() => addRead(s1.graph, s1.id, f.attr, { output: f.name }, f.pattern, f.number).graph); } }));
-    if (node.type === "Element") return selectors.attributesOfAll(els).map((a) => ({ label: a.number ? `${a.attr} → number` : a.attr, sample: a.label ?? a.value, add: () => { const nm = a.attr === "text" ? selectors.nameFromSelector(String(node.op?.args[0]?.value ?? ""), els[0]?.tagName.toLowerCase() ?? "") : a.attr.replace(/[^a-z0-9]+/gi, "_"); setGraph(() => addRead(graph, node.id, a.attr, { output: a.number ? `${nm}_number` : nm }, a.pattern, a.number).graph); } }));
+    if (node.type === "Collection") return selectors.suggestFields(els, 16).map((f) => ({ label: `${f.selector} · ${f.attr}${f.number ? " → number" : f.date ? " → date" : ""}`, sample: f.sample, add: () => { const s1 = addNode(graph, node.id, opOf("select", [f.selector]), returns); setGraph(() => addRead(s1.graph, s1.id, f.attr, { output: f.name }, f.pattern, f.number, f.date).graph); } }));
+    if (node.type === "Element") return selectors.attributesOfAll(els).map((a) => ({ label: a.number ? `${a.attr} → number` : a.date ? `${a.attr} → date` : a.attr, sample: a.label ?? a.value, add: () => { const nm = a.attr === "text" ? selectors.nameFromSelector(String(node.op?.args[0]?.value ?? ""), els[0]?.tagName.toLowerCase() ?? "") : a.attr.replace(/[^a-z0-9]+/gi, "_"); setGraph(() => addRead(graph, node.id, a.attr, { output: a.number ? `${nm}_number` : a.date ? `${nm}_date` : nm }, a.pattern, a.number, a.date).graph); } }));
     return [];
   }, [graph, node, values]); // eslint-disable-line react-hooks/exhaustive-deps
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const remembered = (k: string, d: boolean) => { try { const v = localStorage.getItem(k); return v === null ? d : v === "1"; } catch { return d; } };
+  const [planOpen, setPlanOpenRaw] = React.useState(() => remembered("wc.author.plan", true));
+  const setPlanOpen = (v: boolean) => { setPlanOpenRaw(v); try { localStorage.setItem("wc.author.plan", v ? "1" : "0"); } catch { /* fine */ } };
+  const sideShown = selfMode;  // the picking tools, only while an op waits for its selector
+  const [rowsOpen, setRowsOpenRaw] = React.useState(() => remembered("wc.author.rows", true));
+  const setRowsOpen = (v: boolean) => { setRowsOpenRaw(v); try { localStorage.setItem("wc.author.rows", v ? "1" : "0"); } catch { /* fine */ } };
+  const rowsH = 210;
+  const pageH = Math.max(320, vh - 44 - 30 - 44 - (rowsOpen ? rowsH : 22) - 12);
+  /** each output's colour -- the same on the plan line, the page outline and its rows column */
+  const colourOf = React.useMemo(() => { const m: Record<string, string> = {}; outs.forEach((o, i) => { if (o.output) m[o.output] = fieldColour(i); }); return m; }, [outs]);
+  const columnColours = (rows: Record<string, unknown>[]) => { const m: Record<string, string> = {}; for (const r of rows.slice(0, 5)) for (const k of Object.keys(r)) { const parts = k.split("."); for (let i = parts.length - 1; i >= 0; i--) { const c = colourOf[parts[i]!]; if (c) { m[k] = c; break; } } } return m; };
   const isOutput = !!node && (node.output !== undefined || !!node.alias);
   const siblingCols = graph && node ? outputs(graph).filter((o) => o.id !== node.id && o.output && graphLib.eachOf(graph, o.id)?.id === graphLib.eachOf(graph, node.id)?.id) : [];
   const namedBy = node?.alias ? (graphLib.aliasField(node.alias) ? "column" : "page") : "name";
   const setNaming = (mode: string, value: string) => { if (!node) return; setGraph((g) => updateNode(g, node.id, mode === "name" ? { output: value || outputName(node), alias: undefined } : mode === "column" ? { alias: graphLib.fieldAlias(value), output: undefined } : { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }], output: undefined })); };
 
   return (
-    <div className="flex h-full min-h-0 flex-col text-[12px]">
-      <Toolbar className="!h-9 !py-1">
+    <div className="flex h-full min-h-0 flex-col text-[11px]">
+      <Toolbar className="!h-[30px] !py-0 text-[11px]">
         <form onSubmit={(e) => { e.preventDefault(); if (draft) start(draft, tier); }} className="flex min-w-[280px] flex-1 items-center gap-1.5">
-          <Input mono value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="a URL -- the plan starts from it" className="h-7 w-full text-[12px]" />
-          <Select value={tier} onChange={(e) => setStateRaw((s) => (s ? { ...s, tier: e.target.value as Tier } : s))} title="the tier new pages open with" className="h-7 text-[12px]"><option value="false">static</option><option value="auto">auto</option><option value="always">browser</option></Select>
+          <Input mono value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="a URL -- the plan starts from it" className="h-6 w-full text-[11px]" />
+          <Select value={tier} onChange={(e) => setStateRaw((s) => (s ? { ...s, tier: e.target.value as Tier } : s))} title="the tier new pages open with" className="h-6 text-[11px]"><option value="false">static</option><option value="auto">auto</option><option value="always">browser</option></Select>
           <Button variant="primary" type="submit" size="sm" disabled={!sessionId}>Start</Button>
         </form>
         <ToolbarSpacer />
@@ -437,22 +448,22 @@ export function Author() {
         {state && <><Button size="sm" variant="ghost" onClick={save}>Save</Button><Button size="sm" variant="ghost" onClick={exportPlan}>Export</Button></>}
         <Button size="sm" variant="ghost" onClick={importPlan}>Import</Button>
         {saved.data && saved.data.length > 0 && <Select value="" onChange={(e) => { if (e.target.value) load(e.target.value); }} className="h-7 text-[12px]"><option value="">saved…</option>{saved.data.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}</Select>}
-        {outs.length > 0 && <Button variant="primary" size="sm" onClick={runServer} disabled={run.busy || missing.length > 0} title={missing.length ? `${missing.length} op(s) still need an argument` : undefined}>{run.busy ? "running…" : `Run ▶ ${outs.length} outputs`}</Button>}
       </Toolbar>
       {!state || !graph ? <EmptyState title="Start from a URL" hint="The plan starts with its Reference. Open it; then choose an op above the page (select_all, select, attr…) and click the page, or a suggestion. Clicking something the plan already has jumps to it; shift-click records a link, a click or typing." /> :
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 overflow-hidden p-2 xl:grid-cols-[280px_minmax(0,1fr)_340px]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-1 overflow-hidden p-1" style={{ gridTemplateColumns: `${planOpen ? "270px" : "16px"} minmax(0,1fr)${sideShown ? " 300px" : ""}` }}>
         {/* the plan */}
-        <section className="flex min-h-0 flex-col rounded-md border border-line">
-          <div className="border-b border-line px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Plan</div>
-          <GraphView graph={graph} selected={node?.id ?? graph.root} onSelect={(id) => select(id)} onChange={(g) => setGraph(() => g)} samples={samples} live={liveSet} editing={selfMode} onEditArg={(id) => { if (id !== selected) setSelectedRaw(id); setEditing(true); }} className="min-h-0 flex-1 overflow-auto p-1" />
-          {missing.length > 0 && <div className="border-t border-line px-2 py-1 text-[10px] text-bad">{missing.length} op(s) still need an argument</div>}
-        </section>
+        {!planOpen ? <button type="button" onClick={() => setPlanOpen(true)} className="flex min-h-0 items-start justify-center rounded border border-line pt-2 text-[10px] text-muted hover:bg-surface-2" title="show the plan"><span style={{ writingMode: "vertical-rl" }}>plan ›</span></button> :
+        <section className="flex min-h-0 flex-col rounded border border-line">
+          <div className="flex items-center border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Plan<span className="flex-1" /><button type="button" className="font-normal hover:text-ink" onClick={() => setPlanOpen(false)} title="hide the plan">‹</button></div>
+          <GraphView graph={graph} selected={node?.id ?? graph.root} onSelect={(id) => select(id)} onChange={(g) => setGraph(() => g)} samples={samples} live={liveSet} editing={selfMode} onEditArg={(id) => { if (id !== selected) setSelectedRaw(id); setEditing(true); }} className="min-h-0 flex-1 overflow-auto px-0.5 py-0.5" />
+          {missing.length > 0 && <div className="border-t border-line px-1.5 py-0.5 text-[10px] text-bad">{missing.length} op(s) still need an argument</div>}
+        </section>}
 
         {/* the action bar, then the page */}
-        <div className="flex min-h-0 min-w-0 flex-col gap-1">
-          <section className={cn("rounded-md border px-2 py-1", selfMode ? "border-warn/60 bg-warn-soft/40" : "border-line")}>
-            <div className="flex h-6 items-center gap-2 overflow-hidden whitespace-nowrap">
-              <code className="truncate font-mono text-[11px] text-ink">{node?.op ? graphLib.describeOp(node) : `Reference("${graph.url}")`}</code>
+        <div className="flex min-h-0 min-w-0 flex-col gap-0.5">
+          <section className={cn("rounded border px-1.5 py-0.5", selfMode ? "border-warn/60 bg-warn-soft/40" : "border-line")}>
+            <div className="flex h-5 items-center gap-1.5 overflow-hidden whitespace-nowrap">
+              <code className="truncate font-mono text-[10.5px] text-ink">{node?.op ? graphLib.describeOp(node) : `Reference("${graph.url}")`}</code>
               {node && samples[node.id] && <span className="text-[10px] text-muted">{samples[node.id]}</span>}
               <span className="text-[10px] text-muted">· {selfMode ? `picking in ${rootLabel}` : `showing ${rootLabel}`}</span>
               <span className="flex-1" />
@@ -461,7 +472,7 @@ export function Author() {
                 {!page?.live ? <button type="button" className="text-[11px] text-muted hover:text-ink" onClick={goLive}>go live</button> : <span className="rounded bg-ok-soft px-1 text-[10px] text-ok">live</span>}</>}
               {patternGroups.length > 0 && <button type="button" className={cn("rounded px-1 text-[10px]", showGroups ? "bg-accent-soft text-accent" : "text-muted hover:text-ink")} onClick={() => setShowGroups(!showGroups)}>{patternGroups.length} groups</button>}
             </div>
-            <div className="flex min-h-6 flex-wrap items-center gap-1">
+            <div className="flex min-h-5 flex-wrap items-center gap-1">
               {selfMode && node?.op ? <>
                 <span className="text-[11px] font-medium text-warn">Choose the selector for .{node.op.name}(): click the page, or a suggestion on the right</span>
                 <span className="flex-1" />
@@ -502,39 +513,42 @@ export function Author() {
           ) : views.data?.content ? (
             <PageFrame html={views.data.content} base={views.data.url ?? page?.url ?? graph.url} stripScripts={stripScripts} focusPaths={shownRoots.length ? shownRoots.map(pathOf) : null} highlights={frameHls} picking={selfMode} onPick={onFramePick} onAction={onFrameAction} maxHeight={pageH} width={1180} />
           ) : <EmptyState title={pageUrl(pageKey) || page?.url ? "Opening the page into your session…" : "This page's URL comes from the page before it: open that first"} />}
+          {/* the rows: the preview on this page, and the server run */}
+          <section className="flex min-h-0 shrink-0 flex-col rounded border border-line" style={{ height: rowsOpen ? rowsH : 22 }}>
+            <div className="flex h-[20px] shrink-0 items-center gap-2 border-b border-line px-1.5 text-[10.5px]">
+              <button type="button" className={cn("font-medium", tab !== "server" ? "text-ink" : "text-muted hover:text-ink")} onClick={() => { setTab("rows"); setRowsOpen(true); }}>Rows <span className="text-muted">{shown.rows.length}</span></button>
+              <button type="button" className={cn("inline-flex items-center gap-1 font-medium", tab === "server" ? "text-ink" : "text-muted hover:text-ink")} onClick={() => { setTab("server"); setRowsOpen(true); }}>Run <span className="text-muted">{run.rows?.length ?? ""}</span></button>
+              <button type="button" disabled={!outs.length || run.busy || missing.length > 0} onClick={() => { setRowsOpen(true); runServer(); }} className="rounded bg-accent px-1 text-[10px] leading-4 text-white disabled:opacity-40" title={missing.length ? `${missing.length} op(s) still need an argument` : "run the plan on the server"}>{run.busy ? "…" : "▶"}</button>
+              <span className="min-w-0 flex-1 truncate text-[10px] text-muted">{tab === "server" ? (run.error ? `${run.error.detail?.code ?? run.error.status}: ${run.error.detail?.hint ?? run.error.message}` : run.rows ? `${run.rows.length} rows in ${run.ms} ms` : "the plan, run through your session") : shown.nested ? "rows whose page is open here, with the parent row's columns" : "preview on this page"}</span>
+              {tab === "server" && run.rows && <label className="flex items-center gap-1 text-[10px] text-muted"><input type="checkbox" checked={asJson} onChange={(e) => setAsJson(e.target.checked)} />JSON</label>}
+              <button type="button" className="text-muted hover:text-ink" onClick={() => setRowsOpen(!rowsOpen)} title={rowsOpen ? "hide the rows" : "show the rows"}>{rowsOpen ? "▾" : "▴"}</button>
+            </div>
+            {rowsOpen && <div className="min-h-0 flex-1 overflow-auto">
+              {tab === "server" ? (run.rows ? (asJson ? <CodeBlock lang="json" code={JSON.stringify(run.rows, null, 2)} className="m-0.5" /> : <DataFrame rows={run.rows} colours={columnColours(run.rows)} dense />) : null)
+                : !outs.length ? <div className="p-2 text-[11px] text-muted">No outputs yet -- tick “output” above for a node, or use + output ▾.</div>
+                : <DataFrame rows={shown.rows} colours={columnColours(shown.rows)} dense emptyHint="Nothing matched on this page yet." />}
+            </div>}
+          </section>
           {actError && <div className="text-[11px]"><Chip tone="bad">{actError.detail?.code ?? actError.status}</Chip> {actError.detail?.hint ?? actError.message}</div>}
           {busy && <div className="text-[11px] text-muted">{busy}…</div>}
         </div>
 
-        {/* the right column: picking tools while an op waits for its selector, else the output */}
-        <aside className="flex min-h-0 min-w-0 flex-col rounded-md border border-line">
-          {selfMode && node?.op ? (pick && doc ? (
-            <div className="flex min-h-0 flex-col overflow-auto p-2">
-              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Selector for .{node.op.name}()</div>
+        {/* while an op waits for its selector: its suggestions / the selector editor, beside the page */}
+        {selfMode && node?.op && (
+        <aside className="flex min-h-0 min-w-0 flex-col rounded border border-warn/50">
+          {pick && doc ? (
+            <div className="flex min-h-0 flex-col overflow-auto p-1.5">
+              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Selector for .{node.op.name}()</div>
               <ElementInspector pick={pick} scopeEl={rootFor(pickEl)} scopeLabel={rootLabel} op={node.op.name} groups={pickGroups} onSelector={(sel) => setBuilding(sel || null)} onAdd={onApply} onCancel={() => { setPickEl(null); setBuilding(null); }} />
             </div>
           ) : (
-            <div className="flex min-h-0 flex-col overflow-auto p-2">
-              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">{node.op.name === "attr" ? "What to read" : `Suggestions for .${node.op.name}()`}</div>
+            <div className="flex min-h-0 flex-col overflow-auto p-1.5">
+              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">{node.op.name === "attr" ? "What to read" : `Suggestions for .${node.op.name}()`}</div>
               <div className="mb-1 text-[10px] text-muted">{node.op.name === "attr" ? "every attribute of the elements, as a number where it holds one" : "or click the page"}</div>
               <div className="flex flex-col">{suggestions.map((sg) => <button key={sg.value + (sg.number ? "#n" : "") + (sg.pattern ?? "")} type="button" className="flex items-center gap-1 rounded px-1 py-px text-left hover:bg-surface-2" onClick={() => applySuggestion(sg.value, sg)} onMouseEnter={() => node.op?.name !== "attr" && setBuilding(sg.value)} onMouseLeave={() => setBuilding(null)}><code className="shrink-0 font-mono text-[10.5px] text-accent">{sg.value}</code>{sg.count != null && <span className="rounded bg-surface-2 px-0.5 text-[9.5px]">×{sg.count}</span>}<span className="text-[9.5px] text-muted">{sg.label}</span><span className="min-w-0 flex-1 truncate text-[10px] text-muted">{sg.sample}</span></button>)}{!suggestions.length && <span className="text-muted">no suggestions here</span>}</div>
             </div>
-          )) : (
-            <Tabs items={[{ value: "rows", label: "Rows", count: shown.rows.length }, { value: "server", label: "Run", count: run.rows?.length }, { value: "plan", label: "Plan" }, { value: "page", label: "Page" }, { value: "skeleton", label: "Skeleton" }, { value: "markdown", label: "MD" }, { value: "code", label: "Code" }]} value={tab} onValueChange={setTab} className="min-h-0 flex-1 text-[11px]">
-              <TabPanel value="rows" className="min-h-0 overflow-auto">{!outs.length ? <EmptyState title="No outputs yet" hint="Tick “output” above for a node, or use + output ▾." /> : <><div className="px-2 pt-1 text-[10px] text-muted">{shown.nested ? "rows whose page is open here, with the parent row's columns" : "preview on this page; nested values as columns"}</div><DataFrame rows={shown.rows} className="max-h-[calc(100vh-220px)]" emptyHint="Nothing matched on this page yet." /></>}</TabPanel>
-              <TabPanel value="server" className="min-h-0 overflow-auto">{run.error ? <div className="p-2"><Chip tone="bad">{run.error.detail?.code ?? run.error.status}</Chip> {run.error.detail?.hint ?? run.error.message}</div> : run.rows ? <><div className="flex items-center gap-2 px-2 pt-1 text-[10px] text-muted">{run.rows.length} rows in {run.ms} ms<span className="flex-1" /><label className="flex items-center gap-1"><input type="checkbox" checked={asJson} onChange={(e) => setAsJson(e.target.checked)} />JSON</label></div>{asJson ? <CodeBlock lang="json" code={JSON.stringify(run.rows, null, 2)} className="m-1 max-h-[calc(100vh-220px)] overflow-auto" /> : <DataFrame rows={run.rows} className="max-h-[calc(100vh-220px)]" />}</> : <EmptyState title="Not run yet" hint="Run ▶ executes the plan through your session." />}</TabPanel>
-              <TabPanel value="plan" className="min-h-0 overflow-auto p-1">{plan && <CodeBlock lang="describe" code={planLib.describe(plan)} wrap />}</TabPanel>
-              <TabPanel value="page" className="min-h-0 overflow-auto p-2">
-                {card && <div className="mb-1 flex flex-wrap items-center gap-1"><Chip tone="neutral">{card.kind}</Chip><Chip tone={card.status_code && card.status_code < 400 ? "ok" : "bad"}>{card.status_code}</Chip><Chip tone="neutral">{(views.data?.tiers ?? [card.final_tier]).join(" → ")}</Chip><span className="truncate text-muted">{views.data?.title}</span></div>}
-                <FlagRow flags={views.data?.flags ?? []} empty="no signals on this page" />
-                <div className="mt-1 flex flex-wrap gap-1 text-[10px]">{patternGroups.map((g) => <button key={g.selector} type="button" className="inline-flex items-center gap-1 rounded border border-line px-1 hover:bg-surface-2" title={g.why} onClick={() => setShowGroups(true)}><span className="inline-block size-2 rounded-sm" style={{ background: g.colour }} />{g.name} <code className="font-mono">{g.selector}</code> ×{g.count}</button>)}</div>
-              </TabPanel>
-              <TabPanel value="skeleton" className="min-h-0 overflow-auto p-1">{more.data?.skeleton ? <SkeletonPane skeleton={more.data.skeleton} active={null} /> : <span className="text-muted">…</span>}</TabPanel>
-              <TabPanel value="markdown" className="min-h-0 overflow-auto p-1">{more.data?.markdown ? <CodeBlock lang="markdown" code={more.data.markdown} wrap /> : <span className="text-muted">…</span>}</TabPanel>
-              <TabPanel value="code" className="min-h-0 overflow-auto"><AsCode {...toolAsCode("execute", { url: graph.url }, API_URL)} blob={planQ.data?.blob} python={`from webclient import WebClient, from_blob\n\nwith WebClient() as wc:\n    rows = from_blob(${JSON.stringify(planQ.data?.blob ?? "<the blob appears once the plan has outputs>")}, wc).collect()`} /></TabPanel>
-            </Tabs>
           )}
-        </aside>
+        </aside>)}
       </div>}
       {page?.live && <MediaBar controller={controller} className="shrink-0" />}
     </div>

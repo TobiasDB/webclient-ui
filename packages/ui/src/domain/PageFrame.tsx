@@ -49,7 +49,10 @@ export function PageFrame({ html, base, stripScripts, focusPaths = null, highlig
   const cbs = React.useRef({ onPick, onHover, onAction, onCounts }); cbs.current = { onPick, onHover, onAction, onCounts };
   const srcDoc = React.useMemo(() => withAgent(html, base, !!stripScripts), [html, base, stripScripts]);
   React.useEffect(() => { setReady(false); setAway(false); }, [srcDoc, key]);
-  React.useLayoutEffect(() => { const el = box.current; if (!el) return; const ro = new ResizeObserver(() => setScale(Math.min(1, el.clientWidth / width))); ro.observe(el); return () => ro.disconnect(); }, [width]);
+  // the page renders at least `width` wide (scaled down to fit), and at the full width it is given when wider
+  const [boxW, setBoxW] = React.useState(width);
+  React.useLayoutEffect(() => { const el = box.current; if (!el) return; const ro = new ResizeObserver(() => { setBoxW(el.clientWidth); setScale(Math.min(1, el.clientWidth / width)); }); ro.observe(el); return () => ro.disconnect(); }, [width]);
+  const frameW = Math.max(width, boxW);
   React.useEffect(() => {
     const h = (e: MessageEvent) => {
       if (e.source !== frame.current?.contentWindow || !e.data || !e.data.__wc) return;
@@ -70,7 +73,7 @@ export function PageFrame({ html, base, stripScripts, focusPaths = null, highlig
   const onLoad = () => { const t = Date.now(); post({ type: "ping" }); setTimeout(() => { if (readyAt.current < t) { setAway(true); setReady(false); } }, 800); };
   return (
     <div ref={box} className={cn("relative w-full overflow-hidden rounded-lg border bg-white", picking ? "border-warn ring-2 ring-warn/40" : "border-line", className)} style={{ height: maxHeight }}>
-      <iframe key={key} ref={frame} title="page" srcDoc={srcDoc} onLoad={onLoad} sandbox="allow-scripts allow-forms allow-popups" className="absolute left-0 top-0 origin-top-left border-0 bg-white" style={{ width, height: maxHeight / scale, transform: `scale(${scale})` }} />
+      <iframe key={key} ref={frame} title="page" srcDoc={srcDoc} onLoad={onLoad} sandbox="allow-scripts allow-forms allow-popups" className="absolute left-0 top-0 origin-top-left border-0 bg-white" style={{ width: frameW, height: maxHeight / scale, transform: `scale(${scale})` }} />
       {!ready && !away && <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-[12px] text-muted">rendering…</div>}
       {away && <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-ink/85 px-2 py-1 text-[11px] text-surface">browsing away from the plan's page (not recorded) <button type="button" className="rounded bg-surface px-1.5 text-ink" onClick={() => setKey((k) => k + 1)}>back to the page</button></div>}
     </div>

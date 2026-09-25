@@ -29,7 +29,7 @@ export function DataFrame({ rows, columns, colours, className, emptyHint, emptyA
   if (!rows.length) return <EmptyState title="0 rows" hint={emptyHint ?? "The record selector matched nothing on this page."} action={emptyAction} />;
   return (
     <div className={cn("overflow-auto", className)}>
-      <table className={cn("w-full border-collapse", dense ? "text-[11px]" : "text-[12px]")}>
+      <table className={cn("w-full border-collapse", dense ? "text-[10.5px] leading-4" : "text-[12px]")}>
         <thead className="sticky top-0 z-[1] bg-surface text-left shadow-[0_1px_0_var(--color-line)]">
           <tr><th className="w-8 px-2 py-1 text-[11px] text-muted">#</th>
             {cols.map((c, i) => <th key={c} className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted"><span className="inline-flex items-center gap-1">{colour(c, i) && <span className="inline-block size-2 rounded-sm" style={{ background: colour(c, i) }} />}{c}</span></th>)}
