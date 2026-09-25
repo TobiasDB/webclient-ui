@@ -2,7 +2,7 @@ import * as React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, Player, Select, SkeletonPane,
+  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, PipelineGraph, Player, Select, SkeletonPane, stagesLib,
   TabPanel, Tabs, Toolbar, ToolbarSpacer, cn, describe, fieldColour, graphLib, needsArg, outputName, planLib, selectors, toolAsCode, usePlayerController,
   type Edge, type FrameAction, type FrameHighlight, type Graph, type Highlight, type InspectAdd, type InspectRead, type Pick, type Plan, type RREvent,
 } from "@webclient/ui";
@@ -400,6 +400,26 @@ export function Author() {
   };
   const navigate = useNavigate();
   /** Run ▶: the plan goes to the Run workspace, which executes it live (stages, streamed rows, trace) */
+  // the plan as a pipeline graph, in a popup (the Run workspace's graph, with nothing run)
+  const [graphOpen, setGraphOpen] = React.useState(false);
+  const planStages = React.useMemo(() => (graphOpen && plan ? stagesLib.stagesOf(plan) : []), [graphOpen, plan]);
+  React.useEffect(() => {
+    if (!graphOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopImmediatePropagation(); e.preventDefault(); setGraphOpen(false); } };
+    window.addEventListener("keydown", onKey, true); return () => window.removeEventListener("keydown", onKey, true);
+  }, [graphOpen]);
+  const graphPopup = graphOpen && plan ? (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={() => setGraphOpen(false)}>
+      <div className="flex h-full w-full max-w-[1500px] flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="the plan as a graph">
+        <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line px-2 text-[11px]">
+          <span className="font-semibold">Plan graph</span><span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted" title={planLib.describe(plan)}>{planLib.describe(plan)}</span>
+          <button type="button" disabled={!outs.length || missing.length > 0} onClick={() => { setGraphOpen(false); openRun(); }} className="rounded bg-accent px-1.5 text-[10px] leading-4 text-white disabled:opacity-40">Open in Run ▸</button>
+          <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => setGraphOpen(false)} title="close (Esc)">✕</button>
+        </div>
+        <div className="min-h-0 flex-1"><PipelineGraph stages={planStages} stats={{}} at={0} running={false} live={false} /></div>
+      </div>
+    </div>
+  ) : null;
   const openRun = () => { if (!plan || !graph) return; const host = (() => { try { return new URL(graph.url).hostname.replace(/^www\./, ""); } catch { return "run"; } })(); navigate(`/run?p=${encSpec({ plan: { ...plan, session_id: sessionId }, url: graph.url, name: host })}`); };
   const runTraced = () => { const host = (() => { try { return new URL(graph?.url ?? "").hostname.replace(/^www\./, ""); } catch { return "run"; } })(); const name = window.prompt("save the run as a trace named", `${host}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}`); if (name) { setRowsOpen(true); runServer(name); } };
 
@@ -474,6 +494,7 @@ export function Author() {
 
   return (
     <div className="flex h-full min-h-0 flex-col text-[11px]">
+      {graphPopup}
       <Toolbar className="!h-[30px] !py-0 text-[11px]">
         <form onSubmit={(e) => { e.preventDefault(); if (draft) start(draft, tier); }} className="flex min-w-[280px] flex-1 items-center gap-1.5">
           <Input mono value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="a URL -- the plan starts from it" className="h-6 w-full text-[11px]" />
@@ -559,7 +580,8 @@ export function Author() {
             <div className="flex h-[20px] shrink-0 items-center gap-2 border-b border-line px-1.5 text-[10.5px]">
               <span className="font-medium">Rows <span className="text-muted">{shown.rows.length}</span></span>
               <span className="min-w-0 flex-1 truncate text-[10px] text-muted">{shown.nested ? "rows whose page is open here, with the parent row's columns" : "preview on this page"}</span>
-              <button type="button" disabled={!outs.length || missing.length > 0} onClick={openRun} className="rounded bg-accent px-1.5 text-[10px] leading-4 text-white disabled:opacity-40" title={missing.length ? `${missing.length} op(s) still need an argument` : "run the plan: the Run workspace shows it live (stages, rows as they stream, errors) and records a trace"}>Run ▶</button>
+              <button type="button" disabled={!plan} onClick={() => setGraphOpen(true)} className="rounded border border-line px-1.5 text-[10px] leading-4 hover:bg-surface-2 disabled:opacity-40" title="the plan as a pipeline graph (not run)">Graph</button>
+              <button type="button" disabled={!outs.length || missing.length > 0} onClick={openRun} className="rounded bg-accent px-1.5 text-[10px] leading-4 text-white disabled:opacity-40" title={missing.length ? `${missing.length} op(s) still need an argument` : "open the plan in the Run workspace: a pipeline graph; Run ▶ there executes it live (stages, rows as they stream, errors) and records a trace"}>Open in Run ▸</button>
               <button type="button" className="text-muted hover:text-ink" onClick={() => setRowsOpen(!rowsOpen)} title={rowsOpen ? "hide the rows" : "show the rows"}>{rowsOpen ? "▾" : "▴"}</button>
             </div>
             {rowsOpen && <div className="min-h-0 flex-1 overflow-auto">

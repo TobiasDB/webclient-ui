@@ -31,7 +31,7 @@ export function Traces() {
     <div className="grid h-full grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
       <div className="rounded-lg border border-line">
         <div className="border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Traces</div>
-        {traces.data?.length ? <ul>{traces.data.map((t) => <li key={t.id} onClick={() => nav(`/traces/${t.id}`)} className="cursor-pointer border-b border-line px-3 py-2 text-[13px] hover:bg-surface-2"><b>{t.id}</b><div className="text-muted">{t.events} events{t.finished ? "" : " · open"}</div></li>)}</ul>
+        {traces.data?.length ? <ul>{traces.data.map((t) => <li key={t.id} onClick={() => nav(`/traces/${t.id}`)} className="cursor-pointer border-b border-line px-3 py-2 text-[13px] hover:bg-surface-2"><b>{t.id}</b><div className="text-muted">{t.events} events{t.bytes !== undefined ? ` · ${fmtBytes(t.bytes)}` : ""}{t.finished ? "" : " · open"}</div></li>)}</ul>
           : <EmptyState title="No traces" hint="Record one: `with wc.trace('traces/<name>.jsonl'): …` next to the API, or run demo.py." />}
       </div>
       <EmptyState title="Pick a trace" hint="You'll watch the run: the page as it changed, the mouse, the scrolls, and every request, action, loop and error as it happened -- one clock." />
@@ -67,3 +67,5 @@ export function Traces() {
     </div>
   );
 }
+
+const fmtBytes = (n: number): string => (n < 1024 ? `${n} B` : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB` : n < 1024 ** 3 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${(n / 1024 ** 3).toFixed(2)} GB`);

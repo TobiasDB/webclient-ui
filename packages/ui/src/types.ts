@@ -81,7 +81,7 @@ export interface SnapshotEvent extends Event {
   content?: string;
 }
 
-export interface TraceSummary { id: string; events: number; started?: number; finished?: number; schema_version?: number }
+export interface TraceSummary { id: string; events: number; /** size on disk */ bytes?: number; started?: number; finished?: number; schema_version?: number }
 
 export interface WaitingLoop { id: string; kind: "crawl" | "resolve"; ask: Ask }
 

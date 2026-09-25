@@ -58,7 +58,34 @@ export function stagesOf(p: Plan): Stage[] {
 export function flatStages(sts: Stage[]): Stage[] { const out: Stage[] = []; const go = (s: Stage) => { out.push(s); s.children.forEach(go); }; sts.forEach(go); return out; }
 
 export type RunEvent = { topic?: string; phase?: string; ts?: number; detail?: Record<string, unknown>; error?: { code?: string; op?: string; message?: string; subject?: string; hint?: string }; raised?: boolean; url?: string; [k: string]: unknown };
-export type StageStat = { count: number; errors: { code?: string; message?: string }[]; last?: number; /** items this stage fanned out to so far (a select_all's matches, a paginate's pages) */ fanout: number; /** how many times it is expected to run: the fan-out of the nearest EACH / PAGES above it */ expected?: number };
+export type StageStat = { count: number; errors: { code?: string; message?: string }[]; last?: number; /** items this stage fanned out to so far (a select_all's matches, a paginate's pages) */ fanout: number; /** how many times it is expected to run: the fan-out of the nearest EACH / PAGES above it */ expected?: number;
+  /** how many separate fan-outs made up `fanout` (a select_all run once per page: 40 fan-outs of ~7) */ fanouts?: number;
+  /** the width its items run at: at most `limit` at once, bounded by the `bound` pool (http slots / browser pages) */ parallel?: { limit: number; bound: string } };
+
+/** the pool's occupancy at a moment of the run (sampled while it is live) */
+export type Resources = { at: number; httpUsed: number; httpTotal: number; pagesUsed: number; pagesTotal: number; waiting: number };
+/** every pool sample up to `upTo` */
+export function resourcesOf(events: RunEvent[], upTo = events.length): Resources[] {
+  const out: Resources[] = [];
+  for (let i = 0; i < Math.min(upTo, events.length); i++) {
+    const e = events[i]! as RunEvent & { http_total?: number; http_free?: number; pages_total?: number; pages_free?: number; waiting?: number };
+    if (e.topic !== "resources") continue;
+    out.push({ at: i, httpTotal: e.http_total ?? 0, httpUsed: (e.http_total ?? 0) - (e.http_free ?? 0), pagesTotal: e.pages_total ?? 0, pagesUsed: (e.pages_total ?? 0) - (e.pages_free ?? 0), waiting: e.waiting ?? 0 });
+  }
+  return out;
+}
+
+/** what a stage DOES, for colour: fetches the network, fans out, finds, reads, interacts with the page, shapes rows */
+export type Action = "network" | "fanout" | "find" | "read" | "interact" | "shape";
+const ACTION: Record<string, Action> = {
+  resolve: "network", paginate: "network", download: "network", goto: "network",
+  select_all: "fanout", links: "fanout", select: "find",
+  attr: "read", text_content: "read", number: "read", date: "read", datetime: "read", map: "read",
+  click: "interact", write: "interact", scroll: "interact", wait_for: "interact", hover: "interact", press: "interact",
+  extract: "shape", project: "shape", merge: "shape", limit: "shape", filter: "shape",
+};
+export const actionOf = (op: string): Action => ACTION[op] ?? "shape";
+export const ACTION_COLOUR: Record<Action, string> = { network: "#2563eb", fanout: "#7c3aed", find: "#0891b2", read: "#16a34a", interact: "#ea580c", shape: "#64748b" };
 
 /** Attribute events 0..upTo to stages: a `plan.step` event counts on the stage with the same op
  * and argument (identical stages share them; the root fetch takes the first); an `error` event counts
@@ -73,7 +100,7 @@ export function stageStats(sts: Stage[], events: RunEvent[], upTo = events.lengt
   const link2 = (list: Stage[], before: Stage | undefined) => { let b = before; for (const st of list) { pred[st.id] = b; st.children.filter((c) => !c.chain).forEach((c) => link2([c], st)); link2(st.children.filter((c) => c.chain), st); b = st; } };
   link2(sts, undefined);
   const traced = (st: Stage | undefined): Stage | undefined => { let x = st; while (x && UNTRACED.has(x.op)) x = pred[x.id]; return x; };
-  let lastStage: Stage | undefined;
+  let lastStage: Stage | undefined; let lastFan: Stage | undefined;
   for (let i = 0; i < Math.min(upTo, events.length); i++) {
     const e = events[i]!;
     if (e.topic === "plan" && e.phase === "step") {
@@ -92,9 +119,17 @@ export function stageStats(sts: Stage[], events: RunEvent[], upTo = events.lengt
     } else if (e.topic === "plan" && e.phase === "fanout") {
       const op = String(e.detail?.op ?? ""); const sel = e.detail?.selector as string | undefined; const n = Number(e.detail?.n ?? 0);
       const st = all.find((s) => s.op === op && (!sel || s.arg === sel)) ?? all.find((s) => s.op === op);
-      if (st) { out[st.id]!.fanout += n; out[st.id]!.last = i; }
+      if (st) { const o = out[st.id]!; o.fanout += n; o.fanouts = (o.fanouts ?? 0) + 1; o.last = i; lastFan = st; }
+    } else if (e.topic === "plan" && e.phase === "parallel") {
+      // a fan-out starting: its width belongs to the stage that just fanned out
+      const lim = Number(e.detail?.limit ?? 0); const bound = String(e.detail?.bound ?? "http");
+      if (lastFan && lim) { const o = out[lastFan.id]!; o.parallel = { limit: Math.max(o.parallel?.limit ?? 0, lim), bound }; }
     } else if (e.topic === "error" && e.error) {
-      const op = e.error.op; const st = all.find((s) => s.op === op && (!e.error!.subject || s.arg === e.error!.subject)) ?? all.find((s) => s.op === op);
+      // the failing stage: its op + selector (as the subject, or quoted in the message), else the
+      // step that just ran, else the first stage with that op
+      const op = e.error.op; const subj = e.error.subject; const msg = e.error.message ?? "";
+      const st = all.find((s) => s.op === op && !!s.arg && s.arg === subj) ?? all.find((s) => s.op === op && !!s.arg && msg.includes(`'${s.arg}'`))
+        ?? (lastStage && lastStage.op === op ? lastStage : undefined) ?? all.find((s) => s.op === op);
       if (st) { out[st.id]!.errors.push({ code: e.error.code, message: e.error.message }); out[st.id]!.last = i; }
     }
   }

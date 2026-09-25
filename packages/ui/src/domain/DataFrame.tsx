@@ -39,7 +39,7 @@ export function DataFrame({ rows, columns, colours, className, emptyHint, emptyA
           {rows.slice(0, max).map((r, i) => (
             <tr key={i} onClick={onRow ? () => onRow(i) : undefined} className={cn("border-t border-line/70 align-top", onRow && "cursor-pointer hover:bg-surface-2", selected === i && "bg-accent-soft")}>
               <td className={cn("px-2 py-1 font-mono text-[10px] text-muted", dense && "px-1 py-px text-[9px]")}>{i + 1}</td>
-              {cols.map((c, ci) => { const col = colour(c, ci); return <td key={c} className={cn("max-w-[360px] px-2 py-1", dense && "px-1 py-px")} style={col ? { background: `${col}0d`, boxShadow: `inset 1px 0 0 ${col}33` } : undefined}><Cell value={r[c]} /></td>; })}
+              {cols.map((c, ci) => { const col = colour(c, ci); return <td key={c} className={cn("max-w-[360px] px-2 py-1", dense && "max-w-[300px] px-1 py-px")} style={col ? { background: `${col}0d`, boxShadow: `inset 1px 0 0 ${col}33` } : undefined}><Cell value={r[c]} /></td>; })}
             </tr>
           ))}
         </tbody>
@@ -56,30 +56,51 @@ function FileCell({ f }: { f: { filename: string; content_type: string; size: nu
   return <a href={href} download={f.filename} className="inline-flex items-center gap-1 rounded border border-line px-1.5 text-accent hover:bg-surface-2" title={`${f.content_type} · ${f.size} bytes`}>⬇ {f.filename} <span className="text-[10px] text-muted">{f.size < 1024 ? `${f.size} B` : f.size < 1048576 ? `${Math.round(f.size / 1024)} KB` : `${(f.size / 1048576).toFixed(1)} MB`}</span></a>;
 }
 
+/** a one-line PREVIEW of a value: strings clipped, objects as {key: value, …}, lists as [n] */
+export function preview(v: unknown, room = 90): string {
+  if (v == null) return "—";
+  if (typeof v === "string") { const t = v.replace(/\s+/g, " ").trim(); return t.length > room ? `"${t.slice(0, Math.max(room - 1, 4))}…"` : `"${t}"`; }
+  if (typeof v !== "object") return String(v);
+  if (Array.isArray(v)) return `[${v.length}]`;
+  const parts: string[] = []; let left = room;
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) { if (left <= 8) { parts.push("…"); break; } const p = `${k}: ${preview(x, Math.min(28, left - k.length - 2))}`; parts.push(p); left -= p.length + 2; }
+  return `{${parts.join(", ")}}`;
+}
+
+/** A cell: long text is CLAMPED to two lines (click to read it all, click again to fold), nested
+ * objects and lists are FOLDED to a one-line preview (click to open) -- so a row stays one glance tall. */
 function Cell({ value, depth = 0 }: { value: unknown; depth?: number }) {
-  const [open, setOpen] = React.useState(depth < 1);
+  const [open, setOpen] = React.useState(false);
   if (isFile(value)) return <FileCell f={value} />;
   if (value == null) return <span className="text-muted">—</span>;
+  const toggle = (e: React.MouseEvent) => { e.stopPropagation(); setOpen(!open); };
+  const head = (label: string) => (
+    <button type="button" onClick={toggle} className="flex max-w-full min-w-0 items-center gap-1 rounded bg-surface-2 px-1 text-left font-mono text-[10px] text-muted hover:text-ink" title={open ? "fold" : "open"}>
+      {open ? <ChevronDown size={10} className="shrink-0" /> : <ChevronRight size={10} className="shrink-0" />}<span className="min-w-0 truncate">{label}</span>
+    </button>
+  );
   if (Array.isArray(value)) {
     if (!value.length) return <span className="text-muted">[]</span>;
     const objs = value.every(isObj);
     return (
-      <div>
-        <button type="button" onClick={() => setOpen(!open)} className="inline-flex items-center gap-1 rounded bg-surface-2 px-1 font-mono text-[10px] text-muted">{open ? <ChevronDown size={10} /> : <ChevronRight size={10} />}{value.length} items</button>
+      <div className="min-w-0">
+        {head(open ? `${value.length} items` : `${value.length} items · ${value.slice(0, 3).map((x) => preview(x, 30)).join(", ")}${value.length > 3 ? ", …" : ""}`)}
         {open && (objs ? <div className="mt-1 rounded border border-line"><DataFrame rows={value as Record<string, unknown>[]} dense max={50} /></div>
-          : <ul className="mt-1 flex flex-col gap-0.5">{value.slice(0, 50).map((v, i) => <li key={i} className="flex gap-1"><span className="font-mono text-[10px] text-muted">{i}</span><Cell value={v} depth={depth + 1} /></li>)}</ul>)}
+          : <ul className="mt-1 flex flex-col gap-0.5">{value.slice(0, 50).map((v, i) => <li key={i} className="flex min-w-0 gap-1"><span className="font-mono text-[10px] text-muted">{i}</span><Cell value={v} depth={depth + 1} /></li>)}</ul>)}
       </div>
     );
   }
   if (isObj(value)) {
     const entries = Object.entries(value);
     return (
-      <div>
-        <button type="button" onClick={() => setOpen(!open)} className="inline-flex items-center gap-1 rounded bg-surface-2 px-1 font-mono text-[10px] text-muted">{open ? <ChevronDown size={10} /> : <ChevronRight size={10} />}{`{${entries.length}}`}</button>
-        {open && <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">{entries.map(([k, v]) => <React.Fragment key={k}><dt className="font-mono text-[10px] text-muted">{k}</dt><dd><Cell value={v} depth={depth + 1} /></dd></React.Fragment>)}</dl>}
+      <div className="min-w-0">
+        {head(open ? `{${entries.length}}` : preview(value))}
+        {open && <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5">{entries.map(([k, v]) => <React.Fragment key={k}><dt className="font-mono text-[10px] text-muted">{k}</dt><dd className="min-w-0"><Cell value={v} depth={depth + 1} /></dd></React.Fragment>)}</dl>}
       </div>
     );
   }
-  if (typeof value === "string" && /^https?:\/\//.test(value)) return <a href={value} target="_blank" rel="noreferrer" className="truncate text-accent" title={value}>{value.replace(/^https?:\/\//, "").slice(0, 60)}</a>;
-  return <span className="whitespace-pre-wrap break-words">{String(value)}</span>;
+  if (typeof value === "string" && /^https?:\/\//.test(value)) return <a href={value} target="_blank" rel="noreferrer" className="block truncate text-accent" title={value}>{value.replace(/^https?:\/\//, "").slice(0, 60)}</a>;
+  const text = String(value);
+  if (text.length <= 90 && !text.includes("\n")) return <span className="break-words">{text}</span>;
+  return <span onClick={toggle} className={cn("block cursor-pointer break-words", open ? "whitespace-pre-wrap" : "line-clamp-2")} title={open ? "click to fold" : `${text.length.toLocaleString()} characters -- click to read it all`}>{text}</span>;
 }
