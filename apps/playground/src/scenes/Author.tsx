@@ -206,7 +206,12 @@ export function Author() {
   /** a page whose content lives in shadow DOM / frames: the browser tier folds it into the capture */
   const useBrowser = () => { if (!pageNode?.op) return; setGraph((g) => updateNode(g, pageNode.id, { op: { ...pageNode.op!, kwargs: { ...pageNode.op!.kwargs, browser: { value: true } } } })); setPages((ps) => ({ ...ps, [pageNode.id]: { url: ps[pageNode.id]?.url ?? "" } })); setDocs((ds) => { const { [pageNode.id]: _d, ...rest } = ds; return rest; }); setPickEl(null); setPickShadow(false); };
   /** a picked <iframe>: its page as a Document of its own */
-  const openFrame = () => { if (!graph || !pickEl || !scope) return; const sel = selFor(pickEl); let g = graph; const s1 = addNode(g, scope.id, opOf("select", [sel]), returns); g = s1.graph; const h = addNode(g, s1.id, opOf("attr", ["src"]), returns); g = h.graph; const r = addNode(g, h.id, opOf("resolve", [], browserKw(tier)), returns); if (node && needsArg(node)) g = graphLib.removeNode(r.graph, node.id); else g = r.graph; setGraph(() => g); select(r.id); };
+  const openFrame = () => {
+    if (!graph || !pickEl || !node) return;
+    // the pending op (waiting for this pick) goes; the frame's page hangs off what it hung off
+    const pending = needsArg(node); const anchor = pending && node.parent ? scopeOf(graph, node.parent) : scope; if (!anchor) return;
+    const sel = selFor(pickEl); let g = pending ? graphLib.removeNode(graph, node.id) : graph; const s1 = addNode(g, anchor.id, opOf("select", [sel]), returns); g = s1.graph; const h = addNode(g, s1.id, opOf("attr", ["src"]), returns); g = h.graph; const r = addNode(g, h.id, opOf("resolve", [], browserKw(tier)), returns); g = r.graph; setGraph(() => g); select(r.id);
+  };
   /** a selector for an element the person acted on, rooted where it will be evaluated */
   const selFor = (el: Element): string => { const r = rootFor(el); return selectors.uniqueCandidates(el, r ?? el.ownerDocument)[0]?.selector ?? describe(el).selector; };
   /** the node an action hangs off: the focused page / action node, else the page */
