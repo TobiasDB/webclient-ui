@@ -113,7 +113,13 @@ export function Author() {
   const atHead = pageSteps.length > 0 && stepIx === pageSteps.length - 1;
   const liveDocId = atHead && head && head.page === pageKey && head.at === stateKey ? head.docId : null;
   /** actions done on the live page but not in the plan yet: they become steps as soon as a selector is used there */
-  const [pending, setPending] = React.useState<{ op: string; args: unknown[] }[]>([]);
+  const [pending, setPending] = React.useState<{ op: string; args: unknown[]; from?: string; to?: string }[]>([]);
+  /** the URL the live page is on now */
+  const [liveUrl, setLiveUrl] = React.useState<string | null>(null);
+  /** the live mirror's DOM -- it is the head's document only while nothing is pending (then the page IS the head's state) */
+  const [mirrorDoc, setMirrorDoc] = React.useState<Document | null>(null);
+  /** each page's static capture, parsed (a page's own document again once the live page has moved on) */
+  const staticDocs = React.useRef<Record<string, Document>>({});
   const doc = docs[stateKey] ?? null;
   const pageUrl = React.useCallback((id: string): string | null => {
     if (!graph) return null; const n = graph.nodes[id]; if (!n || !n.parent) return null;
@@ -140,6 +146,7 @@ export function Author() {
   React.useEffect(() => {
     const html = views.data?.content; if (!pageKey || !html || (liveDocId && stateKey === pageKey)) return;
     const parsed = new DOMParser().parseFromString(html, "text/html");
+    staticDocs.current[pageKey] = parsed;
     setDocs((ds) => ({ ...ds, [pageKey]: parsed }));
   }, [views.data?.content, pageKey, liveDocId, stateKey]);
   const reload = async () => { if (!sessionId || !page?.docId) return; await api.docReload(sessionId, page.docId); qc.invalidateQueries({ queryKey: ["doc-views", sessionId, page.docId] }); qc.invalidateQueries({ queryKey: ["session-docs"] }); setStream([]); since.current = 0; };
@@ -181,9 +188,9 @@ export function Author() {
     setDocs((ds) => ({ ...ds, [id]: new DOMParser().parseFromString(html, "text/html") }));
   };
   /** a live page AT `st` (a step of the focused page): the head when it is there, else replayed to it */
-  const liveAt = async (st: graphLib.GNode, g: Graph = graph!): Promise<string | null> => {
+  const liveAt = async (st: graphLib.GNode, g: Graph = graph!, fresh = false): Promise<string | null> => {
     if (!sessionId || !pageNode) return null;
-    if (head && head.page === pageNode.id && head.at === st.id) return head.docId;
+    if (!fresh && head && head.page === pageNode.id && head.at === st.id) return head.docId;
     if (head) api.docClose(sessionId, head.docId).catch(() => undefined);
     // Author holds ONE live page: any other live page of this session (an earlier load's head, a tab
     // closed without releasing) goes back to the pool first -- else the pool runs dry and this waits forever
@@ -199,8 +206,32 @@ export function Author() {
       await api.executeDoc({ plan: planBody("Document", [callBody(x.op!.name, argsOf(x))], sessionId), document_id: h.id });
       await snap(sessionId, h.id, x.id);
     }
-    setHead({ page: pageNode.id, at: st.id, docId: h.id });
+    setHead({ page: pageNode.id, at: st.id, docId: h.id }); setLiveUrl(h.url ?? url);
     return h.id;
+  };
+  /** BACK on the live page: the browser's back button on the SAME page (no new page, nothing replayed).
+   * The actions not in the plan are trimmed to those that lead to where it lands (by URL). */
+  const liveBack = async (): Promise<string | null> => {
+    if (!sessionId || !liveDocId) return null; setActError(null); setBusy("going back");
+    try {
+      const h = await api.executeDoc({ plan: planBody("Document", [callBody("back", [])], sessionId), document_id: liveDocId }); pullNow.current();
+      const u = h.url ?? null; setLiveUrl(u);
+      setPending((ps) => { const out = [...ps]; while (out.length && out[out.length - 1]!.to !== u) out.pop(); return out; });
+      return u;
+    } catch (e) { setActError(e as ApiError); return null; } finally { setBusy(null); }
+  };
+  /** back to what the PLAN leaves: back until nothing is pending; only a click that made no history entry
+   * (a tab, a filter) cannot be undone that way -- then the page is rebuilt at the head (the last resort) */
+  const liveReset = async () => {
+    if (!sessionId || !liveDocId || !stateNode) return;
+    let ps = [...pending]; let url = liveUrl; let guard = 12;
+    while (ps.length > 0 && guard-- > 0) {
+      const u = await liveBack(); if (u === null) break;
+      const moved = u !== url; url = u;
+      while (ps.length && ps[ps.length - 1]!.to !== u) ps.pop();  // the same trim liveBack applies
+      if (!moved) break;  // no history left to go back through
+    }
+    if (ps.length > 0) { setActError(null); setBusy("rebuilding the page at the plan's head"); try { await liveAt(stateNode, graph!, true); setPending([]); pullNow.current(); } catch (e) { setActError(e as ApiError); } finally { setBusy(null); } }
   };
   /** perform `op` from the step on screen, snapshot the result, and record it as the next step */
   const act = async (op: string, args: unknown[], record = true) => {
@@ -224,9 +255,47 @@ export function Author() {
   /** a plain click on the live head: done on the page, NOT recorded yet (pending until a selector is used) */
   const clickThrough = async (sel: string) => {
     if (!sessionId || !liveDocId) return; setActError(null); setBusy(".click(…)");
-    try { await api.executeDoc({ plan: planBody("Document", [callBody("click", [sel])], sessionId), document_id: liveDocId }); pullNow.current(); setPending((ps) => [...ps, { op: "click", args: [sel] }]); }
+    try { const from = liveUrl ?? undefined; const h = await api.executeDoc({ plan: planBody("Document", [callBody("click", [sel])], sessionId), document_id: liveDocId }); pullNow.current(); setLiveUrl(h.url ?? from ?? null); setPending((ps) => [...ps, { op: "click", args: [sel], from, to: h.url ?? from }]); }
     catch (e) { setActError(e as ApiError); } finally { setBusy(null); }
   };
+  // the mirror IS the head's document while nothing is pending; once the live page moved on (actions not in
+  // the plan), the head keeps its own document (its static capture / snapshot) -- the preview and every line's
+  // value stay computed on the page they belong to
+  React.useEffect(() => {
+    if (!head || !mirrorDoc || !liveDocId) return;
+    if (!pending.length) { setDocs((ds) => (ds[head.at] === mirrorDoc ? ds : { ...ds, [head.at]: mirrorDoc })); return; }
+    const own = staticDocs.current[head.at] ?? (snaps[head.at] ? new DOMParser().parseFromString(snaps[head.at]!.html, "text/html") : undefined);
+    setDocs((ds) => { if (!own) { const { [head.at]: _drop, ...rest } = ds; return ds[head.at] === mirrorDoc ? rest : ds; } return ds[head.at] === own ? ds : { ...ds, [head.at]: own }; });
+  }, [mirrorDoc, pending.length, head, liveDocId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // WHERE IN THE PLAN the live page is: after it moved on by clicks, a page of the plan whose selectors match it
+  // (or whose URL it is) takes it over -- the live page is re-homed there (focus, selectors, actions, rows)
+  const [placed, setPlaced] = React.useState<{ page: string; hits: number; of: number } | null>(null);
+  React.useEffect(() => {
+    if (!graph || !head || !mirrorDoc || !liveDocId) return;
+    // only once the live page LEFT its step: actions not in the plan, or a URL that is not the head page's (back)
+    const headUrl = pages[head.page]?.url ?? (graph.nodes[head.page]?.parent === graph.root ? graph.url : undefined);
+    if (!pending.length && (!liveUrl || !headUrl || liveUrl === headUrl)) return;
+    const t = setTimeout(() => {
+      let best: { id: string; hits: number; of: number; score: number } | null = null;
+      for (const r of Object.values(graph.nodes)) {
+        if (r.op?.name !== "resolve" || r.id === head.page || graphLib.isOff(graph, r.id)) continue;
+        const sels = Object.values(graph.nodes).filter((n) => n.parent && n.op && ["select", "select_all"].includes(n.op.name) && stateOf(graph, n.id)?.id === r.id && String(n.op.args[0]?.value ?? "").trim()).map((n) => String(n.op!.args[0]!.value));
+        const hits = sels.filter((q) => { try { return !!mirrorDoc.querySelector(q); } catch { return false; } }).length;
+        const urlHit = !!liveUrl && (pages[r.id]?.url ?? (r.parent === graph.root ? graph.url : undefined)) === liveUrl;
+        const score = urlHit ? 1 : sels.length ? hits / sels.length : 0;
+        if (score >= 0.6 && (!best || score > best.score)) best = { id: r.id, hits, of: sels.length, score };
+      }
+      if (!best) return;
+      // re-home: this page of the plan is where the live page is; the clicks that got here are not steps
+      // (the plan reaches it by its own link)
+      const id = best.id;
+      setPages((ps) => ({ ...ps, [id]: { ...(ps[id] ?? {}), url: liveUrl ?? ps[id]?.url ?? "" } }));
+      setHead({ page: id, at: id, docId: liveDocId }); setPending([]); setPlaced({ page: id, hits: best.hits, of: best.of });
+      select(id);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [mirrorDoc, liveUrl, pending.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => { if (placed && head?.page !== placed.page) setPlaced(null); }, [head?.page]); // eslint-disable-line react-hooks/exhaustive-deps
   // leaving Author: its live page goes back to the pool
   const headRef = React.useRef(head); headRef.current = head;
   React.useEffect(() => () => { const h = headRef.current; if (h && sessionId) api.docClose(sessionId, h.docId).catch(() => undefined); }, [sessionId]);
@@ -431,7 +500,7 @@ export function Author() {
     let at = parentId; for (const a of pending) { const x = addNode(g, at, opOf(a.op, a.args), returns); g = x.graph; at = x.id; }
     g = needBrowser(g); setPending([]);
     const docId = liveDocId; const sid = sessionId; const pk = pageNode.id;
-    setDocs((ds) => (ds[parentId] ? { ...ds, [at]: ds[parentId]! } : ds));  // the mirror's DOM is this step's
+    if (mirrorDoc) setDocs((ds) => ({ ...ds, [at]: mirrorDoc }));  // the mirror's DOM is this step's
     void snap(sid, docId, at).catch(() => undefined); setHead({ page: pk, at, docId });
     return { g, parent: at };
   };
@@ -737,7 +806,12 @@ export function Author() {
           ) : atHead && !liveDocId ? (
             <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "opening the live page…"}</div>
           ) : liveDocId ? (
-            livePictured ? <Player key={liveStart} events={liveStream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={shownRoots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const sel = p.el ? selFor(p.el) : null; if (!sel) return; if (m.shift) { void act("click", [sel]); return; } void clickThrough(sel); }} onDocument={(d) => setDocs((ds) => (ds[stateKey] === d ? ds : { ...ds, [stateKey]: d }))} controls={false} controller={controller} maxHeight={pageH} /> : <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "waiting for the live page to send its picture (it is loading or navigating)…"}</div>
+            <>{<div className="absolute left-1 top-1 z-20 flex items-center gap-1 rounded border border-line bg-surface/95 px-1 py-0.5 text-[10.5px] shadow">
+              <button type="button" data-act="live-back" disabled={!!busy} onClick={() => { void liveBack(); }} className="rounded px-1.5 hover:bg-surface-2 disabled:opacity-40" title="the browser's back button, on this page (the actions not in the plan are trimmed to where it lands)">⟵ back</button>
+              <button type="button" data-act="live-reset" disabled={!pending.length || !!busy} onClick={() => { void liveReset(); }} className="rounded px-1.5 hover:bg-surface-2 disabled:opacity-40" title="back until no action outside the plan is left (rebuilt at the plan's head only when a click made no history entry)">⟲ to the plan</button>
+              <span className="text-muted">{busy ? `${busy}…` : pending.length ? `${pending.length} action${pending.length > 1 ? "s" : ""} not in the plan` : placed && placed.page === pageKey ? <>on <b className="text-accent">{graph.nodes[placed.page]?.output ? `.resolve() → ${graph.nodes[placed.page]!.output}` : ".resolve()"}</b> in the plan{placed.of ? ` (${placed.hits}/${placed.of} of its selectors match)` : " (its URL)"}</> : "on the plan's head"}</span>
+            </div>}
+            {livePictured ? <Player key={liveStart} events={liveStream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={shownRoots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const sel = p.el ? selFor(p.el) : null; if (!sel) return; if (m.shift) { void act("click", [sel]); return; } void clickThrough(sel); }} onDocument={(d) => setMirrorDoc(d)} controls={false} controller={controller} maxHeight={pageH} /> : <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "waiting for the live page to send its picture (it is loading or navigating)…"}</div>}</>
           ) : card && card.kind === "binary" ? (
             <EmptyState title="A file" hint="Not a page to render: add .download() above to return its bytes (url, filename, content type, size, base64)." action={<Button onClick={() => node && addEdge("download", [], {}, { output: "file" })}>.download()</Button>} />
           ) : stateKey !== pageKey ? (snaps[stateKey] ? (
