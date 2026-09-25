@@ -294,7 +294,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
 
   React.useEffect(() => {
     if (!scrollTo) return; const w = scrollTo.ownerDocument.defaultView; if (!w) return;
-    const r = scrollTo.getBoundingClientRect(); if (r.top < 0 || r.bottom > w.innerHeight) scrollWithin(scrollTo, "center");
+    scrollWithin(scrollTo, "center");  // the outlined element, CENTRED
     refreshRef.current();
   }, [scrollTo]);
 

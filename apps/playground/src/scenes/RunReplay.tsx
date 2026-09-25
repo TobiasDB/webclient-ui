@@ -43,9 +43,18 @@ export function ReplayScreen({ traceId, events, stageOf, stages, stats, at, pick
     if (!ev || j < 0) return null;
     const own = docOf(ev); const st = all.find((x) => x.id === stageOf[j]);
     const feed = st ? stats[st.id]?.feed : undefined; const fan = feed ? all.find((x) => x.id === feed) : undefined;
-    const idx = (ev.item ?? []).length ? ev.item![ev.item!.length - 1]! : undefined;
+    let idx = (ev.item ?? []).length ? ev.item![ev.item!.length - 1]! : undefined;
+    // a trace without item paths (recorded before they were stamped): the ITERATION -- how many times this
+    // stage ran on this page since its fan-out there -- is the item's index
+    let fanDoc: string | undefined;
+    if (idx == null && fan && st && !(ev.item ?? []).length) {
+      // anchored on the fan-out: its page, and how many times this stage ran since it
+      let n = 0; for (let k = j - 1; k >= 0; k--) { const e = events[k]!; if (stageOf[k] === fan.id && e.phase === "fanout" && (!docOf(ev) || docOf(e) === docOf(ev))) { fanDoc = docOf(e); break; } if (stageOf[k] === st.id && e.topic === "plan" && e.phase === "step" && (!docOf(ev) || docOf(e) === docOf(ev))) n++; }
+      idx = n;
+      if (!own && fanDoc) return { doc: fanDoc, fan, local: idx };
+    }
     const spans = fan ? replayLib.pageSpans(events, stageOf, fan.id) : [];
-    if (own) { const sp = spans.find((x) => x.doc === own); return { doc: own, fan, local: idx != null && sp ? idx - sp.from : idx }; }
+    if (own) { const sp = spans.find((x) => x.doc === own); return { doc: own, fan, local: idx != null && sp && (ev.item ?? []).length ? idx - sp.from : idx }; }
     if (fan && idx != null) { const hit = replayLib.pageOfItem(spans, idx); if (hit) return { doc: hit.doc, fan, local: hit.local }; }
     const key = keyOf(ev);
     for (let k = j - 1; k >= 0 && j - k < 5000; k--) { const e = events[k]!; const d = docOf(e); if (d && keyOf(e) === key) return { doc: d, fan, local: idx }; }
