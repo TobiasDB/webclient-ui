@@ -24,12 +24,20 @@ export class ApiError extends Error {
   get code(): string | undefined { const e = (this.body as { error?: { code?: string; type?: string } })?.error; return e?.code ?? e?.type; }
 }
 
+/** told when a call finds the session gone (expired, closed, the API restarted) -- the session store listens */
+let sessionLost: ((why: string) => void) | null = null;
+export const onSessionLost = (f: ((why: string) => void) | null) => { sessionLost = f; };
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${API_URL}${path}`, { ...init, headers: { "content-type": "application/json", ...(init?.headers ?? {}) } });
   const text = await r.text();
   let body: unknown = text;
   try { body = JSON.parse(text); } catch { /* not json */ }
-  if (!r.ok) throw new ApiError(r.status, body);
+  if (!r.ok) {
+    const err = new ApiError(r.status, body);
+    if (err.code === "NoSuchSession") sessionLost?.(err.detail?.message ?? "the session is gone");
+    throw err;
+  }
   return body as T;
 }
 

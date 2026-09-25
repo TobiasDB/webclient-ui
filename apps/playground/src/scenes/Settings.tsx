@@ -2,16 +2,15 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Chip, EmptyState, KeyValue, Panel } from "@webclient/ui";
 import { api } from "../lib/api";
-import { closeSession, ensureSession, useSession } from "../lib/session";
+import { closeSession, reconnect, useSessionState } from "../lib/session";
 import { useQueryClient } from "@tanstack/react-query";
 
 /** Settings (stories 9.1-9.5). Read-only where the API has no write endpoint yet: the model
  * (stub by default -- a key is configured on the API side), resources, limits. */
 export function Settings() {
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 5000 });
-  const sessionId = useSession();
-  const [sid, setSid] = React.useState<string | null>(null);
-  React.useEffect(() => setSid(sessionId), [sessionId]);
+  const ss = useSessionState();
+  const sid = ss.status === "ok" ? ss.id : null;
   const qc = useQueryClient();
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions, refetchInterval: 4000 });
   const refresh = () => { qc.invalidateQueries({ queryKey: ["sessions"] }); qc.invalidateQueries({ queryKey: ["health"] }); qc.invalidateQueries({ queryKey: ["session-docs"] }); };
@@ -21,11 +20,11 @@ export function Settings() {
     <div className="grid h-full grid-cols-1 gap-3 overflow-auto p-3 md:grid-cols-2">
       <Panel title="Your session">
         <div className="flex flex-wrap items-center gap-2 text-[13px]">
-          <Chip tone={sid ? "ok" : "warn"} dot>{sid ? `session ${sid}` : "no session"}</Chip>
+          <Chip tone={sid ? "ok" : ss.status === "gone" ? "bad" : "warn"} dot>{sid ? `session ${sid}` : ss.status === "gone" ? "session lost" : ss.status === "offline" ? "API unreachable" : "connecting…"}</Chip>
           <span className="text-muted">Everything server-held -- the live pages you open, the plans you run -- lives in this one server-side session object (opened with the DOM recorder on).</span>
         </div>
         <div className="mt-2 flex flex-wrap gap-2">
-          <Button size="sm" variant="secondary" onClick={async () => { await closeSession(); setSid(await ensureSession()); refresh(); }}>Close and open a fresh one</Button>
+          <Button size="sm" variant="secondary" onClick={async () => { await closeSession(); await reconnect(); refresh(); }}>Close and open a fresh one</Button>
           {sid && <Button size="sm" variant="secondary" onClick={async () => { await api.sessionRelease(sid); refresh(); }}>Release my live pages</Button>}
         </div>
         <div className="mt-4 mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Every session on the API</div>
@@ -36,7 +35,7 @@ export function Settings() {
             <tr key={s.id} className="border-t border-line/60">
               <td className="py-1 font-mono">{s.id.slice(0, 12)}{s.id === sid ? <Chip tone="accent" className="ml-1">you</Chip> : null}</td><td>{s.documents}</td><td>{s.live_pages}</td><td>{s.crawls}</td>
               <td className="text-muted">{s.expires_at ? `${Math.max(0, Math.round((s.expires_at * 1000 - Date.now()) / 60000))} min` : "never"}</td>
-              <td className="text-right"><Button size="sm" variant="ghost" onClick={async () => { await api.sessionRelease(s.id); refresh(); }}>release pages</Button><Button size="sm" variant="ghost" onClick={async () => { await api.sessionClose(s.id); if (s.id === sid) { await closeSession(); setSid(await ensureSession()); } refresh(); }}>close</Button></td>
+              <td className="text-right"><Button size="sm" variant="ghost" onClick={async () => { await api.sessionRelease(s.id); refresh(); }}>release pages</Button><Button size="sm" variant="ghost" onClick={async () => { await api.sessionClose(s.id); if (s.id === sid) { await closeSession(); await reconnect(); } refresh(); }}>close</Button></td>
             </tr>))}</tbody>
         </table>
         {sessions.data && sessions.data.length > 1 && <Button size="sm" variant="danger" className="mt-2" onClick={async () => { for (const s of sessions.data!) if (s.id !== sid) await api.sessionClose(s.id); refresh(); }}>Close every other session</Button>}

@@ -67,6 +67,10 @@ const TONE: Record<NonNullable<Highlight["tone"]>, string> = { accent: "#2457e6"
  * at the recorded viewport and is scaled to fit -- no reflow between documents. */
 const NO_HIGHLIGHTS: Highlight[] = [];
 
+/** where OUR pointer last was, in the page's DOCUMENT coordinates -- kept across remounts (a live
+ * page restarts its mirror on every navigation / step), so the pointer always moves on from there */
+let lastPointer: { x: number; y: number } | null = null;
+
 export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, shiftPick = false, onClickThrough, focus = null, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
   const ownCtl = React.useMemo(() => new PlayerController(), []);
   const ctl = controller ?? ownCtl;
@@ -93,9 +97,12 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
   const [hover, setHover] = React.useState<Box | null>(null);
   const [pulses, setPulses] = React.useState<Pulse[]>([]);
   const [flash, setFlash] = React.useState<Box[]>([]);
-  const [cursor, setCursor] = React.useState<{ x: number; y: number; down: boolean } | null>(null);
+  // the pointer lives in DOCUMENT coordinates (it stays on its target as the rebuilt page scrolls);
+  // it is drawn at document - scroll
+  const [cursor, setCursor] = React.useState<{ x: number; y: number; down: boolean } | null>(lastPointer ? { ...lastPointer, down: false } : null);
   const cursorAnim = React.useRef(0);
-  const cursorPos = React.useRef<{ x: number; y: number } | null>(null);
+  const cursorPos = React.useRef<{ x: number; y: number } | null>(lastPointer);
+  const [scrollXY, setScrollXY] = React.useState<[number, number]>([0, 0]);
   const [ready, setReady] = React.useState(false);
   const staticOnly = !live && events.length <= 2;
 
@@ -132,7 +139,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
           const args = (payload.args ?? {}) as { selector?: string; from?: number[]; to?: number[] };
           pulse(tag, `${payload.action}${args.selector ? ` ${args.selector}` : ""}`);
           if (args.selector) flashSelector(String(args.selector));
-          if (payload.action === "click" || payload.action === "write") moveCursor(args.from, args.to ?? (args.selector ? centreOf(String(args.selector)) : undefined), true);
+          if (payload.action === "click" || payload.action === "write") { const w = doc()?.defaultView; const target = (args.selector ? centreOf(String(args.selector)) : undefined) ?? (args.to ? [args.to[0]! + (w?.scrollX ?? 0), args.to[1]! + (w?.scrollY ?? 0)] : undefined); moveCursor(undefined, target, true); }
         }
         if (tag === "plan" && payload.phase === "step") {
           const d = (payload.detail ?? {}) as { op?: string; selector?: string };
@@ -194,15 +201,23 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
   }, [highlights]);
   refreshRef.current = refreshBoxes;
   React.useEffect(() => { refreshBoxes(); }, [refreshBoxes, scale, ready]);
-  React.useEffect(() => { const d = doc(); if (!d) return; const h = () => refreshBoxes(); d.addEventListener("scroll", h, true); return () => d.removeEventListener("scroll", h, true); }, [refreshBoxes, ready]);
+  React.useEffect(() => { const d = doc(); if (!d) return; const h = () => { refreshBoxes(); const w = d.defaultView; if (w) setScrollXY([w.scrollX, w.scrollY]); }; h(); d.addEventListener("scroll", h, true); return () => d.removeEventListener("scroll", h, true); }, [refreshBoxes, ready]);
   const flashSelector = (sel: string, colour = "#b45309", label = "action") => { const d = doc(); if (!d) return; let els: Element[] = []; try { els = [...d.querySelectorAll(sel)].slice(0, 12); } catch { return; } const fb = els.map((el, i) => boxFor(el, colour, i === 0 ? label : undefined)); setFlash(fb); setTimeout(() => setFlash([]), 1100); };
   /** the centre of a selector's first match, in page coordinates (what the driver aimed at) */
-  const centreOf = (sel: string): number[] | undefined => { const d = doc(); if (!d) return undefined; let el: Element | null = null; try { el = d.querySelector(sel); } catch { return undefined; } if (!el) return undefined; try { el.scrollIntoView({ block: "center" }); } catch { /* fine */ } const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  const centreOf = (sel: string): number[] | undefined => {
+    const d = doc(); if (!d) return undefined; let el: Element | null = null; try { el = d.querySelector(sel); } catch { return undefined; } if (!el) return undefined;
+    if (!live) { try { el.scrollIntoView({ block: "center" }); } catch { /* fine */ } }  // live: the page's own scroll arrives in the stream
+    const r = el.getBoundingClientRect(); const w = d.defaultView;
+    return [r.left + r.width / 2 + (w?.scrollX ?? 0), r.top + r.height / 2 + (w?.scrollY ?? 0)];  // DOCUMENT coordinates
+  };
   /** OUR pointer: drawn along the same human path the driver took (from/to on the event, or
    * from where it last was to the target) -- nothing is recorded; both sides compute it. */
-  const moveCursor = (from: number[] | undefined, to: number[] | undefined, click: boolean) => {
+  const moveCursor = (_from: number[] | undefined, to: number[] | undefined, click: boolean) => {
     if (!to) return;
-    const start = from ?? (cursorPos.current ? [cursorPos.current.x, cursorPos.current.y] : [size.w * 0.55, size.h * 0.45]);
+    // ALWAYS from where our pointer last was (never the event's idea of it: the two drift apart, and a
+    // restarted mirror would jump back to a resting spot); the first move starts mid-view
+    const w = doc()?.defaultView;
+    const start = cursorPos.current ? [cursorPos.current.x, cursorPos.current.y] : [size.w * 0.55 + (w?.scrollX ?? 0), size.h * 0.45 + (w?.scrollY ?? 0)];
     const pts = humanMousePath(start[0]!, start[1]!, to[0]!, to[1]!);
     const dist = Math.hypot(to[0]! - start[0]!, to[1]! - start[1]!);
     const times = pathTimingsMs(pts.length, mouseDurationMs(dist) / Math.max(0.25, speed));
@@ -210,7 +225,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     const t0 = performance.now();
     const step = () => {
       const el = performance.now() - t0; let i = 0; while (i < times.length - 1 && times[i + 1]! <= el) i++;
-      const [x, y] = pts[i]!; setCursor({ x, y, down: false }); cursorPos.current = { x, y };
+      const [x, y] = pts[i]!; setCursor({ x, y, down: false }); cursorPos.current = { x, y }; lastPointer = { x, y };
       if (i < pts.length - 1) cursorAnim.current = requestAnimationFrame(step);
       else if (click) { setCursor({ x, y, down: true }); setTimeout(() => setCursor((c) => (c ? { ...c, down: false } : c)), 260); }
     };
@@ -271,7 +286,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
         <div ref={root} className="absolute left-0 top-0 origin-top-left" style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} />
         {/* the overlay: highlights, hover, flashes -- scaled with the page */}
         <div className={cn("absolute left-0 top-0 origin-top-left", pickable && !shiftPick && "cursor-crosshair")} style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); cbs.current.onHover?.(null); }} onClick={onClick}>
-          {cursor && <div className={cn("wc-cursor", cursor.down && "wc-cursor-down")} style={{ left: cursor.x, top: cursor.y }} />}
+          {cursor && <div className={cn("wc-cursor", cursor.down && "wc-cursor-down")} style={{ left: cursor.x - scrollXY[0], top: cursor.y - scrollXY[1] }} />}
           {[...boxes, ...flash, ...(hover ? [hover] : [])].map((b, i) => (
             <div key={i} className={cn("wc-hl absolute", b.dashed && "wc-hl-dashed", flash.includes(b) && "wc-hl-flash")} style={{ left: b.left, top: b.top, width: b.width, height: b.height, ["--c" as any]: b.colour }}>
               {b.label && <span className="wc-hl-label">{b.label}</span>}

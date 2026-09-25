@@ -186,6 +186,8 @@ export function Author() {
     try { for (const d of await api.docs(sessionId)) if ((d as { live?: boolean }).live && d.id !== head?.docId) await api.docClose(sessionId, d.id).catch(() => undefined); } catch { /* best effort */ }
     const url = page?.url ?? pageUrl(pageNode.id); if (!url) return null;
     setBusy("opening a live page");
+    // a full browser pool makes this WAIT: say so (and where to free pages) rather than just spinning
+    try { const hp = (await api.health()).pool as { pages_free?: number; pages_total?: number } | undefined; if (hp && hp.pages_free === 0) setBusy(`waiting for a browser page -- all ${hp.pages_total} are in use by other sessions (Settings → close other sessions)`); } catch { /* fine */ }
     const h = await api.docOpen(sessionId, { url, browser: "always", live: true });
     const steps = stepsOfPage(g, pageNode.id); const upto = steps.slice(1, steps.findIndex((x) => x.id === st.id) + 1);
     for (const x of upto) {  // replay step by step, snapshotting each (the steps get their pictures back)
@@ -244,6 +246,16 @@ export function Author() {
   // on screen is fetched in the background from the FIRST item's link, as the example it is checked on
   const [checkDocs, setCheckDocs] = React.useState<Record<string, { url: string; doc: Document }>>({});
   const checking = React.useRef(new Set<string>());
+  // a NEW session (the old one was lost): what the old one held is gone -- reopen the pages in the new one
+  const prevSid = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!sessionId) return;
+    if (prevSid.current && prevSid.current !== sessionId) {
+      setPages((ps) => Object.fromEntries(Object.entries(ps).map(([k, v]) => [k, { url: v.url }])));
+      setDocs({}); setHead(null); setCheckDocs({}); checking.current.clear(); setStream([]); setPending([]); setActError(null);
+    }
+    prevSid.current = sessionId;
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
   const docOf = React.useCallback((id: string): Document | null => docs[id] ?? checkDocs[id]?.doc ?? null, [docs, checkDocs]);
   React.useEffect(() => {
     if (!active || !sessionId || !graph) return;

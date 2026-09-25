@@ -1,4 +1,5 @@
 import * as React from "react";
+import { reconnect, useSessionState } from "./lib/session";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Chip, RunBar, cn, type Event } from "@webclient/ui";
 import { subscribe } from "./lib/api";
@@ -56,6 +57,7 @@ export function App() {
         <div className="flex-1" />
         <Chip tone="neutral" title="the model used by Onboard / the index author; configure a key in Settings">model: stub</Chip>
         <Chip tone={showEvents ? "accent" : "neutral"} interactive onClick={() => setShowEvents(!showEvents)} title="the live event feed (debugging); off by default">events</Chip>
+        <SessionChip />
         <Chip tone={connected ? "ok" : "bad"} dot>{connected ? "connected" : "no API"}</Chip>
       </header>
       <DocumentStrip />
@@ -113,4 +115,21 @@ function Redirect() {
   const n = new URLSearchParams();
   for (const k of ["url", "doc", "tier"]) { const v = p.get(k); if (v) n.set(k, v); }
   return <Navigate to={`/author?${n}`} replace />;
+}
+
+/** the SESSION's state, always in view: ok / connecting / offline (the API is not answering; it
+ * recovers by itself) / gone (expired, closed, the API restarted) -- with a one-click new session */
+function SessionChip() {
+  const s = useSessionState();
+  const [busy, setBusy] = React.useState(false);
+  const renew = async () => { setBusy(true); try { await reconnect(); } finally { setBusy(false); } };
+  if (s.status === "ok") return <Chip tone="ok" dot title={`session ${s.id} -- everything server-held (live pages, runs) lives in it`}>session</Chip>;
+  if (s.status === "connecting" || busy) return <Chip tone="neutral" dot title="opening a session on the API">session…</Chip>;
+  if (s.status === "offline") return <Chip tone="warn" dot title={`${s.why ?? "the API is not answering"} -- it reconnects by itself when the API is back`}>session: API unreachable</Chip>;
+  return (
+    <span className="flex items-center gap-1" data-session="gone">
+      <Chip tone="bad" dot title={s.why ?? "the session is gone"}>session lost</Chip>
+      <button type="button" data-act="reconnect" onClick={renew} className="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-white hover:brightness-110" title="open a new session: pages reopen in it (live pages start again)">reconnect</button>
+    </span>
+  );
 }
