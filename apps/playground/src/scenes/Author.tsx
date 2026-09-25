@@ -700,7 +700,7 @@ export function Author() {
   const [rowsOpen, setRowsOpenRaw] = React.useState(() => remembered("wc.author.rows", true));
   const setRowsOpen = (v: boolean) => { setRowsOpenRaw(v); try { localStorage.setItem("wc.author.rows", v ? "1" : "0"); } catch { /* fine */ } };
   const rowsH = 210;
-  const pageH = Math.max(320, vh - 44 - 30 - 46 - (rowsOpen ? rowsH : 22) - 10 - (pageSteps.length > 1 || pending.length > 0 ? 22 : 0));
+  const pageH = Math.max(320, vh - 44 - 30 - 46 - (rowsOpen ? rowsH : 22) - 10 - (pageSteps.length > 1 || pending.length > 0 || !!liveDocId ? 22 : 0));
   /** each output's colour -- the same on the plan line, the page outline and its rows column */
   const colourOf = React.useMemo(() => { const m: Record<string, string> = {}; outs.forEach((o, i) => { if (o.output) m[o.output] = fieldColour(i); }); return m; }, [outs]);
   const columnColours = (rows: Record<string, unknown>[]) => { const m: Record<string, string> = {}; for (const r of rows.slice(0, 5)) for (const k of Object.keys(r)) { const parts = k.split("."); for (let i = parts.length - 1; i >= 0; i--) { const c = colourOf[parts[i]!]; if (c) { m[k] = c; break; } } } return m; };
@@ -783,7 +783,13 @@ export function Author() {
             </div>
           </section>
           {/* the page's STEPS: the page, then each action; step back / forward; the live head is marked */}
-          {pageNode && (pageSteps.length > 1 || pending.length > 0) && <div className="flex h-[20px] shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap rounded border border-line px-1 text-[10px]">
+          {pageNode && (pageSteps.length > 1 || pending.length > 0 || !!liveDocId) && <div className="flex h-[20px] shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap rounded border border-line px-1 text-[10px]">
+            {liveDocId && <span className="mr-1 flex shrink-0 items-center gap-0.5 border-r border-line pr-1">
+              <button type="button" data-act="live-back" disabled={!!busy} onClick={() => { void liveBack(); }} className="rounded px-1 hover:bg-surface-2 disabled:opacity-40" title="the browser's back button, on this page (the actions not in the plan are trimmed to where it lands)">⟵ back</button>
+              <button type="button" data-act="live-reset" disabled={!pending.length || !!busy} onClick={() => { void liveReset(); }} className="rounded px-1 hover:bg-surface-2 disabled:opacity-40" title="back until no action outside the plan is left (rebuilt at the plan's head only when a click made no history entry)">⟲ to the plan</button>
+              {placed && placed.page === pageKey && !pending.length && <span className="text-muted">on <b className="text-accent">{graph.nodes[placed.page]?.output ? `.resolve() → ${graph.nodes[placed.page]!.output}` : ".resolve()"}</b>{placed.of ? ` (${placed.hits}/${placed.of} selectors match)` : " (its URL)"}</span>}
+              {busy && <span className="text-muted">{busy}…</span>}
+            </span>}
             <span className="mr-1 font-semibold uppercase tracking-wide text-muted">steps</span>
             <button type="button" className="px-0.5 text-muted hover:text-ink disabled:opacity-30" disabled={stepIx <= 0} onClick={() => stepIx > 0 && select(pageSteps[stepIx - 1]!.id)} title="the step before">◀</button>
             {pageSteps.map((x, i) => <React.Fragment key={x.id}>{i > 0 && <span className="text-muted">›</span>}
@@ -806,12 +812,7 @@ export function Author() {
           ) : atHead && !liveDocId ? (
             <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "opening the live page…"}</div>
           ) : liveDocId ? (
-            <>{<div className="absolute left-1 top-1 z-20 flex items-center gap-1 rounded border border-line bg-surface/95 px-1 py-0.5 text-[10.5px] shadow">
-              <button type="button" data-act="live-back" disabled={!!busy} onClick={() => { void liveBack(); }} className="rounded px-1.5 hover:bg-surface-2 disabled:opacity-40" title="the browser's back button, on this page (the actions not in the plan are trimmed to where it lands)">⟵ back</button>
-              <button type="button" data-act="live-reset" disabled={!pending.length || !!busy} onClick={() => { void liveReset(); }} className="rounded px-1.5 hover:bg-surface-2 disabled:opacity-40" title="back until no action outside the plan is left (rebuilt at the plan's head only when a click made no history entry)">⟲ to the plan</button>
-              <span className="text-muted">{busy ? `${busy}…` : pending.length ? `${pending.length} action${pending.length > 1 ? "s" : ""} not in the plan` : placed && placed.page === pageKey ? <>on <b className="text-accent">{graph.nodes[placed.page]?.output ? `.resolve() → ${graph.nodes[placed.page]!.output}` : ".resolve()"}</b> in the plan{placed.of ? ` (${placed.hits}/${placed.of} of its selectors match)` : " (its URL)"}</> : "on the plan's head"}</span>
-            </div>}
-            {livePictured ? <Player key={liveStart} events={liveStream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={shownRoots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const sel = p.el ? selFor(p.el) : null; if (!sel) return; if (m.shift) { void act("click", [sel]); return; } void clickThrough(sel); }} onDocument={(d) => setMirrorDoc(d)} controls={false} controller={controller} maxHeight={pageH} /> : <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "waiting for the live page to send its picture (it is loading or navigating)…"}</div>}</>
+            <>            {livePictured ? <Player key={liveStart} events={liveStream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={shownRoots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const sel = p.el ? selFor(p.el) : null; if (!sel) return; if (m.shift) { void act("click", [sel]); return; } void clickThrough(sel); }} onDocument={(d) => setMirrorDoc(d)} controls={false} controller={controller} maxHeight={pageH} /> : <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "waiting for the live page to send its picture (it is loading or navigating)…"}</div>}</>
           ) : card && card.kind === "binary" ? (
             <EmptyState title="A file" hint="Not a page to render: add .download() above to return its bytes (url, filename, content type, size, base64)." action={<Button onClick={() => node && addEdge("download", [], {}, { output: "file" })}>.download()</Button>} />
           ) : stateKey !== pageKey ? (snaps[stateKey] ? (
