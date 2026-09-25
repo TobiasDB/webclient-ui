@@ -18,6 +18,8 @@ export type PageFrameProps = {
   /** render only these elements (siblings along their ancestors hidden; styles kept) */
   focusPaths?: ElPath[] | null;
   highlights?: FrameHighlight[];
+  /** keep this element in view (scrolled within the frame, never the page around it) */
+  scrollTo?: ElPath | null;
   /** PICK mode: a click picks an element (nothing happens on the page); otherwise the page is interactive */
   picking?: boolean;
   onPick?: (p: FramePick) => void;
@@ -38,7 +40,7 @@ export type PageFrameProps = {
  * runs first: hover outlines, the pick (in pick mode), the person's actions reported (in
  * interact mode), highlights drawn inside the page, focus isolation. Frame and workspace talk by
  * postMessage; elements travel as structural paths. */
-export function PageFrame({ html, base, stripScripts, focusPaths = null, highlights = [], picking = false, onPick, onHover, onAction, onCounts, width = 1280, maxHeight = 760, className }: PageFrameProps) {
+export function PageFrame({ html, base, stripScripts, focusPaths = null, highlights = [], scrollTo = null, picking = false, onPick, onHover, onAction, onCounts, width = 1280, maxHeight = 760, className }: PageFrameProps) {
   const frame = React.useRef<HTMLIFrameElement>(null);
   const box = React.useRef<HTMLDivElement>(null);
   const [scale, setScale] = React.useState(1);
@@ -68,7 +70,7 @@ export function PageFrame({ html, base, stripScripts, focusPaths = null, highlig
   const post = (m: Record<string, unknown>) => frame.current?.contentWindow?.postMessage({ __wc: 1, ...m }, "*");
   React.useEffect(() => { if (ready) post({ type: "mode", picking }); }, [ready, picking]); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => { if (ready) post({ type: "focus", paths: focusPaths }); }, [ready, JSON.stringify(focusPaths)]); // eslint-disable-line react-hooks/exhaustive-deps
-  React.useEffect(() => { if (ready) post({ type: "highlight", items: highlights }); }, [ready, JSON.stringify(highlights)]); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => { if (ready) post({ type: "highlight", items: highlights, scroll: scrollTo ?? null }); }, [ready, JSON.stringify(highlights), JSON.stringify(scrollTo)]); // eslint-disable-line react-hooks/exhaustive-deps
   // a load that the agent did not announce is a page browsed to (a shift-followed link)
   const onLoad = () => { const t = Date.now(); post({ type: "ping" }); setTimeout(() => { if (readyAt.current < t) { setAway(true); setReady(false); } }, 800); };
   return (
@@ -108,9 +110,10 @@ function draw(){raf=0;ensure();layer.innerHTML="";var counts=[];for(var k=0;k<it
 var shields=null;
 function shield(){if(!shields||!shields.isConnected){shields=document.createElement("div");shields.setAttribute("data-wc-layer","");shields.style.cssText="position:absolute;left:0;top:0;width:0;height:0;overflow:visible;z-index:2147483646";document.documentElement.appendChild(shields)}shields.innerHTML="";if(!picking)return;var fs=document.querySelectorAll("iframe,object,embed");for(var i=0;i<fs.length;i++){var f=fs[i];if(!inRoots(f))continue;var r=f.getBoundingClientRect();if(!r.width||!r.height)continue;var d=document.createElement("div");d.setAttribute("data-wc-layer","");d.style.cssText="position:absolute;cursor:crosshair;left:"+(r.left+scrollX)+"px;top:"+(r.top+scrollY)+"px;width:"+r.width+"px;height:"+r.height+"px;background:rgba(217,119,6,.06)";(function(f){d.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();post({type:"pick",pick:info(f)})});d.addEventListener("mousemove",function(){if(hover!==f){hover=f;post({type:"hover",pick:info(f)});later()}})})(f);shields.appendChild(d)}}
 function later(){if(!raf)raf=requestAnimationFrame(function(){draw();shield()})}
-function isolate(){var old=document.querySelectorAll("[data-wc-hide]");for(var i=0;i<old.length;i++)old[i].removeAttribute("data-wc-hide");if(!roots.length)return;var keep=new Set();roots.forEach(function(r){var n=r;while(n){keep.add(n);n=n.parentElement}});roots.forEach(function(r){var n=r;while(n&&n.parentElement){var sib=n.parentElement.children;for(var j=0;j<sib.length;j++){var s=sib[j];if(!keep.has(s)&&!/^(HEAD|STYLE|LINK|SCRIPT)$/.test(s.tagName)&&!s.hasAttribute("data-wc-layer"))s.setAttribute("data-wc-hide","")}n=n.parentElement}});if(roots[0])roots[0].scrollIntoView({block:"start"})}
+function isolate(){var old=document.querySelectorAll("[data-wc-hide]");for(var i=0;i<old.length;i++)old[i].removeAttribute("data-wc-hide");if(!roots.length)return;var keep=new Set();roots.forEach(function(r){var n=r;while(n){keep.add(n);n=n.parentElement}});roots.forEach(function(r){var n=r;while(n&&n.parentElement){var sib=n.parentElement.children;for(var j=0;j<sib.length;j++){var s=sib[j];if(!keep.has(s)&&!/^(HEAD|STYLE|LINK|SCRIPT)$/.test(s.tagName)&&!s.hasAttribute("data-wc-layer"))s.setAttribute("data-wc-hide","")}n=n.parentElement}});if(roots[0]){var rr=roots[0].getBoundingClientRect();scrollTo({top:Math.max(0,scrollY+rr.top-8),left:scrollX})}}
 var shiftDown=false,recordField=new Set();var CONTROL="a[href],button,input,select,textarea,label,summary,[role=button],[role=tab],[role=link],[onclick]";
-addEventListener("message",function(e){var m=e.data;if(!m||!m.__wc)return;if(m.type==="focus"){roots=(m.paths||[]).map(byPath).filter(Boolean);isolate();later()}else if(m.type==="highlight"){items=m.items||[];later()}else if(m.type==="mode"){picking=!!m.picking;hover=null;later()}else if(m.type==="ping"){post({type:"ready"})}else if(m.type==="go"&&m.href){location.href=m.href}});
+var scrollTarget=null;function keepInView(){if(!scrollTarget)return;var se=byPath(scrollTarget);if(!se)return;var sr=se.getBoundingClientRect();if(sr.top<0||sr.bottom>innerHeight)scrollTo({top:Math.max(0,scrollY+sr.top-innerHeight/3),left:scrollX})}addEventListener("load",keepInView);
+addEventListener("message",function(e){var m=e.data;if(!m||!m.__wc)return;if(m.type==="focus"){roots=(m.paths||[]).map(byPath).filter(Boolean);isolate();later()}else if(m.type==="highlight"){items=m.items||[];scrollTarget=m.scroll||null;keepInView();setTimeout(keepInView,400);setTimeout(keepInView,1200);later()}else if(m.type==="mode"){picking=!!m.picking;hover=null;later()}else if(m.type==="ping"){post({type:"ready"})}else if(m.type==="go"&&m.href){location.href=m.href}});
 addEventListener("mousemove",function(e){var el=e.target;if(!(el instanceof Element)||el.hasAttribute("data-wc-layer"))return;if(!inRoots(el))el=null;if(!picking&&el)el=el.closest(CONTROL);if(el!==hover){hover=el;post({type:"hover",pick:el?info(el):null});later()}},true);
 addEventListener("click",function(e){var el=e.target;if(!(el instanceof Element))return;if(el.hasAttribute("data-wc-layer"))return;shiftDown=e.shiftKey;
  if(picking){e.preventDefault();e.stopPropagation();var p=info(el),real=e.composedPath?e.composedPath()[0]:el;if(real!==el&&real instanceof Node)p.shadow=true;post({type:"pick",pick:p});return}

@@ -98,7 +98,15 @@ export const ACTION_COLOUR: Record<Action, string> = { network: "#2563eb", fanou
 /** Attribute events 0..upTo to stages: a `plan.step` event counts on the stage with the same op
  * and argument (identical stages share them; the root fetch takes the first); an `error` event counts
  * on the stage whose op it names; untraced stages (casts, columns, emit) count as their parent. */
-export function stageStats(sts: Stage[], events: RunEvent[], upTo = events.length): Record<string, StageStat> {
+/** each event's STAGE (its card), by index: steps / fan-outs / errors by attribution; a page's own events
+ * (fetch, snapshot, navigation, retries) go to the fetch stage open for that item; else null */
+export function eventStages(sts: Stage[], events: RunEvent[]): (string | null)[] {
+  const into: (string | null)[] = new Array(events.length).fill(null);
+  stageStats(sts, events, events.length, into);
+  return into;
+}
+
+export function stageStats(sts: Stage[], events: RunEvent[], upTo = events.length, into?: (string | null)[]): Record<string, StageStat> {
   const all = flatStages(sts); const out: Record<string, StageStat> = {};
   for (const s of all) out[s.id] = { count: 0, errors: [], fanout: 0, items: {}, fanBy: {}, durations: [], inflight: [] };
   const seen: Record<string, number> = {};
@@ -137,7 +145,7 @@ export function stageStats(sts: Stage[], events: RunEvent[], upTo = events.lengt
         if (cands.length > 1 && key === "" && cands[0]!.depth === 0) st = cands[0]!;
         else { const pool = key !== "" && deep.length ? deep : cands; const sk = `${op}|${sel ?? ""}`; const k = seen[sk] ?? 0; seen[sk] = k + 1; st = pool[k % pool.length]!; }
       }
-      const o = out[st.id]!; o.count++; o.last = i; lastBy[key] = st;
+      const o = out[st.id]!; o.count++; o.last = i; lastBy[key] = st; if (into) into[i] = st.id;
       if (!o.items![key]) o.items![key] = "done";
       if ((TIMED.has(op)) && e.ts !== undefined) open[key] = { st, ts: e.ts };
     } else if (e.topic === "plan" && e.phase === "item") {
@@ -147,7 +155,7 @@ export function stageStats(sts: Stage[], events: RunEvent[], upTo = events.lengt
     } else if (e.topic === "plan" && e.phase === "fanout") {
       const op = String(e.detail?.op ?? ""); const sel = e.detail?.selector as string | undefined; const cnt = Number(e.detail?.n ?? 0);
       const st = all.find((s) => s.op === op && (!sel || s.arg === sel)) ?? all.find((s) => s.op === op);
-      if (st) { const o = out[st.id]!; o.fanout += cnt; o.fanouts = (o.fanouts ?? 0) + 1; o.fanBy![key] = (o.fanBy![key] ?? 0) + cnt; o.last = i; lastFan = st; }
+      if (st) { const o = out[st.id]!; o.fanout += cnt; o.fanouts = (o.fanouts ?? 0) + 1; o.fanBy![key] = (o.fanBy![key] ?? 0) + cnt; o.last = i; lastFan = st; if (into) into[i] = st.id; }
     } else if (e.topic === "plan" && e.phase === "parallel") {
       // a fan-out starting: its width belongs to the stage that just fanned out
       const lim = Number(e.detail?.limit ?? 0); const bound = String(e.detail?.bound ?? "http");
@@ -161,7 +169,11 @@ export function stageStats(sts: Stage[], events: RunEvent[], upTo = events.lengt
         const o = out[st.id]!; o.errors.push({ code: e.error.code, message: e.error.message, raised: e.raised !== false }); o.last = i;
         // raised: the item FAILED; returned (an optional miss): the value is MISSING
         o.items![key] = e.raised === false ? "missing" : "failed";
+        if (into) into[i] = st.id;
       }
+    } else if (into && (e.topic === "snapshot" || e.topic?.startsWith("network") || e.topic === "loop" || e.topic === "resource" || e.topic === "action" || e.topic === "rrweb" || e.topic === "dom")) {
+      // a page's own events: the fetch / action stage open for this item (else its last stage)
+      const o = open[key]; into[i] = o ? o.st.id : lastBy[key]?.id ?? null;
     }
   }
   // what is still running at this moment, and for how long

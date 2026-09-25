@@ -53,6 +53,8 @@ export type PlayerProps = {
   className?: string;
   /** Max height of the viewport area (the page scales to fit width, then this). */
   maxHeight?: number;
+  /** the event cards over the page (a request, an action, a loop round); off where another view shows them */
+  pulses?: boolean;
 };
 
 export const FIELD_COLOURS = ["#2457e6", "#15803d", "#b45309", "#7c3aed", "#0f766e", "#be185d"];
@@ -80,7 +82,7 @@ function scrollWithin(el: Element, block: "start" | "center"): void {
   w.scrollTo({ top: Math.max(0, top), left: w.scrollX });
 }
 
-export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, shiftPick = false, onClickThrough, focus = null, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
+export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, shiftPick = false, onClickThrough, focus = null, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, pulses: showPulses = true, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
   const ownCtl = React.useMemo(() => new PlayerController(), []);
   const ctl = controller ?? ownCtl;
   const [pace, setPace] = React.useState(paceProp);
@@ -261,7 +263,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     return () => h.removeEventListener("wheel", onWheel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const pulse = (topic: string, text: string) => { const id = Date.now() + Math.random(); setPulses((p) => [...p.slice(-5), { id, at: Date.now(), topic, text, tone: topicColorVar(topic) }]); setTimeout(() => setPulses((p) => p.filter((x) => x.id !== id)), 2600); };
+  const pulse = (topic: string, text: string) => { if (!showPulses) return; const id = Date.now() + Math.random(); setPulses((p) => [...p.slice(-5), { id, at: Date.now(), topic, text, tone: topicColorVar(topic) }]); setTimeout(() => setPulses((p) => p.filter((x) => x.id !== id)), 2600); };
 
   const pickAt = (e: React.MouseEvent): Pick | null => {
     const d = doc(); if (!d) return null;

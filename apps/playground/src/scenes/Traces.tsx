@@ -59,11 +59,12 @@ export function Traces() {
         <span className="text-[12px] text-muted">{all.length} events</span>
         <div className="ml-2 flex flex-wrap gap-1">{topics.map((t) => <button key={t} type="button" className={hidden.has(t) ? "opacity-40" : ""} onClick={() => setHidden((s) => { const n = new Set(s); n.has(t) ? n.delete(t) : n.add(t); return n; })}><TopicChip topic={t} /></button>)}</div>
         <div className="flex-1" />
+        {plan.data && <Button size="sm" data-act="replay-in-run" onClick={() => nav(`/run?trace=${encodeURIComponent(id)}`)} title="replay this run on its plan: the pipeline graph, each stage over time, the page each item was on with its own element outlined, the events grouped by stage and item">Replay in Run ▸</Button>}
         <Chip tone="neutral">replay · offline</Chip>
       </div>
       {!all.length ? <EmptyState title="Loading…" /> :
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1fr)_minmax(320px,380px)]">
-        <div className="min-w-0"><Player events={(rrweb.data ?? []) as any} seekTo={seek} onTime={follow} maxHeight={900} controls={false} controller={controller} /></div>
+        <div className="min-w-0"><Player events={(rrweb.data ?? []) as any} seekTo={seek} onTime={follow} maxHeight={900} controls={false} controller={controller} pulses={false} /></div>
         <div className="flex min-h-0 min-w-0 flex-col rounded-lg border border-line">
           <Tabs items={[{ value: "events", label: "Events", count: shown.length }, { value: "event", label: "This event" }, { value: "errors", label: "Ledger", count: errors.length }, { value: "plan", label: "Plan" }]} value={tab} onValueChange={setTab} className="min-h-0 flex-1">
             <TabPanel value="events" className="min-h-0"><EventList events={shown} cursor={cursor} onCursor={jump} groupByDocument className="max-h-[640px] overflow-auto" /></TabPanel>
