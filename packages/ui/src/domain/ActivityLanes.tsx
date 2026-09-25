@@ -3,6 +3,10 @@ import { cn } from "../lib/cn";
 import type { RunEvent } from "../lib/stages";
 
 export type Lane = { id: string; label: string; colour: string };
+/** a lane of MARKS (not stage runs): ticks at a moment, or bars over a span -- loops' rounds, pipeline stages,
+ * background requests, scripts, DOM changes, errors */
+export type Mark = { t: number; t2?: number; colour?: string; tip?: string; tall?: boolean };
+export type MarkLane = { id: string; label: string; colour: string; marks: Mark[]; tip?: string };
 
 export type ActivityLanesProps = {
   lanes: Lane[];
@@ -15,6 +19,8 @@ export type ActivityLanesProps = {
   /** a lane selected (outlined) */
   selected?: string | null;
   onLane?: (id: string) => void;
+  /** lanes of marks, after the stage lanes (see `Mark`) */
+  extra?: MarkLane[];
   className?: string;
 };
 
@@ -25,7 +31,7 @@ const LANE_H = 14, GAP = 3, LABEL_W = 150;
  * its height its parallelism; red where items failed) -- and a network lane (each page fetched, each
  * retry). Scales to any number of items (it draws pixels, not bars). A cursor at the run's moment;
  * click or drag to scrub. */
-export function ActivityLanes({ lanes, events, stageOf, at, onSeek, selected, onLane, className }: ActivityLanesProps) {
+export function ActivityLanes({ lanes, events, stageOf, at, onSeek, selected, onLane, extra = [], className }: ActivityLanesProps) {
   const box = React.useRef<HTMLDivElement>(null);
   const [w, setW] = React.useState(800);
   React.useLayoutEffect(() => { const el = box.current; if (!el) return; const f = () => setW(Math.max(200, el.clientWidth - LABEL_W - 8)); f(); const ro = new ResizeObserver(f); ro.observe(el); return () => ro.disconnect(); }, []);
@@ -60,7 +66,8 @@ export function ActivityLanes({ lanes, events, stageOf, at, onSeek, selected, on
   }, [events, stageOf, w, t0, t1]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = lanes.filter((l) => model.hist.has(l.id));
-  const H = (shown.length + 1) * (LANE_H + GAP) + 16;
+  const marks = extra.filter((l) => l.marks.length);
+  const H = (shown.length + marks.length + 1) * (LANE_H + GAP) + 16;
   const cursor = at > 0 ? x(ts[Math.min(at, ts.length) - 1] ?? t0) : 0;
   const seekAtX = (px: number) => {
     if (!onSeek || !ts.length) return; const t = t0 + (Math.max(0, Math.min(w, px)) / w) * (t1 - t0);
@@ -79,7 +86,12 @@ export function ActivityLanes({ lanes, events, stageOf, at, onSeek, selected, on
               <span className="size-2 shrink-0 rounded-sm" style={{ background: l.colour }} /><span className="truncate">{l.label}</span>
             </button>
           ))}
-          <div className="flex items-center gap-1 pr-1 text-muted" style={{ height: LANE_H }}><span className="size-2 shrink-0 rounded-sm bg-slate-400" />network</div>
+          {marks.map((l) => (
+            <div key={l.id} className="flex w-full items-center gap-1 truncate pr-1 text-muted" style={{ height: LANE_H, marginBottom: GAP }} title={l.tip ?? `${l.label} · ${l.marks.length.toLocaleString()}`}>
+              <span className="size-2 shrink-0 rounded-sm" style={{ background: l.colour }} /><span className="truncate">{l.label}</span>
+            </div>
+          ))}
+          <div className="flex items-center gap-1 pr-1 text-muted" style={{ height: LANE_H }}><span className="size-2 shrink-0 rounded-sm bg-slate-400" />page fetches</div>
         </div>
         <svg width={w} height={H} className="shrink-0 cursor-crosshair touch-none select-none"
           onPointerDown={(e) => { drag.current = true; (e.currentTarget as SVGElement).setPointerCapture?.(e.pointerId); seekAtX(toX(e)); }}
@@ -97,8 +109,17 @@ export function ActivityLanes({ lanes, events, stageOf, at, onSeek, selected, on
             }
             return <g key={l.id}>{selected === l.id && <rect x={0} y={y0 - 1} width={w} height={LANE_H + 2} fill="none" stroke="#2563eb" strokeWidth={1} />}<line x1={0} x2={w} y1={y0 + LANE_H} y2={y0 + LANE_H} stroke="#e2e8f0" />{cols}</g>;
           })}
+          {/* mark lanes: bars over spans, ticks at moments (a <title> says what each is) */}
+          {marks.map((l, mi) => {
+            const y0 = (shown.length + mi) * (LANE_H + GAP);
+            return <g key={l.id}><line x1={0} x2={w} y1={y0 + LANE_H} y2={y0 + LANE_H} stroke="#e2e8f0" />{l.marks.slice(0, 4000).map((m, i) => {
+              const x1 = x(m.t); const x2 = m.t2 != null ? Math.max(x1 + 2, x(m.t2)) : x1 + (m.tall ? 2 : 1.5);
+              const h = m.t2 != null ? LANE_H - 4 : m.tall ? LANE_H : LANE_H - 5;
+              return <rect key={i} x={x1} y={y0 + (LANE_H - h)} width={x2 - x1} height={h} rx={m.t2 != null ? 2 : 0} fill={m.colour ?? l.colour} opacity={0.9}>{m.tip ? <title>{m.tip}</title> : null}</rect>;
+            })}</g>;
+          })}
           {/* network: a tick per page fetched; retries amber; errors red */}
-          {(() => { const y0 = shown.length * (LANE_H + GAP); return model.net.map((n, i) => <rect key={i} x={x(n.t)} y={y0 + (n.kind === "fetch" ? 3 : 0)} width={1} height={n.kind === "fetch" ? LANE_H - 3 : LANE_H} fill={n.kind === "retry" ? "#f59e0b" : n.kind === "error" ? "#dc2626" : "#94a3b8"} />); })()}
+          {(() => { const y0 = (shown.length + marks.length) * (LANE_H + GAP); return model.net.map((n, i) => <rect key={i} x={x(n.t)} y={y0 + (n.kind === "fetch" ? 3 : 0)} width={1} height={n.kind === "fetch" ? LANE_H - 3 : LANE_H} fill={n.kind === "retry" ? "#f59e0b" : n.kind === "error" ? "#dc2626" : "#94a3b8"} />); })()}
           {/* the time axis */}
           {Array.from({ length: 6 }, (_, i) => { const xx = (i / 5) * w; return <text key={i} x={Math.min(w - 24, xx + 2)} y={H - 3} fill="#94a3b8" fontSize={9}>{`${((t1 - t0) * (i / 5)).toFixed(1)}s`}</text>; })}
           <line x1={cursor} x2={cursor} y1={0} y2={H} stroke="#2563eb" strokeWidth={1.5} />

@@ -36,7 +36,7 @@ export * as stagesLib from "./lib/stages";
 export * as replayLib from "./lib/replay";
 export { StagePlan } from "./domain/StagePlan";
 export { PipelineGraph } from "./domain/PipelineGraph";
-export { ActivityLanes, type Lane } from "./domain/ActivityLanes";
+export { ActivityLanes, type Lane, type Mark, type MarkLane } from "./domain/ActivityLanes";
 export { ParamsEditor, type ParamsOp } from "./domain/ParamsEditor";
 export type { Stage, StageStat, RunEvent } from "./lib/stages";
 export type { Graph, GNode, NodeType } from "./lib/graph";

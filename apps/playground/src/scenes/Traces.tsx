@@ -41,7 +41,7 @@ export function Traces() {
           }} title="delete every trace (the site's demo traces are kept)">clear all</button>}
         </div>
         {traces.data?.length ? <ul className="min-h-0 overflow-auto">{traces.data.map((t) => (
-          <li key={t.id} onClick={() => nav(`/traces/${t.id}`)} className="group flex cursor-pointer items-start gap-2 border-b border-line px-3 py-2 text-[13px] hover:bg-surface-2">
+          <li key={t.id} onClick={() => nav(`/run?trace=${encodeURIComponent(t.id)}`)} className="group flex cursor-pointer items-start gap-2 border-b border-line px-3 py-2 text-[13px] hover:bg-surface-2">
             <div className="min-w-0 flex-1"><b className="block truncate" title={t.id}>{t.id}</b><div className="text-[12px] text-muted">{t.events.toLocaleString()} events{t.bytes !== undefined ? ` · ${kb(t.bytes)}` : ""}{t.finished ? "" : " · open"}</div></div>
             <button type="button" className="shrink-0 rounded px-1 text-muted opacity-0 hover:text-bad group-hover:opacity-100" title="delete this trace" onClick={async (e) => { e.stopPropagation(); if (!window.confirm(`Delete ${t.id}?`)) return; await api.traceDelete(t.id); await qc.invalidateQueries({ queryKey: ["traces"] }); }}>✕</button>
           </li>))}</ul>

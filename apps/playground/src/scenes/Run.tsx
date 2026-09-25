@@ -2,7 +2,7 @@ import * as React from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ActivityLanes, Chip, DataFrame, EmptyState, PipelineGraph, StagePlan, cn, planLib, stagesLib, type Plan, type RunEvent } from "@webclient/ui";
-import { EventTree, ReplayScreen, type Pick } from "./RunReplay";
+import { EventTree, ProcessPanel, ReplayScreen, markLanes, type Pick } from "./RunReplay";
 import { api, type RunState } from "../lib/api";
 import { useActive, useSession } from "../lib/session";
 
@@ -96,13 +96,25 @@ export function Run() {
   const [pick, setPick] = React.useState<Pick>(null);
   const lanes = React.useMemo(() => stagesLib.flatStages(stages).map((st) => ({ id: st.id, label: `${st.kind} ${st.op}${st.arg ? ` ${st.arg}` : ""}${st.column && st.column !== "(named from the page)" ? ` → ${st.column}` : ""}`, colour: stagesLib.ACTION_COLOUR[stagesLib.actionOf(st.op)] })), [stages]);
   const traceId = traceParam ?? data?.trace ?? null;
+  const extraLanes = React.useMemo(() => markLanes(events), [events]);
   // play: the recorded clock, at a speed
-  const [playing, setPlaying] = React.useState(false); const [speed, setSpeed] = React.useState(4);
+  // speed 0 = STEP BY STEP: one visible moment (a select, a read, an action, a page fetched) every 0.4s -- a run's
+  // steps are milliseconds apart, so no time speed lets you see each one; otherwise the recorded clock × speed
+  const [playing, setPlaying] = React.useState(false); const [speed, setSpeed] = React.useState(0);
+  const visible = React.useCallback((e: RunEvent) => (e.topic === "plan" && (e.phase === "step" || e.phase === "fanout")) || e.topic === "action" || e.topic === "snapshot" || e.topic === "error", []);
   React.useEffect(() => {
     if (!playing || !events.length) return;
-    const ts = events.map((e) => Number(e.ts ?? 0)); let clock = ts[Math.max(0, Math.min(t, ts.length) - 1)] ?? ts[0] ?? 0; let i = t;
+    let i = t;
+    if (speed === 0) {
+      const h = setInterval(() => {
+        let k = i; while (k < events.length && !visible(events[k]!)) k++;
+        i = Math.min(events.length, k + 1); setT(i); if (i >= events.length) setPlaying(false);
+      }, 400);
+      return () => clearInterval(h);
+    }
+    const ts = events.map((e) => Number(e.ts ?? 0)); let clock = ts[Math.max(0, Math.min(t, ts.length) - 1)] || ts.find((x) => x > 0) || 0;
     const h = setInterval(() => {
-      clock += 0.1 * speed; while (i < ts.length && (ts[i] ?? 0) <= clock) i++;
+      clock += 0.1 * speed; while (i < ts.length && (ts[i] || clock) <= clock) i++;
       setT(i); if (i >= ts.length) setPlaying(false);
     }, 100);
     return () => clearInterval(h);
@@ -125,7 +137,7 @@ export function Run() {
           <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => { setLive(false); setT(0); }} title="the start">⏮</button>
           <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => step(-1)} title="one event back">◀</button>
           <button type="button" data-act="play" className={cn("px-1 hover:text-ink", playing ? "text-accent" : "text-muted")} onClick={() => { setLive(false); if (t >= events.length) setT(0); setPlaying(!playing); }} title="play the run at the chosen speed">{playing ? "❚❚" : "▷"}</button>
-          <select className="h-5 rounded border border-line bg-surface text-[10px]" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} title="replay speed">{[1, 4, 16, 64].map((x) => <option key={x} value={x}>{x}×</option>)}</select>
+          <select className="h-5 rounded border border-line bg-surface text-[10px]" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} title="replay pace: step by step (each select / read / action / page), or the recorded clock at a speed">{[0, 0.1, 0.25, 1, 4, 16].map((x) => <option key={x} value={x}>{x === 0 ? "steps" : `${x}×`}</option>)}</select>
           <input type="range" min={0} max={Math.max(1, events.length)} value={Math.min(t, events.length)} onChange={(e) => { setLive(false); setT(Number(e.target.value)); }} className="w-72" />
           <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => step(1)} title="one event forward">▶</button>
           <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => setLive(true)} title="follow the run live">⏭</button>
@@ -148,7 +160,7 @@ export function Run() {
               {plan && <span className="ml-1 min-w-0 truncate font-mono font-normal normal-case tracking-normal" title={planLib.describe(plan)}>{planLib.describe(plan)}</span>}
               <span className="flex-1" />
               <button type="button" className="ml-1 shrink-0 whitespace-nowrap rounded border border-line px-1 font-normal normal-case hover:text-ink" onClick={() => setBig(!big)} title={big ? "show the lanes, rows and events again" : "give the graph and the replay the whole workspace"}>{big ? "⤡ restore" : "⤢ maximise"}</button></div>
-            <div className="min-h-0 min-w-0 flex-1 overflow-hidden p-0.5">{!stages.length ? <span className="p-2 text-muted">…</span> : view === "graph"
+            <div className="min-h-0 min-w-0 flex-1 overflow-hidden p-0.5">{!stages.length ? (events.length ? <ProcessPanel events={events} at={t} pick={pick} onPick={setPick} onSeek={(i) => { setLive(false); setPlaying(false); setT(i); }} /> : <span className="p-2 text-muted">…</span>) : view === "graph"
               ? <PipelineGraph stages={stages} stats={stats} resources={resources} at={t} running={running || (!live && !!data && t < events.length)} selected={pick?.stage ?? focusStage} onStage={(st) => setPick((p) => (p?.stage === st.id ? null : { stage: st.id, item: null }))} />
               : <StagePlan stages={stages} stats={stats} at={t} running={running || !live} onStage={(st) => setPick((p) => (p?.stage === st.id ? null : { stage: st.id, item: null }))} />}</div>
           </section>
@@ -159,7 +171,7 @@ export function Run() {
         {/* the ACTIVITY LANES: each stage over time (how many items at once), the network; scrub here */}
         {!big && <section className="flex max-h-[180px] min-h-0 flex-col rounded border border-line">
           <div className="border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Activity · each stage over time (height: items at once) · click to scrub</div>
-          <ActivityLanes className="min-h-0 flex-1 p-1" lanes={lanes} events={events} stageOf={stageOf} at={t} selected={pick?.stage ?? null} onLane={(id) => setPick((p) => (p?.stage === id ? null : { stage: id, item: null }))} onSeek={(i) => { setLive(false); setPlaying(false); setT(i); }} />
+          <ActivityLanes className="min-h-0 flex-1 p-1" lanes={lanes} extra={extraLanes} events={events} stageOf={stageOf} at={t} selected={pick?.stage ?? null} onLane={(id) => setPick((p) => (p?.stage === id ? null : { stage: id, item: null }))} onSeek={(i) => { setLive(false); setPlaying(false); setT(i); }} />
         </section>}
         {/* BOTTOM: the rows as they arrived | the events grouped (stage ▸ item ▸ event) + errors */}
         <div className={cn("grid min-h-0 grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-1", big && "hidden")}>

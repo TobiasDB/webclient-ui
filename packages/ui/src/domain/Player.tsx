@@ -55,6 +55,8 @@ export type PlayerProps = {
   maxHeight?: number;
   /** the event cards over the page (a request, an action, a loop round); off where another view shows them */
   pulses?: boolean;
+  /** keep this element (in the rebuilt page) in view -- scrolled within the replay, never the page around it */
+  scrollTo?: Element | null;
 };
 
 export const FIELD_COLOURS = ["#2457e6", "#15803d", "#b45309", "#7c3aed", "#0f766e", "#be185d"];
@@ -82,7 +84,7 @@ function scrollWithin(el: Element, block: "start" | "center"): void {
   w.scrollTo({ top: Math.max(0, top), left: w.scrollX });
 }
 
-export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, shiftPick = false, onClickThrough, focus = null, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, pulses: showPulses = true, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
+export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, shiftPick = false, onClickThrough, focus = null, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, pulses: showPulses = true, scrollTo = null, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
   const ownCtl = React.useMemo(() => new PlayerController(), []);
   const ctl = controller ?? ownCtl;
   const [pace, setPace] = React.useState(paceProp);
@@ -289,6 +291,12 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     }
     refreshRef.current();
   }, [focus, ready]);
+
+  React.useEffect(() => {
+    if (!scrollTo) return; const w = scrollTo.ownerDocument.defaultView; if (!w) return;
+    const r = scrollTo.getBoundingClientRect(); if (r.top < 0 || r.bottom > w.innerHeight) scrollWithin(scrollTo, "center");
+    refreshRef.current();
+  }, [scrollTo]);
 
   // -- transport (the MediaBar drives it through the controller) ----------------------
   const markers = React.useMemo(() => events.filter((e) => e.type === 5).map((e) => ({ t: e.timestamp, tag: String(e.data?.tag ?? "") })), [events]);
