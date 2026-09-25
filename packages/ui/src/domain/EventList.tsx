@@ -35,18 +35,21 @@ export function EventList({ events, cursor, onCursor, groupByDocument, className
     return [...m].map(([key, items]) => ({ key, items }));
   }, [events, groupByDocument]);
   return (
-    <div className={cn("overflow-auto font-mono text-[12px]", className)}>
+    <div className={cn("min-w-0 overflow-auto font-mono text-[12px]", className)}>
       {groups.map((g) => (
         <details key={g.key} open className="group">
           {g.key && <summary className="sticky top-0 cursor-pointer bg-surface-2 px-2 py-0.5 text-[11px] text-muted">{g.key} · {g.items.length}</summary>}
           <ol>
             {g.items.map(({ e, i }) => (
               <li key={i} ref={i === cursor ? active : undefined} onClick={() => onCursor(i)}
-                className={cn("grid cursor-pointer grid-cols-[44px_56px_150px_1fr] gap-2 border-b border-line px-2 py-0.5 hover:bg-surface-2", i === cursor && "bg-accent-soft")}>
-                <span className="text-muted">#{e.n ?? i}</span>
-                <span className="text-muted">{e.ts != null ? `+${Math.round((e.ts - t0) * 1000)}` : ""}</span>
-                <TopicChip topic={e.topic} />
-                <span className="truncate text-ink-2" title={briefOf(e)}>{briefOf(e)}</span>
+                className={cn("flex min-w-0 cursor-pointer flex-col gap-0.5 border-b border-line px-2 py-0.5 hover:bg-surface-2", i === cursor && "bg-accent-soft")}>
+                {/* two lines, never wider than the column: #n · +ms · topic, then what happened (wrapped, two lines at most) */}
+                <span className="flex min-w-0 items-center gap-2 text-[11px]">
+                  <span className="shrink-0 text-muted">#{e.n ?? i}</span>
+                  <span className="shrink-0 text-muted">{e.ts != null ? `+${Math.round((e.ts - t0) * 1000)} ms` : ""}</span>
+                  <span className="min-w-0 truncate"><TopicChip topic={e.topic} /></span>
+                </span>
+                <span className="line-clamp-2 min-w-0 break-all text-[11px] text-ink-2" title={briefOf(e)}>{briefOf(e) || <span className="text-muted">—</span>}</span>
               </li>
             ))}
           </ol>

@@ -88,6 +88,8 @@ export const api = {
     return call<(Event & { events?: Record<string, unknown>[] })[]>(`/events?${p}`);
   },
   traces: () => call<TraceSummary[]>("/traces"),
+  traceDelete: (id: string) => call<{ id: string; bytes: number }>(`/traces/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  tracesClear: (keep: string[] = []) => call<{ deleted: number; bytes: number }>(`/traces?keep=${encodeURIComponent(keep.join(","))}`, { method: "DELETE" }),
   trace: (id: string) => call<TraceSummary & Record<string, unknown>>(`/traces/${encodeURIComponent(id)}`),
   traceEvents: (id: string, topic = "") => call<Event[]>(`/traces/${encodeURIComponent(id)}/events${topic ? `?topic=${topic}` : ""}`),
   traceEvent: (id: string, n: number) => call<Event & { content?: string; body?: string; events?: unknown[] }>(`/traces/${encodeURIComponent(id)}/events/${n}`),
