@@ -87,7 +87,13 @@ export function placeOf(events: RunEvent[], stageOf: (string | null)[], all: Sta
     const prev = chainPrev(all).get(st.id); const key = keyOf(ev);
     if (prev) for (let k = j - 1; k >= 0 && j - k < 5000; k--) { const e = events[k]!; if (stageOf[k] === prev && e.topic === "plan" && e.phase === "step" && keyOf(e) === key) { const pp = placeOf(events, stageOf, all, feedOf, k, depth + 1); if (pp) return pp; break; } }
   }
-  const feed = st ? feedOf(st.id) : undefined; const fan = feed ? all.find((x) => x.id === feed) : undefined;
+  const feed = st ? feedOf(st.id) : undefined; let fan = feed ? all.find((x) => x.id === feed) : undefined;
+  // no plan (a pipeline's trace: its query ran inside it): the fan-out the item came from is the last one recorded
+  // for its parent -- its op and selector, on its page
+  if (!fan && !st && (ev.item ?? []).length) {
+    const parent = (ev.item ?? []).slice(0, -1).join(".");
+    for (let k = j - 1; k >= 0; k--) { const e = events[k]!; if (e.topic === "plan" && e.phase === "fanout" && keyOf(e) === parent && docOf(e)) { fan = { id: `fan@${k}`, op: String(e.detail?.op ?? ""), kind: "EACH", arg: e.detail?.selector as string | undefined, children: [], depth: 0 }; if (!own) return { doc: docOf(e)!, fan, local: (ev.item ?? [])[(ev.item ?? []).length - 1] }; break; } }
+  }
   let idx = (ev.item ?? []).length ? ev.item![ev.item!.length - 1]! : undefined;
   // a trace without item paths (recorded before they were stamped): the ITERATION -- how many times this
   // stage ran on this page since its fan-out there -- is the item's index
