@@ -507,7 +507,7 @@ export function Author() {
     setPickEl(null); setBuilding(null);
     const m = ACTION_OPS.includes(a.op) ? { g: graph, parent: under0.id } : materialize(graph, under0.id);
     const under = m.g.nodes[m.parent]!;
-    if (a.op === "paginate" && pageNode) { setGraph((g) => setMod(g, pageNode.id, opOf("paginate", [], { max_pages: 5, ...a.kwargs }))); if (a.kwargs?.by === "click" && stateNode) await liveAt(stateNode); return; }
+    if (a.op === "paginate" && pageNode) { setGraph((g) => setMod(g, pageNode.id, opOf("paginate", [], { max_pages: 5, ...a.kwargs }))); if (a.kwargs?.by === "action" && stateNode) await liveAt(stateNode); return; }
     if (ACTION_OPS.includes(a.op)) { await runAction(a.op, a.args ?? [a.selector], a.record !== false, under.id); return; }
     let g = m.g; let focus = under.id;
     if (a.op === "resolve") {
@@ -903,16 +903,31 @@ export function Author() {
 
 /** A page's pager: how to reach the next page and how many. */
 function Pager({ n, onChange }: { n: graphLib.GNode; onChange: (m: graphLib.Mod | null) => void }) {
+  // the package's paginate: by="auto" (from the detected hint), "link" (rel=next; `next=` names the link when
+  // there is none), "param", "cursor", and INTERACTED pagers by="action" -- the action a sub-plan: a click on
+  // the "load more" control, or a scroll (infinite scroll)
   const m = n.mods?.find((x) => x.name === "paginate"); const kw = (k: string) => m?.kwargs[k]?.value as string | number | undefined;
-  const set = (patch: Record<string, unknown>) => { const cur = Object.fromEntries(Object.entries(m?.kwargs ?? {}).map(([k, a]) => [k, a.value])); const next: Record<string, unknown> = { max_pages: 5, ...cur, ...patch }; for (const k of Object.keys(next)) if (next[k] === "" || next[k] === undefined) delete next[k]; onChange(opOf("paginate", [], next)); };
+  const act = m?.kwargs.action?.plan as { steps?: { kind: string; name: string; args?: { value?: unknown }[] }[] } | undefined;
+  const actCall = act?.steps?.find((x) => x.kind === "call"); const actSel = String(actCall?.args?.[0]?.value ?? "");
+  const mode = !m ? "" : kw("by") === "action" ? (actCall?.name === "scroll" ? "scroll" : "more") : kw("next") ? "next" : String(kw("by") ?? "auto");
+  const actionPlan = (name: string, args: unknown[]) => ({ plan: { root: "Document", steps: [{ kind: "get", name }, { kind: "call", name, args: args.map((v) => ({ value: v })), kwargs: {} }] } });
+  const build = (md: string, sel: string, pages: number): graphLib.Mod | null => {
+    if (!md) return null;
+    const base = { max_pages: { value: pages } } as Record<string, { value?: unknown; plan?: unknown }>;
+    if (md === "more") return { name: "paginate", args: [], kwargs: { by: { value: "action" }, action: actionPlan("click", [sel || "button"]), ...base } } as graphLib.Mod;
+    if (md === "scroll") return { name: "paginate", args: [], kwargs: { by: { value: "action" }, action: actionPlan("scroll", []), ...base } } as graphLib.Mod;
+    if (md === "next") return { name: "paginate", args: [], kwargs: { by: { value: "link" }, next: { value: sel || "a.next" }, ...base } } as graphLib.Mod;
+    return { name: "paginate", args: [], kwargs: { by: { value: md }, ...base } } as graphLib.Mod;
+  };
+  const pages = Number(kw("max_pages") ?? 5); const sel = mode === "more" ? actSel : String(kw("next") ?? "");
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-ink">
       <span className="text-muted">pages:</span>
-      <select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={m ? (kw("by") === "click" ? (kw("next") ? "more" : "scroll") : kw("next") ? "next" : String(kw("by") ?? "link")) : ""} onChange={(e) => { const v = e.target.value; if (!v) return onChange(null); set(v === "more" ? { by: "click", next: kw("next") ?? "button" } : v === "scroll" ? { by: "click", next: undefined } : v === "next" ? { by: "link", next: kw("next") ?? "a.next" } : { by: v, next: undefined }); }}>
-        <option value="">one page</option><option value="link">rel=next</option><option value="next">a next link</option><option value="param">?page=</option><option value="cursor">cursor</option><option value="more">load more</option><option value="scroll">infinite scroll</option>
+      <select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={mode} onChange={(e) => onChange(build(e.target.value, e.target.value === "more" ? actSel || "button" : e.target.value === "next" ? String(kw("next") ?? "a.next") : "", pages))}>
+        <option value="">one page</option><option value="auto">auto (detected)</option><option value="link">rel=next</option><option value="next">a next link</option><option value="param">?page=</option><option value="cursor">cursor</option><option value="more">load more (click)</option><option value="scroll">infinite scroll</option>
       </select>
-      {m && (kw("next") !== undefined || kw("by") === "click") && <input className="h-6 w-28 rounded border border-line bg-surface px-1 font-mono text-[10px]" value={String(kw("next") ?? "")} placeholder="selector" onChange={(e) => set({ next: e.target.value })} />}
-      {m && <><input type="number" min={1} className="h-6 w-14 rounded border border-line bg-surface px-1 text-[11px]" value={Number(kw("max_pages") ?? 5)} onChange={(e) => set({ max_pages: Number(e.target.value) })} title="max_pages" /><span className="text-muted">pages max</span></>}
+      {(mode === "more" || mode === "next") && <input className="h-6 w-28 rounded border border-line bg-surface px-1 font-mono text-[10px]" value={sel} placeholder={mode === "more" ? "the load-more control" : "the next link"} onChange={(e) => onChange(build(mode, e.target.value, pages))} />}
+      {m && <><input type="number" min={1} className="h-6 w-14 rounded border border-line bg-surface px-1 text-[11px]" value={pages} onChange={(e) => onChange(build(mode, sel, Number(e.target.value)))} title="max_pages" /><span className="text-muted">pages max</span></>}
     </div>
   );
 }
