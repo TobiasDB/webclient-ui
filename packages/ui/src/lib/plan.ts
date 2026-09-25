@@ -105,10 +105,26 @@ export type Local = { rows: Record<string, unknown>[]; count: number; note?: str
 const text = (el: Element) => (el.textContent || "").trim();
 /** an element of the page (the page is in an iframe: another realm, so no instanceof) */
 const isEl = (x: unknown): x is Element => !!x && typeof x === "object" && (x as Node).nodeType === 1;
+/** A Python-style pattern as a JS RegExp (a leading inline `(?i)` becomes the `i` flag). */
+export function pyRegex(pattern: string): RegExp { const m = /^\(\?([aiLmsux]+)\)/.exec(pattern); return m ? new RegExp(pattern.slice(m[0].length), m[1]!.includes("i") ? "i" : "") : new RegExp(pattern); }
+const WORDS = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty".split(" ");
+/** Field.number(): the first number in the text, else a number word ("Three" -> 3). */
+export function toNumber(v: unknown, dflt: unknown = null): unknown {
+  if (typeof v === "number") return v; if (typeof v === "boolean") return Number(v);
+  const t = String(v ?? ""); const m = /-?\d[\d,]*(?:\.\d+)?|-?\.\d+/.exec(t);
+  if (m) { const raw = m[0].replace(/,/g, ""); return Number(raw); }
+  for (const w of t.match(/[A-Za-z]+/g) ?? []) { const i = WORDS.indexOf(w.toLowerCase()); if (i >= 0) return i; }
+  return dflt;
+}
+/** Field.map(mapping): the value looked up (case-insensitive for text). */
+export function mapValue(v: unknown, mapping: Record<string, unknown>, dflt: unknown = null): unknown {
+  const k = String(v ?? ""); if (k in mapping) return mapping[k];
+  const low = Object.fromEntries(Object.entries(mapping).map(([a, b]) => [a.toLowerCase(), b])); return k.trim().toLowerCase() in low ? low[k.trim().toLowerCase()] : dflt;
+}
 function attrOf(el: Element, name: string, pattern?: string): unknown {
   let val: unknown = name === "text" ? text(el) : name === "text:own" ? [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent?.trim()).join(" ").trim()
     : name === "html" ? el.innerHTML : name === "count" ? el.children.length : name === "href" || name === "src" || name === "action" ? el.getAttribute(name) : el.getAttribute(name);
-  if (pattern && typeof val === "string") { try { const m = new RegExp(pattern).exec(val); val = m ? (m[1] ?? m[0]) : null; } catch { /* keep */ } }
+  if (pattern && typeof val === "string") { try { const m = pyRegex(pattern).exec(val); val = m ? (m[1] ?? m[0]) : null; } catch { /* keep */ } }
   return val;
 }
 
@@ -149,6 +165,8 @@ export function evalLocal(p: Plan, el: Element, followed: (href: string, sub: Pl
     }
     else if (c.name === "project") { /* rows already dicts */ }
     else if (c.name === "alias") { /* the column's name rides on the chain; extract reads it */ }
+    else if (c.name === "number") { cur = Array.isArray(cur) ? (cur as unknown[]).map((x) => toNumber(x, v(c.args[0]) ?? null)) : toNumber(cur, v(c.args[0]) ?? null); }
+    else if (c.name === "map") { const mp = (v(c.args[0]) ?? {}) as Record<string, unknown>; cur = Array.isArray(cur) ? (cur as unknown[]).map((x) => mapValue(x, mp, v(c.args[1]) ?? null)) : mapValue(cur, mp, v(c.args[1]) ?? null); }
     else if (c.name === "merge") { cur = Array.isArray(cur) ? Object.assign({}, ...(cur as unknown[]).filter((r) => r && typeof r === "object" && !(isEl(r)))) : cur; }
     else if (c.name === "count") { cur = Array.isArray(cur) ? (cur as unknown[]).length : cur ? (cur as Element).children.length : 0; }
     else if (["resolve", "click", "write", "scroll", "wait_for", "goto", "paginate", "reload"].includes(c.name)) { /* IO: the page is what the server made of it */ }

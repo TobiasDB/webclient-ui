@@ -31,7 +31,7 @@ type Tier = "false" | "auto" | "always";
 type Page = { docId?: string; live?: boolean; url: string };
 type State = { tier: Tier; graph: Graph };
 type HL = { els: Element[]; colour: string; label?: string; dashed?: boolean };
-type Suggestion = { label: string; value: string; sample?: string; count?: number };
+type Suggestion = { label: string; value: string; sample?: string; count?: number; pattern?: string; number?: boolean };
 
 const enc = (s: State) => btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const dec = (s: string): State | null => { try { const o = JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))))); return o && o.graph && o.graph.nodes ? o : null; } catch { return null; } };
@@ -154,7 +154,8 @@ export function Author() {
 
   // -- the focus: what renders, where selectors root -------------------------------------------------
   const takesSelector = !!node?.op && SELECTOR_OPS.includes(node.op.name);
-  const selfMode = !!node && takesSelector && (needsArg(node) || editing);   // picking the focused node's OWN selector
+  const selfMode = !!node && takesSelector && (needsArg(node) || editing);
+  const attrMode = !!node?.op && node.op.name === "attr";  // an attr: its suggestions (every attribute, numbers) stay at hand   // picking the focused node's OWN selector
   const values = React.useMemo(() => { const out: Record<string, unknown> = {}; if (!graph) return out; for (const n of Object.values(graph.nodes)) { const p = pageOf(graph, n.id); if (p && docs[p.id]) out[n.id] = n.id === p.id ? docs[p.id] : evalNode(graph, n.id, docs[p.id]!); } return out; }, [graph, docs]);
   /** the rendered roots: the focused node's input when picking its own selector (or reading a value
    * off it), else its output -- ALL of a collection's elements; the page when empty */
@@ -241,12 +242,18 @@ export function Author() {
     const r = addNode(graph, parent.id, opOf(a.op, a.op === "write" ? [sel, a.value ?? ""] : [sel]), returns);
     setGraph(() => needBrowser(r.graph)); select(r.id);
   };
+  /** a READ under `at`: attr(name[, pattern]), then .number() when asked; the output sits on the last node */
+  const addRead = (g: Graph, at: string, attr: string, extra: Partial<graphLib.GNode>, pattern?: string, number?: boolean): { graph: Graph; id: string } => {
+    const a = addNode(g, at, opOf("attr", pattern ? [attr, pattern] : [attr]), returns, number ? {} : extra);
+    if (!number) return a;
+    return addNode(a.graph, a.id, opOf("number"), returns, extra);
+  };
   const addReads = (g: Graph, under: string, reads: InspectRead[] | undefined, fallbackSel: string): Graph => {
     for (const rd of reads ?? []) {
       let at = under;
       if (rd.select) { const s = addNode(g, at, opOf("select", [rd.select]), returns); g = s.graph; at = s.id; }
       const name = rd.name || (rd.attr === "text" ? selectors.nameFromSelector(rd.select ?? fallbackSel, pickEl?.tagName.toLowerCase() ?? "") : rd.attr.replace(/[^a-z0-9]+/gi, "_"));
-      g = addNode(g, at, opOf("attr", [rd.attr]), returns, rd.nameFrom ? { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: rd.nameFrom }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }] } : { output: name }).graph;
+      g = addRead(g, at, rd.attr, rd.nameFrom ? { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value: rd.nameFrom }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }] } : { output: name }, rd.pattern, rd.number).graph;
     }
     return g;
   };
@@ -293,6 +300,10 @@ export function Author() {
       }
       if (node.type === "Collection") edges.push({ label: ".limit(n)", hint: "the first n", onAdd: () => { const n = Number(window.prompt("how many", "5")); if (n) setGraph((g) => setMod(g, node.id, opOf("limit", [n]))); } });
     }
+    if (node.type === "Value") {
+      edges.push({ label: ".number()", hint: "the first number in it, or a number word (Three → 3)", onAdd: () => { if (!graph) return; const out = node.output ?? `${node.op?.args[0]?.value ?? "value"}_number`; const g = updateNode(graph, node.id, { output: undefined }); const r = addNode(g, node.id, opOf("number"), returns, { output: String(out).replace(/[^a-z0-9_]+/gi, "_") }); setGraph(() => r.graph); select(r.id); } });
+      edges.push({ label: ".map({…})", hint: "look the value up in a table (JSON)", onAdd: () => { if (!graph) return; const t = window.prompt("the mapping, as JSON", '{"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}'); if (!t) return; let m: unknown; try { m = JSON.parse(t); } catch { window.alert("not JSON"); return; } const g = updateNode(graph, node.id, { output: undefined }); const r = addNode(g, node.id, opOf("map", [m]), returns, { output: node.output ?? "mapped" }); setGraph(() => r.graph); select(r.id); } });
+    }
     if (node.type === "Document") {
       for (const n of ["click", "write", "wait_for"]) edges.push({ label: `.${n}("…")`, tone: "io", hint: `${n} on the live page (the page goes live)`, onAdd: () => addEdge(n, n === "write" ? ["", ""] : [""]) });
       if (node.op?.name === "resolve") edges.push({ label: ".paginate(…)", tone: "io", hint: "walk the pages", onAdd: () => setGraph((g) => setMod(g, node.id, opOf("paginate", [], { by: "link", max_pages: 5 }))) });
@@ -315,13 +326,21 @@ export function Author() {
       if (root) for (const f of selectors.suggestFields([root], 14)) { if (!out.some((o) => o.value === f.selector)) out.push({ label: f.attr, value: f.selector, sample: f.sample, count: count(f.selector) }); }
       else for (const e of [...doc.querySelectorAll("h1, h2, [id], main, article, table, form")].slice(0, 40)) { const c = selectors.uniqueCandidates(e, doc)[0]; if (c && !out.some((o) => o.value === c.selector)) out.push({ label: e.tagName.toLowerCase(), value: c.selector, count: c.count, sample: (e.textContent ?? "").trim().slice(0, 50) }); }
     } else if (node.op.name === "attr") {
-      const el = inputOf(graph, node.id, doc); if (el) for (const a of selectors.attributesOf(el)) out.push({ label: a.kind, value: a.attr, sample: a.value });
+      const par = node.parent ? graph.nodes[node.parent] : undefined; const els = par ? elementsOf(values[par.id]) : []; const one = inputOf(graph, node.id, doc);
+      for (const a of selectors.attributesOfAll(els.length ? els : one ? [one] : [])) out.push({ label: a.number ? "→ number" : a.kind, value: a.attr, sample: a.label ?? a.value, pattern: a.pattern, number: a.number });
     } else if (["click", "write", "wait_for"].includes(node.op.name)) {
       for (const c of views.data?.controls ?? []) out.push({ label: c.role, value: c.selector, sample: c.name, count: count(c.selector) });
     }
     return out.slice(0, 16);
   }, [graph, node, doc, root, patternGroups, views.data?.controls]);
-  const applySuggestion = (value: string) => { if (!graph || !node?.op) return; setGraph((g) => updateNode(g, node.id, { op: { ...node.op!, args: node.op!.args.map((a, i) => (i === 0 ? { value } : a)) } })); setEditing(false); setBuilding(null); if (node.op.name === "click" || node.op.name === "write" || node.op.name === "wait_for") { const args = node.op.name === "write" ? [value, String(node.op.args[1]?.value ?? "")] : [value]; runAction(node.op.name, args, false); } };
+  const applySuggestion = (value: string, sg?: Suggestion) => {
+    if (!graph || !node?.op) return;
+    if (node.op.name === "attr" && (sg?.pattern || sg?.number)) {  // a read through a pattern / as a number: the output moves to the number
+      let g = updateNode(graph, node.id, { op: { ...node.op, args: sg.pattern ? [{ value }, { value: sg.pattern }] : [{ value }] }, ...(sg.number ? { output: undefined } : {}) });
+      if (sg.number) { const r = addNode(g, node.id, opOf("number"), returns, { output: node.output ?? `${value.replace(/[^a-z0-9]+/gi, "_")}_number` }); g = r.graph; setGraph(() => g); select(r.id); return; }
+      setGraph(() => g); setEditing(false); return;
+    }
+    setGraph((g) => updateNode(g, node.id, { op: { ...node.op!, args: node.op!.args.map((a, i) => (i === 0 ? { value } : a)) } })); setEditing(false); setBuilding(null); if (node.op.name === "click" || node.op.name === "write" || node.op.name === "wait_for") { const args = node.op.name === "write" ? [value, String(node.op.args[1]?.value ?? "")] : [value]; runAction(node.op.name, args, false); } };
   React.useEffect(() => {  // Esc: the inspector, then the edit, then up to the parent
     const h = (e: KeyboardEvent) => { if (!active || e.target instanceof HTMLInputElement) return; if ((e.metaKey || e.ctrlKey) && e.key === "z") { e.preventDefault(); undo(); } else if (e.key === "Escape") { if (pickEl) { setPickEl(null); setBuilding(null); } else if (editing) setEditing(false); else if (node?.parent) select(node.parent); } };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
@@ -432,16 +451,16 @@ export function Author() {
         <div className="flex min-w-0 flex-col gap-3">
           {pick && doc ? (
             <ElementInspector pick={pick} scopeEl={rootFor(pickEl)} scopeLabel={rootLabel} ops={opsQ.data?.Document ?? []} groups={pickGroups} live={!!page?.live} onSelector={(s) => setBuilding(s || null)} onAdd={onAdd} applyTo={selfMode && node?.op ? { label: `.${node.op.name}()` } : null} onApply={onApply} onClose={() => { setPickEl(null); setBuilding(null); }} />
-          ) : selfMode && node?.op ? (
+          ) : (selfMode || attrMode) && node?.op ? (
             <section className="rounded-lg border border-warn/50 p-2 text-[12px]">
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">.{node.op.name}() needs {node.op.name === "attr" ? "an attribute" : "a selector"} — shift-click the page, or:</div>
-              <div className="flex flex-col gap-0.5">{suggestions.map((s) => <button key={s.value} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => applySuggestion(s.value)} onMouseEnter={() => node.op?.name !== "attr" && setBuilding(s.value)} onMouseLeave={() => setBuilding(null)}><code className="shrink-0 font-mono text-[11px] text-accent">{s.value}</code>{s.count != null && <span className="rounded bg-surface-2 px-1 text-[10px]">×{s.count}</span>}<span className="text-[10px] text-muted">{s.label}</span><span className="min-w-0 flex-1 truncate text-[11px] text-muted">{s.sample}</span></button>)}{!suggestions.length && <span className="text-muted">no suggestions here</span>}</div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{node.op.name === "attr" ? "read: every attribute of the elements (as a number where it holds one) -- pick one" : `.${node.op.name}() needs a selector -- click the page, or:`}</div>
+              <div className="flex flex-col gap-0.5">{suggestions.map((s) => <button key={s.value + (s.number ? "#n" : "") + (s.pattern ?? "")} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => applySuggestion(s.value, s)} onMouseEnter={() => node.op?.name !== "attr" && setBuilding(s.value)} onMouseLeave={() => setBuilding(null)}><code className="shrink-0 font-mono text-[11px] text-accent">{s.value}</code>{s.count != null && <span className="rounded bg-surface-2 px-1 text-[10px]">×{s.count}</span>}<span className="text-[10px] text-muted">{s.label}</span><span className="min-w-0 flex-1 truncate text-[11px] text-muted">{s.sample}</span></button>)}{!suggestions.length && <span className="text-muted">no suggestions here</span>}</div>
             </section>
           ) : node && node.op && (
             <section className="rounded-lg border border-line p-2 text-[12px]">
               <div className="mb-1 flex items-center gap-2"><span className="text-[11px] font-semibold uppercase tracking-wide text-muted">{node.type}</span><span className="text-muted">{samples[node.id]}</span><span className="flex-1" />{takesSelector && <button type="button" className="text-[11px] text-accent underline" onClick={() => setEditing(true)}>re-pick its selector</button>}</div>
-              {node.type === "Collection" && <div className="flex flex-col gap-0.5"><div className="text-[11px] text-muted">All {elementsOf(values[node.id]).length} shown. Add an edge (select, attr…) and click inside any of them: it is read off EACH. The fields they share:</div>{selectors.suggestFields(elementsOf(values[node.id]), 10).map((f) => <button key={f.selector + f.attr} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => { const s = addNode(graph, node.id, opOf("select", [f.selector]), returns); setGraph(() => addNode(s.graph, s.id, opOf("attr", [f.attr]), returns, { output: f.name }).graph); }}><span className="text-accent">+</span><code className="font-mono text-[10px]">{f.selector} · {f.attr}</code><span className="truncate text-[11px] text-muted">{f.sample}</span></button>)}</div>}
-              {node.type === "Element" && nodeEl && <div className="flex flex-col gap-0.5"><div className="text-[11px] text-muted">Read off it:</div>{selectors.attributesOf(nodeEl).map((a) => <button key={a.attr} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => addEdge("attr", [a.attr], {}, { output: a.attr === "text" ? selectors.nameFromSelector(String(node.op?.args[0]?.value ?? ""), nodeEl.tagName.toLowerCase()) : a.attr.replace(/[^a-z0-9]+/gi, "_") })}><span className="text-accent">+</span><code className="w-24 shrink-0 font-mono text-[10px]">{a.attr}</code><span className="truncate text-[11px] text-muted">{a.value}</span></button>)}</div>}
+              {node.type === "Collection" && <div className="flex flex-col gap-0.5"><div className="text-[11px] text-muted">All {elementsOf(values[node.id]).length} shown. Add an edge (select, attr…) and click inside any of them: it is read off EACH. The fields they share:</div>{selectors.suggestFields(elementsOf(values[node.id]), 14).map((f) => <button key={f.selector + f.attr + (f.number ? "#n" : "")} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => { const s = addNode(graph, node.id, opOf("select", [f.selector]), returns); setGraph(() => addRead(s.graph, s.id, f.attr, { output: f.name }, f.pattern, f.number).graph); }}><span className="text-accent">+</span><code className="font-mono text-[10px]">{f.selector} · {f.attr}{f.number ? " → number" : ""}</code><span className="truncate text-[11px] text-muted">{f.sample}</span></button>)}</div>}
+              {node.type === "Element" && nodeEl && <div className="flex flex-col gap-0.5"><div className="text-[11px] text-muted">Read off it (text, count, label, href, data-*, aria-*…):</div>{selectors.attributesOfAll(elementsOf(values[node.id])).map((a) => <button key={a.attr + (a.number ? "#n" : "")} type="button" className="flex items-center gap-1 rounded px-1 text-left hover:bg-surface-2" onClick={() => { const name = a.attr === "text" ? selectors.nameFromSelector(String(node.op?.args[0]?.value ?? ""), nodeEl.tagName.toLowerCase()) : a.attr.replace(/[^a-z0-9]+/gi, "_"); const r = addRead(graph, node.id, a.attr, { output: a.number ? `${name}_number` : name }, a.pattern, a.number); setGraph(() => r.graph); select(r.id); }}><span className="text-accent">+</span><code className="w-28 shrink-0 font-mono text-[10px]">{a.number ? `${a.attr} → number` : a.attr}</code><span className="truncate text-[11px] text-muted">{a.label ?? a.value}</span></button>)}</div>}
               {node.type === "Document" && <div className="text-[11px] text-muted">The page is interactive. Clicking something the plan already has jumps to it (a link opens that page); SHIFT-click records a link, a control or a field you type into as nodes. To select, add an edge on the left, then click the page or a suggestion.{node.op?.name === "resolve" && <Pager n={node} onChange={(mod) => setGraph((g) => setMod(g, node.id, mod, "paginate"))} />}</div>}
               {(node.type === "Value" || node.type === "Reference" || node.type === "Element") && node.op && (
                 <div className="mb-1 flex flex-wrap items-center gap-1 text-[11px]">

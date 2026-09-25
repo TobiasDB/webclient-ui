@@ -1,13 +1,13 @@
 import * as React from "react";
 import { cn } from "../lib/cn";
-import { attributesOf, groupCandidates, nameFromSelector, semantic, suggestFields, uniqueCandidates, UTILITY, type Candidate } from "../lib/selectors";
+import { attributesOfAll, groupCandidates, nameFromSelector, semantic, suggestFields, uniqueCandidates, UTILITY, type Candidate } from "../lib/selectors";
 import type { Pick } from "./Player";
 import { pagerFor, type OpSpec } from "./ElementMenu";
 
 /** A read the inspector hands back: the path from the new node to the value (select a
  * descendant, then an attribute), and its name -- a literal, or a selector (relative to the
  * record) whose text is the name. */
-export type InspectRead = { select?: string; attr: string; name?: string; nameFrom?: string };
+export type InspectRead = { select?: string; attr: string; name?: string; nameFrom?: string; /** read through a regex */ pattern?: string; /** then .number() */ number?: boolean };
 export type InspectAdd = { op: string; selector: string; args?: unknown[]; kwargs?: Record<string, unknown>; reads?: InspectRead[]; record?: boolean };
 
 export type ElementInspectorProps = {
@@ -62,7 +62,8 @@ export function ElementInspector({ pick, scopeEl, scopeLabel, ops, groups = [], 
   const matches = React.useMemo<Element[]>(() => { if (!root || !selector) return []; try { return [...root.querySelectorAll(selector)]; } catch { return []; } }, [root, selector]);
   const bad = React.useMemo(() => { if (!root || !selector) return false; try { root.querySelectorAll(selector); return false; } catch { return true; } }, [root, selector]);
   const first = matches[0] ?? el;
-  const attrs = React.useMemo(() => (first ? attributesOf(first) : []), [first]);
+  const attrs = React.useMemo(() => attributesOfAll(matches.length ? matches : first ? [first] : []), [matches, first]);
+  const keyOf = (a: { attr: string; number?: boolean; pattern?: string }) => `self@${a.attr}${a.number ? "#n" : ""}${a.pattern ? "~" : ""}`;
   const shared = React.useMemo(() => (mode === "each" && matches.length > 1 ? suggestFields(matches, 10) : []), [mode, matches]);
   const [ticks, setTicks] = React.useState<Record<string, boolean>>({});
   const [names, setNames] = React.useState<Record<string, string>>({});
@@ -75,8 +76,8 @@ export function ElementInspector({ pick, scopeEl, scopeLabel, ops, groups = [], 
   const toggle = (i: number, part: string) => { const next = { ...toggled, [i]: new Set(toggled[i] ?? []) }; const set = next[i]!; set.has(part) ? set.delete(part) : set.add(part); if (part !== "tag" && set.size && !set.has("tag") && i === segs.length - 1) set.add("tag"); setToggled(next); setSelector(fromToggles(next)); setCustom(true); };
   const reads = (): InspectRead[] => {
     const out: InspectRead[] = [];
-    for (const a of attrs) if (ticks[`self@${a.attr}`]) out.push({ attr: a.attr, name: names[`self@${a.attr}`] || undefined, nameFrom: from[`self@${a.attr}`] || undefined });
-    for (const f of shared) { const k = `${f.selector}@${f.attr}`; if (ticks[k]) out.push({ select: f.selector, attr: f.attr, name: names[k] || f.name, nameFrom: from[k] || undefined }); }
+    for (const a of attrs) { const k = keyOf(a); if (ticks[k]) out.push({ attr: a.attr, pattern: a.pattern, number: a.number, name: names[k] || undefined, nameFrom: from[k] || undefined }); }
+    for (const f of shared) { const k = `${f.selector}@${f.attr}${f.number ? "#n" : ""}`; if (ticks[k]) out.push({ select: f.selector, attr: f.attr, pattern: f.pattern, number: f.number, name: names[k] || f.name, nameFrom: from[k] || undefined }); }
     return out;
   };
   const byName = Object.fromEntries(ops.map((o) => [o.name, o]));
@@ -144,10 +145,10 @@ export function ElementInspector({ pick, scopeEl, scopeLabel, ops, groups = [], 
       {/* attributes */}
       <div className="flex flex-col gap-0.5 border-t border-line pt-1">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">read off {matches.length > 1 && mode === "each" ? "each match" : "it"} — tick to add as outputs</div>
-        {attrs.map((a) => <Row key={a.attr} k={`self@${a.attr}`} label={a.attr} value={a.value} nameHint={a.attr === "text" ? nameFromSelector(selector, pick.tag) : a.attr.replace(/[^a-z0-9]+/gi, "_")} />)}
+        {attrs.map((a) => <Row key={keyOf(a)} k={keyOf(a)} label={a.number ? `${a.attr} → number` : a.attr} value={a.label ?? a.value} nameHint={a.attr === "text" ? nameFromSelector(selector, pick.tag) : a.attr.replace(/[^a-z0-9]+/gi, "_")} />)}
         {shared.length > 0 && <>
           <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-muted">inside each match — the fields they share</div>
-          {shared.map((f) => <Row key={`${f.selector}@${f.attr}`} k={`${f.selector}@${f.attr}`} label={<>{f.selector} <span className="text-muted">· {f.attr}</span></>} value={`${f.sample}${f.coverage < 1 ? ` (${Math.round(f.coverage * 100)}%)` : ""}`} nameHint={f.name} />)}
+          {shared.map((f) => <Row key={`${f.selector}@${f.attr}${f.number ? "#n" : ""}`} k={`${f.selector}@${f.attr}${f.number ? "#n" : ""}`} label={<>{f.selector} <span className="text-muted">· {f.attr}{f.number ? " → number" : ""}</span></>} value={`${f.sample}${f.coverage < 1 ? ` (${Math.round(f.coverage * 100)}%)` : ""}`} nameHint={f.name} />)}
         </>}
       </div>
       <div className="text-[10px] text-muted">{semantic(pick.classes).length ? "" : "no semantic classes: use a parent (↑) or a position"}</div>

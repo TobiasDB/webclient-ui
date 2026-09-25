@@ -105,7 +105,9 @@ export function uniqueCandidates(el: Element, root: ParentNode): Candidate[] {
   return [...unique, ...groupCandidates(el, root)];
 }
 
-export type FieldSuggestion = { name: string; selector: string; attr: string; sample: string; coverage: number };
+export type FieldSuggestion = { name: string; selector: string; attr: string; sample: string; coverage: number; /** read with a pattern */ pattern?: string; /** then .number() */ number?: boolean };
+/** a class that codes a number as a word (books.toscrape.com: `star-rating Three`) */
+export const NUMBER_WORD = "(?i)\\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\\b";
 
 /** What a group of records shares: the descendants (by a clean selector relative to the
  * record) present in most of the first records, with the attribute worth reading (text,
@@ -130,13 +132,20 @@ export function suggestFields(records: Element[], max = 8): FieldSuggestion[] {
       if (tag === "img") { add(rel, "src", child.getAttribute("src") ?? "", tag); if (child.getAttribute("alt")) add(rel, "alt", child.getAttribute("alt")!, tag, "_alt"); continue; }
       if (tag === "time") { add(rel, "datetime", child.getAttribute("datetime") ?? textish, tag); continue; }
       if (textish && (child.children.length === 0 || textish.length <= 80)) { add(rel, "text", textish, tag); if (child.children.length && textish.length > 40) walk(child, depth + 1); continue; }
-      if (!textish && child.classList.length > 1) { add(rel, "class", child.className, tag); continue; }  // a value coded in the class (star-rating Three)
+      if (!textish && child.classList.length > 1) { add(rel, "class", child.className, tag); if (child.children.length > 1) add(rel, "count", String(child.children.length), tag, "_count"); continue; }  // a value coded in the class (star-rating Three); its icons counted
       walk(child, depth + 1);
     }
   };
   walk(first, 0);
   const out: FieldSuggestion[] = [];
-  for (const [key, s] of seen) if (s.hits >= Math.max(1, Math.ceil(sample.length * 0.6))) out.push({ name: s.name, selector: key.slice(0, key.lastIndexOf("@")), attr: s.attr, sample: s.sample, coverage: s.hits / sample.length });
+  for (const [key, s] of seen) if (s.hits >= Math.max(1, Math.ceil(sample.length * 0.6))) {
+    const sel = key.slice(0, key.lastIndexOf("@"));
+    // a number coded as a word in a class: offer it AS a number first (the star rating)
+    if (s.attr === "class" && /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(s.sample)) out.push({ name: s.name.replace(/_?rating$/, "") + (s.name.includes("rating") ? "_rating" : "_number"), selector: sel, attr: "class", pattern: NUMBER_WORD, number: true, sample: `${/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.exec(s.sample)![0]} → ${["zero","one","two","three","four","five","six","seven","eight","nine","ten"].indexOf(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.exec(s.sample)![0].toLowerCase())}`, coverage: s.hits / sample.length });
+    out.push({ name: s.name, selector: sel, attr: s.attr, sample: s.sample, coverage: s.hits / sample.length });
+    // text with a number in it (a price, a stock count): offer the number too
+    if (s.attr === "text" && /\d/.test(s.sample) && s.sample.length < 60) out.push({ name: `${s.name}_number`, selector: sel, attr: "text", number: true, sample: `${s.sample} → ${/-?\d[\d,]*(?:\.\d+)?/.exec(s.sample)![0].replace(/,/g, "")}`, coverage: s.hits / sample.length });
+  }
   // unique names
   const taken = new Set<string>();
   for (const f of out) { let n = f.name; let i = 2; while (taken.has(n)) n = `${f.name}_${i++}`; taken.add(n); f.name = n; }
@@ -160,7 +169,19 @@ export function nameFromSelector(selector: string, tag: string): string {
   return raw.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 24) || "field";
 }
 
-export type AttrRow = { attr: string; value: string; kind: "text" | "count" | "attribute" };
+export type AttrRow = { attr: string; value: string; kind: "text" | "count" | "attribute"; /** read with a pattern, then .number() */ pattern?: string; number?: boolean; label?: string };
+/** Every attribute ANY of the elements has (text, own text, count, label, href, data-*, aria-*…),
+ * the first value as the sample, plus the numeric reads worth having. */
+export function attributesOfAll(els: Element[]): AttrRow[] {
+  const out: AttrRow[] = []; const seen = new Set<string>();
+  for (const el of els.slice(0, 30)) for (const a of attributesOf(el)) if (!seen.has(a.attr)) { seen.add(a.attr); out.push(a); }
+  const extra: AttrRow[] = [];
+  for (const a of out) {
+    if (a.attr === "class" && /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(a.value)) extra.push({ attr: "class", value: a.value, kind: "attribute", pattern: NUMBER_WORD, number: true, label: "the number word in the class, as a number" });
+    if ((a.attr === "text" || a.kind === "attribute") && /\d/.test(a.value) && a.value.length < 60 && a.attr !== "class") extra.push({ attr: a.attr, value: a.value, kind: a.kind, number: true, label: `${a.attr} as a number` });
+  }
+  return [...extra, ...out];
+}
 
 /** Everything readable off one element: its text, its child count, every attribute. */
 export function attributesOf(el: Element): AttrRow[] {
