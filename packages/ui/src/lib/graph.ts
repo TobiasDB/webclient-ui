@@ -216,3 +216,23 @@ export function hrefOf(g: Graph, id: string, doc: Document | null, base: string)
   try { return new URL(first, base).toString(); } catch { return first; }
 }
 export const describeOp = (n: GNode): string => !n.op ? "Reference" : `${n.op.name}(${[...n.op.args.map((a) => (a.plan ? "…" : JSON.stringify(a.value))), ...Object.entries(n.op.kwargs).map(([k, a]) => `${k}=${a.plan ? "…" : JSON.stringify(a.value)}`)].join(", ")})`;
+
+// -- focus: what a node renders, where selectors are rooted ------------------------------------
+/** The element a node's OWN selector is rooted in (its parent's value: the first element of a
+ * collection), or null for the page. */
+export function inputOf(g: Graph, id: string, doc: Document | null): Element | null {
+  const n = g.nodes[id]; if (!n?.parent || !doc) return null;
+  const p = g.nodes[n.parent]!; if (p.type === "Document" || p.type === "Reference") return null;
+  const v = evalNode(g, p.id, doc); return elementsOf(v)[0] ?? null;
+}
+/** The element a node's CHILDREN are rooted in (its own value), or null for the page. `index`
+ * picks a record of a collection. */
+export function outputOf(g: Graph, id: string, doc: Document | null, index = 0): Element | null {
+  const n = g.nodes[id]; if (!n || !doc || n.type === "Document" || n.type === "Reference") return null;
+  const els = elementsOf(evalNode(g, id, doc)); return els[Math.min(index, Math.max(0, els.length - 1))] ?? null;
+}
+/** The structural path of an element (child indices from <html>) and back. */
+export function pathOf(el: Element): number[] { const p: number[] = []; let n: Element | null = el; while (n && n.parentElement) { p.unshift([...n.parentElement.children].indexOf(n)); n = n.parentElement; } return p; }
+export function byPath(doc: Document, p: number[]): Element | null { let el: Element | null = doc.documentElement; for (const i of p) { el = el?.children[i] ?? null; if (!el) return null; } return el; }
+/** Nodes whose required argument is still empty (the plan cannot run yet). */
+export function incomplete(g: Graph): GNode[] { return Object.values(g.nodes).filter((n) => n.op && ["select", "select_all", "attr", "click", "write", "wait_for"].includes(n.op.name) && !String(n.op.args[0]?.value ?? "").trim()); }

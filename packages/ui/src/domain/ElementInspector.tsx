@@ -22,6 +22,9 @@ export type ElementInspectorProps = {
   /** the selector under construction and the matches to outline */
   onSelector?: (selector: string, mode: "each" | "one") => void;
   onAdd: (a: InspectAdd) => void;
+  /** the focused node takes THIS selector (it is waiting for one): the primary action */
+  applyTo?: { label: string } | null;
+  onApply?: (selector: string, reads: InspectRead[]) => void;
   onClose: () => void;
   className?: string;
 };
@@ -39,7 +42,7 @@ const esc = (c: string) => (typeof CSS !== "undefined" && CSS.escape ? CSS.escap
  *    fields its records share;
  *  - the OPS of the object (select_all / select / click / type / scroll / wait / open the link /
  *    pages), which add nodes to the graph with the ticked reads as their children. */
-export function ElementInspector({ pick, scopeEl, scopeLabel, ops, groups = [], live, onSelector, onAdd, onClose, className }: ElementInspectorProps) {
+export function ElementInspector({ pick, scopeEl, scopeLabel, ops, groups = [], live, onSelector, onAdd, applyTo, onApply, onClose, className }: ElementInspectorProps) {
   const [target, setTarget] = React.useState<Element | null>(pick.el ?? null);
   React.useEffect(() => { setTarget(pick.el ?? null); }, [pick.el]);
   const el = target;
@@ -128,6 +131,8 @@ export function ElementInspector({ pick, scopeEl, scopeLabel, ops, groups = [], 
       </div>
       {/* the ops of the object */}
       <div className="flex flex-wrap items-center gap-1 border-t border-line pt-1">
+        {applyTo && <Btn tone="accent" onClick={() => onApply?.(selector, reads())} hint="set the focused node's selector">use for {applyTo.label}{nReads ? ` + ${nReads}` : ""}</Btn>}
+        {applyTo && <span className="text-[10px] text-muted">or add under it:</span>}
         {byName.select_all && matches.length > 1 && <Btn tone="accent" onClick={() => add("select_all", { reads: reads() })} hint={byName.select_all.doc}>select_all ×{matches.length}{nReads ? ` + ${nReads}` : ""}</Btn>}
         {byName.select && <Btn tone={matches.length === 1 ? "accent" : undefined} onClick={() => add("select", { reads: reads() })} hint={byName.select.doc}>select{matches.length > 1 ? " (first)" : ""}{nReads ? ` + ${nReads}` : ""}</Btn>}
         {isLink && <Btn onClick={() => onAdd({ op: "resolve", selector: linkSel, reads: [] })} hint="open the linked page as a new Document node (per record when inside one)">open the link ▸</Btn>}

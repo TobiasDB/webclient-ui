@@ -4,69 +4,83 @@ import { cn } from "../lib/cn";
 import { children, lit, removeNode, setMod, updateNode, type GNode, type Graph, type NodeType } from "../lib/graph";
 import { fieldColour } from "./Player";
 
+export type Edge = { label: string; hint?: string; onAdd: () => void; tone?: "io" | "data" };
 export type GraphViewProps = {
   graph: Graph;
   selected: string;
   onSelect: (id: string) => void;
   onChange?: (g: Graph) => void;
-  /** a short sample of each node's value on its page (×20, “A Light in…”, page) */
+  /** a short sample of each node's value on its page (×20, “A Light in…”) */
   samples?: Record<string, string>;
   /** page nodes held live */
   live?: Set<string>;
+  /** the edges the FOCUSED node offers (the ops of its object's surface) */
+  edges?: Edge[];
+  /** the focused node's own argument is being picked (its input is rendered) */
+  editing?: boolean;
+  onEditArg?: (id: string) => void;
   readOnly?: boolean;
   className?: string;
 };
 
 export const TYPE_COLOUR: Record<NodeType, string> = { Reference: "#64748b", Document: "#2563eb", Element: "#0891b2", Collection: "#7c3aed", Value: "#16a34a" };
-const TYPE_SHORT: Record<NodeType, string> = { Reference: "REF", Document: "DOC", Element: "EL", Collection: "EACH", Value: "VAL" };
+const SELECTOR_OPS = new Set(["select", "select_all", "click", "write", "wait_for"]);
+export const needsArg = (n: GNode) => !!n.op && (SELECTOR_OPS.has(n.op.name) || n.op.name === "attr") && !String(n.op.args[0]?.value ?? "").trim();
 
-/** The builder's GRAPH: the objects as nodes (Reference → Document → Element / Collection →
- * Value), each made by an op of its parent's surface. Click a node: it is the scope -- its page
- * opens and new ops hang off it. Name a node to make its value an OUTPUT column (or name it
- * from the page). Pages carry their pager, collections their limit. Edit the op's argument in
- * place; × removes the node and what hangs off it. */
-export function GraphView({ graph, selected, onSelect, onChange, samples = {}, live, readOnly, className }: GraphViewProps) {
+/** The graph as a LITERAL PLAN: `Reference("…")`, then each object's ops indented under it --
+ * `.resolve()`, `.select_all("li")`, `.select("h3 a")`, `.attr("title") → title` -- one line per
+ * object, typed. Click a line: it is the FOCUS (the page renders it; new selectors root there)
+ * and its edges -- the ops of its surface -- appear under it. Arguments edit in place; an empty
+ * one waits for a shift-click on the page or a suggestion. */
+export function GraphView({ graph, selected, onSelect, onChange, samples = {}, live, edges = [], editing, onEditArg, readOnly, className }: GraphViewProps) {
   const outs = Object.values(graph.nodes).filter((n) => n.output || n.alias).map((n) => n.id);
-  const render = (n: GNode, depth: number): React.ReactNode => (
+  const render = (n: GNode): React.ReactNode => (
     <li key={n.id}>
-      <NodeRow n={n} graph={graph} depth={depth} selected={selected === n.id} onSelect={() => onSelect(n.id)} onChange={readOnly ? undefined : onChange} sample={samples[n.id]} live={!!live?.has(n.id)} colour={outs.includes(n.id) ? fieldColour(outs.indexOf(n.id)) : undefined} />
-      {children(graph, n.id).length > 0 && <ul className="ml-3 border-l border-line pl-1">{children(graph, n.id).map((c) => render(c, depth + 1))}</ul>}
+      <Line n={n} graph={graph} selected={selected === n.id} editing={selected === n.id && !!editing} onSelect={() => onSelect(n.id)} onChange={readOnly ? undefined : onChange} onEditArg={onEditArg} sample={samples[n.id]} live={!!live?.has(n.id)} colour={outs.includes(n.id) ? fieldColour(outs.indexOf(n.id)) : undefined} />
+      {selected === n.id && edges.length > 0 && !readOnly && (
+        <div className="my-0.5 ml-4 flex flex-wrap gap-0.5 rounded border border-dashed border-line p-1">{edges.map((e) => <button key={e.label} type="button" title={e.hint} onClick={e.onAdd} className={cn("rounded px-1 font-mono text-[10px] hover:bg-surface-2", e.tone === "io" ? "text-topic-network" : "text-accent")}>+ {e.label}</button>)}</div>
+      )}
+      {children(graph, n.id).length > 0 && <ul className="ml-3 border-l border-line/70 pl-1">{children(graph, n.id).map(render)}</ul>}
     </li>
   );
-  return <ul className={cn("wc-graph flex flex-col gap-0.5 text-[12px]", className)}>{render(graph.nodes[graph.root]!, 0)}</ul>;
+  return <ul className={cn("wc-graph flex flex-col font-mono text-[11px]", className)}>{render(graph.nodes[graph.root]!)}</ul>;
 }
 
-function NodeRow({ n, graph, selected, onSelect, onChange, sample, live, colour }: { n: GNode; graph: Graph; depth: number; selected: boolean; onSelect: () => void; onChange?: (g: Graph) => void; sample?: string; live: boolean; colour?: string }) {
+function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, sample, live, colour }: { n: GNode; graph: Graph; selected: boolean; editing: boolean; onSelect: () => void; onChange?: (g: Graph) => void; onEditArg?: (id: string) => void; sample?: string; live: boolean; colour?: string }) {
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
-  const a0 = n.op?.args[0];
-  const editable = !!onChange && !!n.op && a0 && !a0.plan && ["select", "select_all", "attr", "write", "click", "wait_for", "scroll", "limit"].includes(n.op.name);
-  const setArg = (value: string) => onChange?.(updateNode(graph, n.id, { op: { ...n.op!, args: n.op!.args.map((a, i) => (i === 0 ? lit(value) : a)) } }));
-  const isPage = n.type === "Document" && n.op?.name === "resolve";
+  const setArg = (i: number, value: unknown) => onChange?.(updateNode(graph, n.id, { op: { ...n.op!, args: n.op!.args.map((a, j) => (j === i ? lit(value) : a)) } }));
+  const missing = needsArg(n);
   const pager = n.mods?.find((m) => m.name === "paginate"); const limit = n.mods?.find((m) => m.name === "limit");
+  const kw = n.op ? Object.entries(n.op.kwargs) : [];
   return (
-    <div className={cn("group flex cursor-pointer flex-wrap items-center gap-1 rounded border px-1 py-0.5", selected ? "border-accent bg-accent-soft" : "border-transparent hover:border-line")} onClick={(e) => { stop(e); onSelect(); }} style={colour ? { boxShadow: `inset 3px 0 0 ${colour}` } : undefined}>
-      <span className="shrink-0 rounded px-1 font-mono text-[9px] font-semibold text-white" style={{ background: TYPE_COLOUR[n.type] }} title={n.type}>{TYPE_SHORT[n.type]}</span>
-      {!n.op ? <span className="truncate font-mono text-[11px]" title={graph.url}>{graph.url || "the URL"}</span> : <>
-        <span className="font-mono text-[11px] text-ink-2">{n.op.name === "resolve" ? "open" : n.op.name}</span>
-        {editable ? <input className="h-5 max-w-full rounded border border-line bg-surface px-1 font-mono text-[10px]" size={Math.max(4, Math.min(30, String(a0!.value ?? "").length + 1))} value={String(a0!.value ?? "")} onChange={(e) => setArg(e.target.value)} onClick={stop} title={String(a0!.value ?? "")} />
-          : a0 && !a0.plan ? <code className="truncate font-mono text-[10px] text-muted">{String(a0.value)}</code> : null}
-        {n.op.name === "resolve" && <span className="text-[10px] text-muted">{n.op.kwargs.browser?.value === true ? "browser" : n.op.kwargs.browser?.value === "auto" ? "auto" : "static"}</span>}
-      </>}
-      {live && <span className="rounded bg-ok-soft px-1 text-[9px] text-ok">live</span>}
-      {sample && <span className="max-w-[140px] truncate rounded bg-surface-2 px-1 font-mono text-[10px] text-muted" title={sample}>{sample}</span>}
-      {isPage && pager && <span className="rounded bg-topic-network/10 px-1 text-[10px] text-topic-network" title="pages">pages · {pager.kwargs.next?.value ? "next link" : String(pager.kwargs.by?.value ?? "rel=next")} ×{String(pager.kwargs.max_pages?.value ?? 20)}{onChange && <button type="button" className="ml-0.5" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "paginate")); }}>×</button>}</span>}
-      {limit && <span className="rounded bg-surface-2 px-1 text-[10px]">first {String(limit.args[0]?.value)}{onChange && <button type="button" className="ml-0.5" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "limit")); }}>×</button>}</span>}
+    <div className={cn("group flex cursor-pointer flex-wrap items-center gap-x-1 rounded px-1 py-0.5", selected ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-surface-2", missing && "ring-1 ring-bad/50")} onClick={(e) => { stop(e); onSelect(); }} style={colour ? { boxShadow: `inset 3px 0 0 ${colour}` } : undefined}>
+      {!n.op ? <span>Reference(<Str v={graph.url} onChange={onChange ? (v) => onChange({ ...graph, url: v }) : undefined} />)</span> : <span className="whitespace-nowrap">
+        .{n.op.name}(
+        {n.op.args.map((a, i) => <React.Fragment key={i}>{i > 0 && ", "}{a.plan ? "…" : typeof a.value === "string" ? <Str v={a.value} placeholder={missing && i === 0 ? "⇧click the page" : ""} bad={missing && i === 0} editing={editing && i === 0} onFocus={() => onEditArg?.(n.id)} onChange={onChange ? (v) => setArg(i, v) : undefined} /> : <span className="text-topic-network">{JSON.stringify(a.value)}</span>}</React.Fragment>)}
+        {kw.map(([k, a], i) => <span key={k}>{n.op!.args.length || i ? ", " : ""}<span className="text-muted">{k}=</span><span className="text-topic-network">{a.plan ? "…" : JSON.stringify(a.value)}</span></span>)}
+        )
+      </span>}
+      {pager && <span className="text-topic-network">.paginate({pager.kwargs.next?.value ? `next="${String(pager.kwargs.next.value)}", ` : ""}max_pages={String(pager.kwargs.max_pages?.value ?? 20)}){onChange && <button type="button" className="ml-0.5 text-muted hover:text-bad" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "paginate")); }}>×</button>}</span>}
+      {limit && <span className="text-topic-network">.limit({String(limit.args[0]?.value)}){onChange && <button type="button" className="ml-0.5 text-muted hover:text-bad" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "limit")); }}>×</button>}</span>}
       <span className="flex-1" />
+      <span className="rounded px-1 font-sans text-[9px] font-semibold text-white" style={{ background: TYPE_COLOUR[n.type] }}>{n.type}</span>
+      {live && <span className="rounded bg-ok-soft px-1 font-sans text-[9px] text-ok">live</span>}
+      {sample && <span className="max-w-[120px] truncate text-[10px] text-muted" title={sample}>{sample}</span>}
       {(n.output !== undefined || n.alias) ? (
-        n.alias ? <span className="rounded px-1 text-[10px] text-white" style={{ background: colour }} title="the column's name is read off the page">→ name from page</span>
-          : <span className="inline-flex items-center gap-0.5 rounded px-1 text-[10px] text-white" style={{ background: colour }}>→<input className="h-4 w-20 bg-transparent text-[10px] text-white outline-none" value={n.output} onChange={(e) => onChange?.(updateNode(graph, n.id, { output: e.target.value }))} onClick={stop} readOnly={!onChange} /></span>
-      ) : onChange && n.op && <button type="button" className="hidden rounded border border-line px-1 text-[10px] text-muted group-hover:inline hover:text-ink" onClick={(e) => { stop(e); onChange(updateNode(graph, n.id, { output: suggest(n) })); }} title="make this node's value an output column">+ output</button>}
-      {onChange && n.op && <button type="button" className="text-muted opacity-0 group-hover:opacity-100 hover:text-bad" onClick={(e) => { stop(e); onChange(removeNode(graph, n.id)); }} title="remove this node and what hangs off it"><X size={11} /></button>}
+        n.alias ? <span className="rounded px-1 font-sans text-[10px] text-white" style={{ background: colour }} title="named from the page">→ name from page</span>
+          : <span className="inline-flex items-center rounded px-1 font-sans text-[10px] text-white" style={{ background: colour }}>→<input className="h-4 w-16 bg-transparent text-[10px] text-white outline-none" value={n.output} onChange={(e) => onChange?.(updateNode(graph, n.id, { output: e.target.value }))} onClick={stop} readOnly={!onChange} /><button type="button" className="ml-0.5" onClick={(e) => { stop(e); onChange?.(updateNode(graph, n.id, { output: undefined })); }}>×</button></span>
+      ) : onChange && n.op && <button type="button" className="hidden rounded border border-line px-1 font-sans text-[10px] text-muted group-hover:inline hover:text-ink" onClick={(e) => { stop(e); onChange(updateNode(graph, n.id, { output: suggest(n) })); }} title="project this object's value as an output column">→ output</button>}
+      {onChange && n.op && <button type="button" className="text-muted opacity-0 group-hover:opacity-100 hover:text-bad" onClick={(e) => { stop(e); onChange(removeNode(graph, n.id)); }} title="remove this and what hangs off it"><X size={11} /></button>}
     </div>
   );
 }
+function Str({ v, onChange, placeholder, bad, editing, onFocus }: { v: string; onChange?: (v: string) => void; placeholder?: string; bad?: boolean; editing?: boolean; onFocus?: () => void }) {
+  if (!onChange) return <span className="text-ok">"{v}"</span>;
+  return <span className={cn(bad ? "text-bad" : "text-ok")}>"<input className={cn("bg-transparent outline-none", editing && "rounded bg-warn-soft")} size={Math.max(2, Math.min(34, (v || placeholder || "").length))} style={{ fieldSizing: "content", maxWidth: "26ch" } as React.CSSProperties} value={v} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} onClick={(e) => e.stopPropagation()} onFocus={onFocus} title={v} />"</span>;
+}
 function suggest(n: GNode): string {
   if (n.op?.name === "resolve") return "detail";
+  if (n.op?.name === "attr") return String(n.op.args[0]?.value ?? "value").replace(/[^a-z0-9]+/gi, "_");
   const a = String(n.op?.args[0]?.value ?? n.op?.name ?? "field"); const leaf = a.split(/\s*[> ~+]\s*/).filter(Boolean).pop() ?? a;
   const m = /[.#]([a-zA-Z0-9_-]+)/.exec(leaf); return (m?.[1] ?? leaf).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "field";
 }

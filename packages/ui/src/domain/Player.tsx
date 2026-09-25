@@ -10,7 +10,7 @@ import { topicColorVar } from "./TopicChip";
 /** One rrweb event (a DOM event, or one of ours as a custom event tagged with its topic). */
 export type RREvent = { type: number; data: any; timestamp: number };
 
-export type Highlight = { selector: string; label?: string; tone?: "accent" | "ok" | "warn" | "field" | "bad"; colour?: string; key?: string; dashed?: boolean };
+export type Highlight = { selector: string; label?: string; tone?: "accent" | "ok" | "warn" | "field" | "bad"; colour?: string; key?: string; dashed?: boolean; /** query inside this element (the focus root) instead of the page; `selector: ":scope"` outlines the root itself */ root?: Element | null; /** explicit elements instead of a selector */ els?: Element[] };
 export type Pick = { path: string; selector: string; tag: string; classes: string[]; id?: string; text: string; attrs: Record<string, string>; href?: string; /** the element itself (in the rebuilt page) */ el?: Element };
 type Box = { left: number; top: number; width: number; height: number; label?: string; colour: string; dashed?: boolean };
 type Pulse = { id: number; at: number; topic: string; text: string; tone: string };
@@ -28,6 +28,11 @@ export type PlayerProps = {
   /** a click on an element: the pick, and where it was (px inside the player's page area) */
   onPick?: (pick: Pick, at: { x: number; y: number }) => void;
   onHover?: (pick: Pick | null) => void;
+  /** pick with SHIFT-click only; a plain click goes through to the page (`onClickThrough`) */
+  shiftPick?: boolean;
+  onClickThrough?: (pick: Pick) => void;
+  /** render only this element (its ancestors keep their styling; everything else is hidden) */
+  focus?: Element | null;
   /** Seek to an absolute timestamp (ms since epoch) when it changes. */
   seekTo?: number | null;
   /** The player's clock (absolute ms), as it plays or is scrubbed. */
@@ -63,7 +68,7 @@ const TONE: Record<NonNullable<Highlight["tone"]>, string> = { accent: "#2457e6"
  * at the recorded viewport and is scaled to fit -- no reflow between documents. */
 const NO_HIGHLIGHTS: Highlight[] = [];
 
-export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
+export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, shiftPick = false, onClickThrough, focus = null, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
   const ownCtl = React.useMemo(() => new PlayerController(), []);
   const ctl = controller ?? ownCtl;
   const [pace, setPace] = React.useState(paceProp);
@@ -73,8 +78,8 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
   const root = React.useRef<HTMLDivElement>(null);
   const rep = React.useRef<any>(null);
   const appended = React.useRef(0);
-  const cbs = React.useRef({ onTime, onEvent, onPick, onHover, onDocument });
-  cbs.current = { onTime, onEvent, onPick, onHover, onDocument };
+  const cbs = React.useRef({ onTime, onEvent, onPick, onHover, onDocument, onClickThrough });
+  cbs.current = { onTime, onEvent, onPick, onHover, onDocument, onClickThrough };
   const refreshRef = React.useRef<() => void>(() => {});
   const toRecordedRef = React.useRef<(ms: number) => number>((ms) => ms);
   toRecordedRef.current = toRecorded;
@@ -175,7 +180,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     const d = doc(); if (!d) return;
     const out: Box[] = [];
     for (const h of highlights) {
-      let els: Element[] = []; try { els = [...d.querySelectorAll(h.selector)]; } catch { continue; }
+      let els: Element[] = []; try { els = h.els ? h.els : h.root ? (h.selector === ":scope" ? [h.root] : [...h.root.querySelectorAll(h.selector)]) : [...d.querySelectorAll(h.selector)]; } catch { continue; }
       const colour = h.colour ?? TONE[h.tone ?? "accent"];
       els.forEach((el, i) => out.push(boxFor(el, colour, i === 0 ? (h.label ? `${h.label}${els.length > 1 && !h.label.includes("×") ? ` ×${els.length}` : ""}` : undefined) : undefined, !!h.dashed)));
     }
@@ -228,7 +233,19 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
   const hoverRaf = React.useRef(0);
   const onMove = (e: React.MouseEvent) => { if (!pickable) return; const ev = { clientX: e.clientX, clientY: e.clientY, currentTarget: e.currentTarget } as React.MouseEvent; cancelAnimationFrame(hoverRaf.current); hoverRaf.current = requestAnimationFrame(() => hoverAt(ev)); };
   const hoverAt = (e: React.MouseEvent) => { const p = pickAt(e); const d = doc(); if (!p || !d) { setHover(null); cbs.current.onHover?.(null); return; } const el = d.querySelector(p.path) ?? d.elementFromPoint((e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left) / scale, (e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top) / scale); if (el) setHover(boxFor(el, "#6b7280", p.selector, true)); cbs.current.onHover?.(p); };
-  const onClick = (e: React.MouseEvent) => { if (!pickable) return; e.preventDefault(); const p = pickAt(e); if (!p) return; const r = host.current?.getBoundingClientRect(); cbs.current.onPick?.(p, { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0) }); };
+  const onClick = (e: React.MouseEvent) => { if (!pickable) return; e.preventDefault(); const p = pickAt(e); if (!p) return; if (shiftPick && !e.shiftKey) { cbs.current.onClickThrough?.(p); return; } const r = host.current?.getBoundingClientRect(); cbs.current.onPick?.(p, { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0) }); };
+  // focus: render only one element -- hide the siblings along its ancestor chain (styles stay: the ancestors keep their classes)
+  React.useEffect(() => {
+    const d = doc(); if (!d) return;
+    if (!d.getElementById("__wc_focus_css")) { const st = d.createElement("style"); st.id = "__wc_focus_css"; st.textContent = "[data-wc-hide]{display:none!important}"; (d.head ?? d.documentElement).appendChild(st); }
+    d.querySelectorAll("[data-wc-hide]").forEach((x) => x.removeAttribute("data-wc-hide"));
+    if (focus && focus.ownerDocument === d) {
+      let n: Element | null = focus;
+      while (n && n.parentElement) { for (const sib of n.parentElement.children) if (sib !== n && sib.tagName !== "HEAD" && sib.tagName !== "STYLE" && sib.tagName !== "LINK") sib.setAttribute("data-wc-hide", ""); n = n.parentElement; }
+      focus.scrollIntoView({ block: "start" });
+    }
+    refreshRef.current();
+  }, [focus, ready]);
 
   // -- transport (the MediaBar drives it through the controller) ----------------------
   const markers = React.useMemo(() => events.filter((e) => e.type === 5).map((e) => ({ t: e.timestamp, tag: String(e.data?.tag ?? "") })), [events]);
@@ -246,7 +263,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
       <div ref={host} className="relative w-full overflow-hidden bg-white" style={{ height: Math.round(size.h * scale) }}>
         <div ref={root} className="absolute left-0 top-0 origin-top-left" style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} />
         {/* the overlay: highlights, hover, flashes -- scaled with the page */}
-        <div className={cn("absolute left-0 top-0 origin-top-left", pickable && "cursor-crosshair")} style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); cbs.current.onHover?.(null); }} onClick={onClick}>
+        <div className={cn("absolute left-0 top-0 origin-top-left", pickable && !shiftPick && "cursor-crosshair")} style={{ width: size.w, height: size.h, transform: `scale(${scale})` }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); cbs.current.onHover?.(null); }} onClick={onClick}>
           {cursor && <div className={cn("wc-cursor", cursor.down && "wc-cursor-down")} style={{ left: cursor.x, top: cursor.y }} />}
           {[...boxes, ...flash, ...(hover ? [hover] : [])].map((b, i) => (
             <div key={i} className={cn("wc-hl absolute", b.dashed && "wc-hl-dashed", flash.includes(b) && "wc-hl-flash")} style={{ left: b.left, top: b.top, width: b.width, height: b.height, ["--c" as any]: b.colour }}>
@@ -260,7 +277,7 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
         </div>
         {!ready && !live && events.length >= 2 && <div className="absolute inset-0 flex items-center justify-center text-[12px] text-muted">rebuilding the page…</div>}
         {events.length < 2 && <div className="absolute inset-0 flex items-center justify-center text-[12px] text-muted">{live ? "waiting for the page's first snapshot…" : "nothing to show yet"}</div>}
-        {pickable && <span className="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded bg-ink/80 px-1.5 py-0.5 text-[10px] text-surface"><Crosshair size={10} /> click an element to pick it</span>}
+        {pickable && <span className="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded bg-ink/80 px-1.5 py-0.5 text-[10px] text-surface"><Crosshair size={10} /> {shiftPick ? "shift-click to pick · click goes through" : "click an element to pick it"}</span>}
       </div>
       {controls && <MediaBar controller={ctl} />}
     </div>
