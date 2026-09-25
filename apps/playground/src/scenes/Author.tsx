@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, Player, Select, SkeletonPane,
@@ -8,6 +8,7 @@ import {
 } from "@webclient/ui";
 import { API_URL, api, ApiError } from "../lib/api";
 import { call as callBody, plan as planBody, useActive, useSession } from "../lib/session";
+import { encSpec } from "./Run";
 
 const { addNode, updateNode, setMod, opOf, emptyGraph, children, pageOf, evalNode, elementsOf, sample, hrefOf, compile, decompile, outputs, inputOf, pathOf, byPath, incomplete, isEl } = graphLib;
 const isPlain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v) && typeof (v as { base64?: unknown }).base64 !== "string";
@@ -200,7 +201,12 @@ export function Author() {
   // -- picking: shift-click → the inspector (rooted at the focus) -------------------------------------
   const pick: Pick | null = pickEl ? describe(pickEl) : null;
   const pickGroups = React.useMemo(() => { if (!pickEl) return []; return patternGroups.filter((g) => { try { return !!pickEl.closest(g.selector); } catch { return false; } }).map((g) => ({ name: g.name, colour: g.colour, count: g.count })); }, [pickEl, patternGroups]);
-  const onFramePick = (p: { path: number[] }) => { if (!doc) return; const el = byPath(doc, p.path); if (el) setPickEl(el); };
+  const [pickShadow, setPickShadow] = React.useState(false);
+  const onFramePick = (p: { path: number[]; shadow?: boolean }) => { if (!doc) return; const el = byPath(doc, p.path); setPickShadow(!!p.shadow); if (el) setPickEl(el); };
+  /** a page whose content lives in shadow DOM / frames: the browser tier folds it into the capture */
+  const useBrowser = () => { if (!pageNode?.op) return; setGraph((g) => updateNode(g, pageNode.id, { op: { ...pageNode.op!, kwargs: { ...pageNode.op!.kwargs, browser: { value: true } } } })); setPages((ps) => ({ ...ps, [pageNode.id]: { url: ps[pageNode.id]?.url ?? "" } })); setDocs((ds) => { const { [pageNode.id]: _d, ...rest } = ds; return rest; }); setPickEl(null); setPickShadow(false); };
+  /** a picked <iframe>: its page as a Document of its own */
+  const openFrame = () => { if (!graph || !pickEl || !scope) return; const sel = selFor(pickEl); let g = graph; const s1 = addNode(g, scope.id, opOf("select", [sel]), returns); g = s1.graph; const h = addNode(g, s1.id, opOf("attr", ["src"]), returns); g = h.graph; const r = addNode(g, h.id, opOf("resolve", [], browserKw(tier)), returns); if (node && needsArg(node)) g = graphLib.removeNode(r.graph, node.id); else g = r.graph; setGraph(() => g); select(r.id); };
   /** a selector for an element the person acted on, rooted where it will be evaluated */
   const selFor = (el: Element): string => { const r = rootFor(el); return selectors.uniqueCandidates(el, r ?? el.ownerDocument)[0]?.selector ?? describe(el).selector; };
   /** the node an action hangs off: the focused page / action node, else the page */
@@ -387,6 +393,9 @@ export function Author() {
       if (out.trace) qc.invalidateQueries({ queryKey: ["traces"] });
     } catch (e) { setRun({ error: e as ApiError, busy: false }); }
   };
+  const navigate = useNavigate();
+  /** Run ▶: the plan goes to the Run workspace, which executes it live (stages, streamed rows, trace) */
+  const openRun = () => { if (!plan || !graph) return; const host = (() => { try { return new URL(graph.url).hostname.replace(/^www\./, ""); } catch { return "run"; } })(); navigate(`/run?p=${encSpec({ plan: { ...plan, session_id: sessionId }, url: graph.url, name: host })}`); };
   const runTraced = () => { const host = (() => { try { return new URL(graph?.url ?? "").hostname.replace(/^www\./, ""); } catch { return "run"; } })(); const name = window.prompt("save the run as a trace named", `${host}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}`); if (name) { setRowsOpen(true); runServer(name); } };
 
   const saved = useQuery({ queryKey: ["saved-graphs"], queryFn: () => { try { return JSON.parse(localStorage.getItem("wc.graphs") ?? "[]") as { name: string; state: State; at: number }[]; } catch { return []; } }, staleTime: 0 });
@@ -543,18 +552,13 @@ export function Author() {
           {/* the rows: the preview on this page, and the server run */}
           <section className="flex min-h-0 shrink-0 flex-col rounded border border-line" style={{ height: rowsOpen ? rowsH : 22 }}>
             <div className="flex h-[20px] shrink-0 items-center gap-2 border-b border-line px-1.5 text-[10.5px]">
-              <button type="button" className={cn("font-medium", tab !== "server" ? "text-ink" : "text-muted hover:text-ink")} onClick={() => { setTab("rows"); setRowsOpen(true); }}>Rows <span className="text-muted">{shown.rows.length}</span></button>
-              <button type="button" className={cn("inline-flex items-center gap-1 font-medium", tab === "server" ? "text-ink" : "text-muted hover:text-ink")} onClick={() => { setTab("server"); setRowsOpen(true); }}>Run <span className="text-muted">{run.rows?.length ?? ""}</span></button>
-              <button type="button" disabled={!outs.length || run.busy || missing.length > 0} onClick={() => { setRowsOpen(true); runServer(); }} className="rounded bg-accent px-1 text-[10px] leading-4 text-white disabled:opacity-40" title={missing.length ? `${missing.length} op(s) still need an argument` : "run the plan on the server"}>{run.busy ? "…" : "▶"}</button>
-              <button type="button" disabled={!outs.length || run.busy || missing.length > 0} onClick={runTraced} className="rounded border border-line px-1 text-[10px] leading-4 text-muted hover:text-ink disabled:opacity-40" title="run and save it as a trace (every request, action and page -- replayable in Traces)">⏺ trace</button>
-              {run.trace && <a href={`/traces/${encodeURIComponent(run.trace)}`} className="text-[10px] text-accent underline" title="open the saved trace">trace: {run.trace}</a>}
-              <span className="min-w-0 flex-1 truncate text-[10px] text-muted">{tab === "server" ? (run.error ? `${run.error.detail?.code ?? run.error.status}: ${run.error.detail?.hint ?? run.error.message}` : run.rows ? `${run.rows.length} rows in ${run.ms} ms` : "the plan, run through your session") : shown.nested ? "rows whose page is open here, with the parent row's columns" : "preview on this page"}</span>
-              {tab === "server" && run.rows && <label className="flex items-center gap-1 text-[10px] text-muted"><input type="checkbox" checked={asJson} onChange={(e) => setAsJson(e.target.checked)} />JSON</label>}
+              <span className="font-medium">Rows <span className="text-muted">{shown.rows.length}</span></span>
+              <span className="min-w-0 flex-1 truncate text-[10px] text-muted">{shown.nested ? "rows whose page is open here, with the parent row's columns" : "preview on this page"}</span>
+              <button type="button" disabled={!outs.length || missing.length > 0} onClick={openRun} className="rounded bg-accent px-1.5 text-[10px] leading-4 text-white disabled:opacity-40" title={missing.length ? `${missing.length} op(s) still need an argument` : "run the plan: the Run workspace shows it live (stages, rows as they stream, errors) and records a trace"}>Run ▶</button>
               <button type="button" className="text-muted hover:text-ink" onClick={() => setRowsOpen(!rowsOpen)} title={rowsOpen ? "hide the rows" : "show the rows"}>{rowsOpen ? "▾" : "▴"}</button>
             </div>
             {rowsOpen && <div className="min-h-0 flex-1 overflow-auto">
-              {tab === "server" ? (run.rows ? (asJson ? <CodeBlock lang="json" code={JSON.stringify(run.rows, null, 2)} className="m-0.5" /> : <DataFrame rows={run.rows} colours={columnColours(run.rows)} dense />) : null)
-                : !outs.length ? <div className="p-2 text-[11px] text-muted">No outputs yet -- tick “output” above for a node, or use + output ▾.</div>
+              {!outs.length ? <div className="p-2 text-[11px] text-muted">No outputs yet -- tick “output” above for a node, or use + output ▾.</div>
                 : <DataFrame rows={shown.rows} colours={columnColours(shown.rows)} dense emptyHint="Nothing matched on this page yet." />}
             </div>}
           </section>
@@ -566,6 +570,8 @@ export function Author() {
           {pick && doc ? (
             <div className="flex min-h-0 flex-col overflow-auto p-1.5">
               <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Selector for .{node.op.name}()</div>
+              {pickShadow && <div className="mb-1 rounded border border-warn/50 bg-warn-soft/50 p-1 text-[10.5px]">That element is inside a <b>shadow DOM</b> the static copy cannot reach. <button type="button" className="underline" onClick={useBrowser}>Open the page with a browser</button> -- its capture folds shadow DOM and same-origin frames into the page.</div>}
+              {pickEl?.tagName === "IFRAME" && <div className="mb-1 rounded border border-line bg-surface-2 p-1 text-[10.5px]">A <b>frame</b>: its content is another page. <button type="button" className="underline" onClick={openFrame}>Open the frame's page</button> (<code>.select(…).attr("src").resolve()</code>)</div>}
               <ElementInspector pick={pick} scopeEl={rootFor(pickEl)} scopeLabel={rootLabel} op={node.op.name} initial={editing && !needsArg(node) ? String(node.op.args[0]?.value ?? "") : undefined} groups={pickGroups} onSelector={(sel) => setBuilding(sel || null)} onAdd={onApply} onCancel={() => { setPickEl(null); setBuilding(null); }} />
             </div>
           ) : (

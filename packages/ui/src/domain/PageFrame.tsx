@@ -5,7 +5,7 @@ import { cn } from "../lib/cn";
  * parsed copy of the same HTML). */
 export type ElPath = number[];
 export type FrameHighlight = { selector?: string; /** explicit elements (structural paths) instead of a selector */ paths?: ElPath[]; colour: string; label?: string; dashed?: boolean; /** query inside this element (the focus root); `:scope` outlines the root itself */ rootPath?: ElPath | null };
-export type FramePick = { path: ElPath; tag: string; id?: string; classes: string[]; text: string };
+export type FramePick = { path: ElPath; tag: string; id?: string; classes: string[]; text: string; /** the click landed inside this element's SHADOW root (the static copy cannot reach it) */ shadow?: boolean };
 
 export type FrameAction = { op: "click" | "write" | "navigate"; pick: FramePick; href?: string; value?: string; /** SHIFT held: record it */ shift: boolean };
 export type PageFrameProps = {
@@ -81,8 +81,12 @@ export function PageFrame({ html, base, stripScripts, focusPaths = null, highlig
 }
 
 /** The HTML with a <base> and the agent first in <head> (so its capture-phase listeners run before the page's). */
+/** third-party widgets that cannot work in a sandboxed copy (no origin): captchas, analytics */
+const WIDGETS = /(recaptcha|hcaptcha|turnstile|challenges\.cloudflare|googletagmanager|google-analytics|gtag\/js|doubleclick|connect\.facebook|hotjar|segment\.com|intercom)/i;
 export function withAgent(html: string, base: string, strip: boolean): string {
   let h = strip ? html.replace(/<script\b[\s\S]*?<\/script>/gi, "") : html;
+  h = h.replace(/<script\b[^>]*\bsrc=["']([^"']*)["'][^>]*>\s*<\/script>/gi, (m, src: string) => (WIDGETS.test(src) ? "" : m))
+    .replace(/<iframe\b[^>]*\bsrc=["']([^"']*)["'][^>]*>[\s\S]*?<\/iframe>/gi, (m, src: string) => (WIDGETS.test(src) ? "" : m));
   const inject = `<base href="${base.replace(/"/g, "&quot;")}"><script>${AGENT}</script>`;
   if (/<head[^>]*>/i.test(h)) h = h.replace(/<head[^>]*>/i, (m) => m + inject);
   else if (/<html[^>]*>/i.test(h)) h = h.replace(/<html[^>]*>/i, (m) => m + "<head>" + inject + "</head>");
@@ -107,7 +111,7 @@ var shiftDown=false,recordField=new Set();var CONTROL="a[href],button,input,sele
 addEventListener("message",function(e){var m=e.data;if(!m||!m.__wc)return;if(m.type==="focus"){roots=(m.paths||[]).map(byPath).filter(Boolean);isolate();later()}else if(m.type==="highlight"){items=m.items||[];later()}else if(m.type==="mode"){picking=!!m.picking;hover=null;later()}else if(m.type==="ping"){post({type:"ready"})}else if(m.type==="go"&&m.href){location.href=m.href}});
 addEventListener("mousemove",function(e){var el=e.target;if(!(el instanceof Element)||el.hasAttribute("data-wc-layer"))return;if(!inRoots(el))el=null;if(!picking&&el)el=el.closest(CONTROL);if(el!==hover){hover=el;post({type:"hover",pick:el?info(el):null});later()}},true);
 addEventListener("click",function(e){var el=e.target;if(!(el instanceof Element))return;shiftDown=e.shiftKey;
- if(picking){e.preventDefault();e.stopPropagation();post({type:"pick",pick:info(el)});return}
+ if(picking){e.preventDefault();e.stopPropagation();var p=info(el),real=e.composedPath?e.composedPath()[0]:el;if(real!==el&&real instanceof Node)p.shadow=true;post({type:"pick",pick:p});return}
  var a=el.closest("a[href]");if(a&&!/^(#|javascript:)/.test(a.getAttribute("href")||"")){e.preventDefault();post({type:"action",action:{op:"navigate",pick:info(a),href:a.href,shift:e.shiftKey}});return}
  var c=el.closest(CONTROL);if(!c)return;if(/^(INPUT|TEXTAREA|SELECT)$/.test(c.tagName)){if(e.shiftKey)recordField.add(c);else recordField.delete(c);if(!/^(checkbox|radio)$/.test(c.type||""))return}post({type:"action",action:{op:"click",pick:info(c),shift:e.shiftKey}})},true);
 addEventListener("keydown",function(e){shiftDown=e.shiftKey},true);addEventListener("keyup",function(e){shiftDown=e.shiftKey},true);

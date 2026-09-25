@@ -85,6 +85,10 @@ export const api = {
   traceEvent: (id: string, n: number) => call<Event & { content?: string; body?: string; events?: unknown[] }>(`/traces/${encodeURIComponent(id)}/events/${n}`),
   traceRrweb: (id: string, documentId?: string) => call<Record<string, unknown>[]>(`/traces/${encodeURIComponent(id)}/rrweb${documentId ? `?document_id=${encodeURIComponent(documentId)}` : ""}`),
   traceHar: (id: string) => call<{ log: { entries: unknown[] } }>(`/traces/${encodeURIComponent(id)}/har`),
+  /** runs: a plan executed in the background, followed live (rows / events since the counts held) */
+  runStart: (body: Record<string, unknown>) => call<{ id: string; trace: string | null }>("/runs", { method: "POST", body: JSON.stringify(body) }),
+  run: (id: string, rows = 0, events = 0) => call<RunState>(`/runs/${encodeURIComponent(id)}?rows=${rows}&events=${events}`),
+  runs: () => call<{ id: string; status: string; rows: number; events: number; started: number; finished: number | null; describe: string; trace: string | null }[]>("/runs"),
   tracePlan: (id: string) => call<{ blob: string; describe: string }>(`/traces/${encodeURIComponent(id)}/plan`),
   /** the documents the session holds (the strip at the top): static captures and live pages */
   docs: (sid: string) => call<DocHandle[]>(`/sessions/${encodeURIComponent(sid)}/documents`),
@@ -114,3 +118,5 @@ export function subscribe(onEvent: (e: Event) => void, opts: { since?: number; t
   ws.onclose = () => opts.onClose?.();
   return () => ws.close();
 }
+
+export type RunState = { id: string; status: "running" | "done" | "error"; error: { code?: string; message?: string; hint?: string; remedy?: string } | null; started: number; finished: number | null; describe: string; trace: string | null; n_rows: number; n_events: number; rows: { row: unknown; at: number }[]; events: Record<string, unknown>[] };

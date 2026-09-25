@@ -6,12 +6,13 @@ import { Home } from "./scenes/Home";
 import { Author } from "./scenes/Author";
 import { Traces } from "./scenes/Traces";
 import { Tools } from "./scenes/Tools";
+import { Run } from "./scenes/Run";
 import { Settings } from "./scenes/Settings";
 import { Loops } from "./scenes/Loops";
 import { DocumentStrip } from "./components/DocumentStrip";
 
 const WORKSPACES = [
-  ["/", "Home"], ["/author", "Author"], ["/loops", "Crawl · Loops"], ["/traces", "Traces"], ["/tools", "Tools"], ["/settings", "Settings"],
+  ["/", "Home"], ["/author", "Author"], ["/run", "Run"], ["/loops", "Crawl · Loops"], ["/traces", "Traces"], ["/tools", "Tools"], ["/settings", "Settings"],
 ] as const;
 
 /** The live stream shared by every workspace (the run bar) -- one socket, resumed by cursor. */
@@ -70,6 +71,7 @@ export function App() {
         </Routes>
         <Keep path="/loops"><Loops liveEvents={events} /></Keep>
         <Keep path="/traces"><Routes><Route path="/traces" element={<Traces />} /><Route path="/traces/:id" element={<Traces />} /></Routes></Keep>
+        <Keep path="/run"><Run /></Keep>
         <Keep path="/tools"><Tools /></Keep>
         <Keep path="/settings"><Settings /></Keep>
       </Boundary></main>
