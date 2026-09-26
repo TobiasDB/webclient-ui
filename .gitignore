@@ -3,3 +3,7 @@ dist/
 storybook-static/
 .astro/
 *.log
+
+# end-to-end output
+apps/playground/test-results/
+apps/playground/playwright-report/

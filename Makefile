@@ -10,6 +10,7 @@
 #   make api          the webclient HTTP API (from ../webclient)    http://localhost:8000
 #   make check        the gate: typecheck every workspace + unit tests + the Storybook build
 #   make typecheck / make test / make build / make build-storybook
+#   make e2e          the Run workspace end to end, against recorded runs (starts its own API + dev server)
 #   make lab-test     the package's lab suite against the served site (needs `make site-serve`)
 #   make clean        remove build output
 #
@@ -27,7 +28,7 @@ TRACES_DIR ?= $(abspath $(WEBCLIENT))/traces
 
 export API_URL
 
-.PHONY: help install up playground storybook site site-build site-serve api check typecheck test build build-storybook lab-test clean
+.PHONY: help install up playground storybook site site-build site-serve api check typecheck test build build-storybook e2e lab-test clean
 
 help:
 	@sed -n '1,/^$$/p' $(firstword $(MAKEFILE_LIST)) | sed 's/^# \{0,1\}//'
@@ -80,6 +81,10 @@ build:
 
 build-storybook:
 	npm run build:storybook
+
+# the Run workspace end to end: recorded runs (apps/playground/e2e/traces) replayed in a real browser
+e2e:
+	cd apps/playground && WEBCLIENT=$(abspath $(WEBCLIENT)) npx playwright test
 
 # the package's lab suite, run against the served site (start `make site-serve` first)
 lab-test:
