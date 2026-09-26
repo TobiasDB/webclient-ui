@@ -2,7 +2,7 @@ import * as React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, ParamsEditor, Player, RunGraph, runLib, Select, SkeletonPane, checkPlan, stagesLib,
+  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, PagerEditor, pagerLib, ParamsEditor, Player, RunGraph, runLib, Select, SkeletonPane, checkPlan, stagesLib,
   TabPanel, Tabs, Toolbar, ToolbarSpacer, cn, describe, fieldColour, graphLib, needsArg, outputName, planLib, selectors, toolAsCode, usePlayerController,
   type Edge, type FrameAction, type OpParam, type FrameHighlight, type Graph, type Highlight, type InspectAdd, type InspectRead, type Pick, type Plan, type RREvent,
 } from "@webclient/ui";
@@ -515,7 +515,7 @@ export function Author() {
     setPickEl(null); setBuilding(null);
     const m = ACTION_OPS.includes(a.op) ? { g: graph, parent: under0.id } : materialize(graph, under0.id);
     const under = m.g.nodes[m.parent]!;
-    if (a.op === "paginate" && pageNode) { setGraph((g) => setMod(g, pageNode.id, opOf("paginate", [], { max_pages: 5, ...a.kwargs }))); if (a.kwargs?.by === "action" && stateNode) await liveAt(stateNode); return; }
+    if (a.op === "paginate" && pageNode) { setGraph((g) => setMod(g, pageNode.id, opOf("paginate", [], { max_pages: pagerLib.DEFAULT_MAX, ...a.kwargs }))); if ((a.kwargs?.click || a.kwargs?.scroll) && stateNode) await liveAt(stateNode); return; }
     if (ACTION_OPS.includes(a.op)) { await runAction(a.op, a.args ?? [a.selector], a.record !== false, under.id); return; }
     let g = m.g; let focus = under.id;
     if (a.op === "resolve") {
@@ -564,7 +564,12 @@ export function Author() {
     }
     if (node.type === "Document") {
       for (const n of ["click", "write", "wait_for"]) edges.push({ label: `.${n}("…")`, tone: "io", hint: `${n} on the live page (the page goes live)`, onAdd: () => addEdge(n, n === "write" ? ["", ""] : [""]) });
-      if (node.op?.name === "resolve") edges.push({ label: ".paginate(…)", tone: "io", hint: "walk the pages", onAdd: () => setGraph((g) => setMod(g, node.id, opOf("paginate", [], { by: "link", max_pages: 5 }))) });
+      if (node.op?.name === "resolve") {
+        // the page's own hint says how it pages (its best mode); else follow rel=next
+        const best = pagerLib.hintOf(views.data?.flags)?.modes[0];
+        const p = best ? pagerLib.fromHint(best) : { mode: "next" as const, next: "", max_pages: pagerLib.DEFAULT_MAX };
+        edges.push({ label: ".paginate(…)", tone: "io", hint: best ? `walk the pages: ${best.code} (${best.evidence})` : "walk the pages (rel=next)", onAdd: () => setGraph((g) => setMod(g, node.id, { name: "paginate", args: [], kwargs: pagerLib.toKwargs(p) })) });
+      }
       for (const n of ["title", "text", "markdown", "html", "links"]) if (returns[n]) edges.push({ label: `.${n}()`, hint: `the page's ${n}`, onAdd: () => addEdge(n, [], {}, { output: n }) });
       edges.push({ label: ".download()", hint: "the raw bytes as a file (a PDF, an image): url, filename, content type, size, base64", onAdd: () => addEdge("download", [], {}, { output: "file" }) });
     }
@@ -819,7 +824,8 @@ export function Author() {
                   {namedBy === "page" && <input className="h-6 w-24 rounded border border-line bg-surface px-1 font-mono text-[10px]" defaultValue={String(node.alias?.[1]?.args?.[0]?.value ?? "")} onBlur={(e) => e.target.value.trim() && setNaming("page", e.target.value.trim())} title="a selector (relative to the record) whose text names the column" />}
                 </>}
                 {isOutput && node && (node.type === "Document" || node.type === "Collection") && !node.alias && <label className="flex items-center gap-1 text-[11px]" title="merge this nested output's keys into the parent row (project(flatten=[…])): detail.description, detail.info…"><input type="checkbox" checked={!!node.flatten} onChange={(e) => setGraph((g) => updateNode(g, node.id, { flatten: e.target.checked || undefined }))} />flatten</label>}
-                {node?.type === "Document" && node.op?.name === "resolve" && <Pager n={node} onChange={(mod) => setGraph((g) => setMod(g, node.id, mod, "paginate"))} />}
+                {node?.type === "Document" && node.op?.name === "resolve" && <Pager n={node} hints={pageNode?.id === node.id ? pagerLib.hintOf(views.data?.flags) : null}
+                  onChange={(mod) => { setGraph((g) => setMod(g, node.id, mod, "paginate")); const k = mod?.kwargs; if ((k?.click || k?.scroll) && stateNode) void liveAt(stateNode); }} />}
               </>}
             </div>
           </section>
@@ -917,33 +923,10 @@ export function Author() {
   );
 }
 
-/** A page's pager: how to reach the next page and how many. */
-function Pager({ n, onChange }: { n: graphLib.GNode; onChange: (m: graphLib.Mod | null) => void }) {
-  // the package's paginate: by="auto" (from the detected hint), "link" (rel=next; `next=` names the link when
-  // there is none), "param", "cursor", and INTERACTED pagers by="action" -- the action a sub-plan: a click on
-  // the "load more" control, or a scroll (infinite scroll)
-  const m = n.mods?.find((x) => x.name === "paginate"); const kw = (k: string) => m?.kwargs[k]?.value as string | number | undefined;
-  const act = m?.kwargs.action?.plan as { steps?: { kind: string; name: string; args?: { value?: unknown }[] }[] } | undefined;
-  const actCall = act?.steps?.find((x) => x.kind === "call"); const actSel = String(actCall?.args?.[0]?.value ?? "");
-  const mode = !m ? "" : kw("by") === "action" ? (actCall?.name === "scroll" ? "scroll" : "more") : kw("next") ? "next" : String(kw("by") ?? "auto");
-  const actionPlan = (name: string, args: unknown[]) => ({ plan: { root: "Document", steps: [{ kind: "get", name }, { kind: "call", name, args: args.map((v) => ({ value: v })), kwargs: {} }] } });
-  const build = (md: string, sel: string, pages: number): graphLib.Mod | null => {
-    if (!md) return null;
-    const base = { max_pages: { value: pages } } as Record<string, { value?: unknown; plan?: unknown }>;
-    if (md === "more") return { name: "paginate", args: [], kwargs: { by: { value: "action" }, action: actionPlan("click", [sel || "button"]), ...base } } as graphLib.Mod;
-    if (md === "scroll") return { name: "paginate", args: [], kwargs: { by: { value: "action" }, action: actionPlan("scroll", []), ...base } } as graphLib.Mod;
-    if (md === "next") return { name: "paginate", args: [], kwargs: { by: { value: "link" }, next: { value: sel || "a.next" }, ...base } } as graphLib.Mod;
-    return { name: "paginate", args: [], kwargs: { by: { value: md }, ...base } } as graphLib.Mod;
-  };
-  const pages = Number(kw("max_pages") ?? 5); const sel = mode === "more" ? actSel : String(kw("next") ?? "");
-  return (
-    <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-ink">
-      <span className="text-muted">pages:</span>
-      <select className="h-6 rounded border border-line bg-surface px-1 text-[11px]" value={mode} onChange={(e) => onChange(build(e.target.value, e.target.value === "more" ? actSel || "button" : e.target.value === "next" ? String(kw("next") ?? "a.next") : "", pages))}>
-        <option value="">one page</option><option value="auto">auto (detected)</option><option value="link">rel=next</option><option value="next">a next link</option><option value="param">?page=</option><option value="cursor">cursor</option><option value="more">load more (click)</option><option value="scroll">infinite scroll</option>
-      </select>
-      {(mode === "more" || mode === "next") && <input className="h-6 w-28 rounded border border-line bg-surface px-1 font-mono text-[10px]" value={sel} placeholder={mode === "more" ? "the load-more control" : "the next link"} onChange={(e) => onChange(build(mode, e.target.value, pages))} />}
-      {m && <><input type="number" min={1} className="h-6 w-14 rounded border border-line bg-surface px-1 text-[11px]" value={pages} onChange={(e) => onChange(build(mode, sel, Number(e.target.value)))} title="max_pages" /><span className="text-muted">pages max</span></>}
-    </div>
-  );
+/** A page's pager: the shared pager editor over its `paginate` mod (one iterator from the page's hints, until /
+ * filter, the budget). */
+function Pager({ n, hints, onChange }: { n: graphLib.GNode; hints: pagerLib.PaginationHint | null; onChange: (m: graphLib.Mod | null) => void }) {
+  const m = n.mods?.find((x) => x.name === "paginate");
+  const p = m ? pagerLib.fromKwargs(m.kwargs) : null;
+  return <PagerEditor className="mt-1" value={p} hints={hints} onChange={(np) => onChange(np ? { name: "paginate", args: [], kwargs: pagerLib.toKwargs(np) } : null)} />;
 }

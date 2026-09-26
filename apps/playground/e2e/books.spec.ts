@@ -38,3 +38,8 @@ test("a nested fan-out's bar shows the item on screen's own rows as cells", asyn
   await expect(td.getByText(`${k}:`, { exact: true })).toBeVisible();
   await expect(td.locator(`button[title^="item ${k}."]`)).toHaveCount(7);
 });
+
+test("the pager reads as what it walks", async ({ page }) => {
+  await openTrace(page, ID);
+  await expect(card(page, "paginate(follow li.next a").first()).toBeVisible();   // next="li.next a": its href is followed
+});

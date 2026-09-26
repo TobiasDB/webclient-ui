@@ -5,7 +5,7 @@
  * document ops locally in a rebuilt page (the preview -- no round trips). */
 
 export type Arg = { value?: unknown; plan?: Plan };
-export type Step = { kind: "get" | "call"; name: string; args?: Arg[]; kwargs?: Record<string, Arg> };
+export type Step = { kind: "get" | "call" | "op"; name: string; args?: Arg[]; kwargs?: Record<string, Arg> };
 export type Plan = { root: "Reference" | "Document"; steps: Step[]; session_id?: string | null; source?: unknown; version?: number };
 
 /** One `.name(args, kwargs)` of a chain, with where it sits (the index of its `get` step). */

@@ -3,6 +3,7 @@ import type { Problem } from "../lib/check";
 import { X } from "lucide-react";
 import { cn } from "../lib/cn";
 import { ACTIONS, children, isOff, lit, removeNode, setMod, updateNode, type GNode, type Graph, type NodeType } from "../lib/graph";
+import { code, fromKwargs, label } from "../lib/pager";
 import { fieldColour } from "./Player";
 
 export type Edge = { label: string; hint?: string; onAdd: () => void; tone?: "io" | "data" };
@@ -79,7 +80,7 @@ function Line({ n, graph, selected, editing, onSelect, onChange, onEditArg, onEd
         {onEditParams && <button type="button" className="hidden px-0.5 text-[9px] text-muted group-hover:inline hover:text-accent" onClick={(e) => { stop(e); onEditParams(n.id); }} title="edit the parameters">⚙</button>}
         )
       </span>}
-      {pager && <span className="text-topic-network">.paginate({(() => { const by = pager.kwargs.by?.value; const ac = (pager.kwargs.action?.plan as { steps?: { kind: string; name: string; args?: { value?: unknown }[] }[] } | undefined)?.steps?.find((x) => x.kind === "call"); return `${by && by !== "auto" && !(by === "link" && pager.kwargs.next) ? `by="${String(by)}", ` : ""}${ac ? `action=${ac.name}(${ac.args?.[0]?.value !== undefined ? `"${String(ac.args[0]!.value)}"` : ""}), ` : ""}${pager.kwargs.next?.value ? `next="${String(pager.kwargs.next.value)}", ` : ""}`; })()}max_pages={String(pager.kwargs.max_pages?.value ?? 20)}){onChange && <button type="button" className="ml-0.5 text-muted hover:text-bad" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "paginate")); }}>×</button>}</span>}
+      {pager && <span className="text-topic-network" title={(() => { const p = fromKwargs(pager.kwargs); return p ? code(p) : "paginate"; })()}>.paginate({(() => { const p = fromKwargs(pager.kwargs); return p ? `${label(p)} · ${p.max_pages}` : "?"; })()}){onChange && <button type="button" className="ml-0.5 text-muted hover:text-bad" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "paginate")); }}>×</button>}</span>}
       {limit && <span className="text-topic-network">.limit({String(limit.args[0]?.value)}){onChange && <button type="button" className="ml-0.5 text-muted hover:text-bad" onClick={(e) => { stop(e); onChange(setMod(graph, n.id, null, "limit")); }}>×</button>}</span>}
       <span className="flex-1" />
       {n.off && <span className="shrink-0 font-sans text-[9px] text-muted">forked away{onChange && <button type="button" className="ml-1 text-accent hover:underline" onClick={(e) => { stop(e); useBranch(); }} title="make this branch the plan's again">use this branch</button>}</span>}

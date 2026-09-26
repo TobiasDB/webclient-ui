@@ -10,6 +10,7 @@
  * PER ITEM of it (the executor fans out); so does every column of an extract over a Collection. */
 
 import { calls, type Arg, type Plan } from "../plan";
+import { fromKwargs, label as pagerLabel } from "../pager";
 
 export type ObjType = "Reference" | "Document" | "Element" | "Collection" | "Value" | "Rows" | "Row";
 
@@ -126,10 +127,11 @@ export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, 
       const lits = c.args.filter((a) => !a.plan).map((a) => a.value);
       const kw = Object.fromEntries(Object.entries(c.kwargs).filter(([, a]) => !a.plan).map(([k, a]) => [k, a.value]));
       const argStr = lits.map(short).concat(Object.entries(kw).map(([k, x]) => `${k}=${short(x)}`)).join(", ");
+      const pager = c.name === "paginate" ? fromKwargs(c.kwargs) : null;  // a pager reads as what it walks
       const node: PNode = {
-        addr, op: c.name, arg: typeof lits[0] === "string" ? (lits[0] as string) : undefined, args: lits, kwargs: kw,
+        addr, op: c.name, arg: pager ? pagerLabel(pager) : typeof lits[0] === "string" ? (lits[0] as string) : undefined, args: lits, kwargs: kw,
         input: cur, type: nt, per: each, fans: FANS.has(c.name), depth, ...(each && cap != null ? { cap } : {}), ...(each && filtered ? { filtered } : {}),
-        label: `${c.name}(${argStr}${Object.values(c.kwargs).some((a) => a.plan) || c.args.some((a) => a.plan) ? `${argStr ? ", " : ""}…` : ""})`,
+        label: pager ? `paginate(${pagerLabel(pager)} · ${pager.max_pages} max)` : `${c.name}(${argStr}${Object.values(c.kwargs).some((a) => a.plan) || c.args.some((a) => a.plan) ? `${argStr ? ", " : ""}…` : ""})`,
         ...(first && host ? { host, seg } : {}),
       };
       nodes.push(node); lastNode = node; first = false;
@@ -142,8 +144,9 @@ export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, 
       c.args.forEach((a, n) => { if (a.plan) walk(a.plan, [...prefix, String(c.index), `arg:${n}`], c.name === "extract" || c.name === "filter" || c.name === "step" ? elementInput : "", c.name === "extract" || c.name === "filter" ? (t === "Collection" ? "Element" : t) : c.name === "step" ? t : rootType, c.name === "extract" || c.name === "filter" ? elementPer : each, depth + 1, addr, `arg:${n}`); });
       for (const [k, a] of Object.entries(c.kwargs)) {
         if (!a.plan) continue;
-        // a bound op's own sub-plans (paginate's action / stop / key) are addressed `sub`
-        const segK = c.name === "paginate" ? "sub" : `kw:${k}`;
+        // every kwarg sub-plan is addressed `kw:<name>` (paginate's next / cursor / stop / until / filter too:
+        // the pager evaluates them on each page it fetched)
+        const segK = `kw:${k}`;
         const colIn = c.name === "extract" ? elementInput : c.name === "paginate" ? cur : "";
         const colType: ObjType = c.name === "extract" ? (t === "Collection" ? "Element" : t) : c.name === "paginate" ? "Document" : rootType;
         const r = walk(a.plan, [...prefix, String(c.index), segK], colIn, colType, c.name === "extract" ? elementPer : each, depth + 1, addr, segK, c.name === "extract" ? k : undefined);

@@ -1,7 +1,9 @@
 import * as React from "react";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, X } from "lucide-react";
 import { cn } from "../lib/cn";
-import { calls, moveCall, planAt, removeCall, splitAlias, updateCall, v, withPlanAt, type Call, type Path, type Plan } from "../lib/plan";
+import { calls, moveCall, planAt, removeCall, splitAlias, updateCall, v, withPlanAt, type Arg, type Call, type Path, type Plan } from "../lib/plan";
+import { fromKwargs, toKwargs } from "../lib/pager";
+import { PagerEditor } from "./PagerEditor";
 import { fieldColour } from "./Player";
 
 export type PlanViewProps = {
@@ -54,6 +56,7 @@ function Chain({ plan, path, url, onChange, selected, onSelect, onOpen, readOnly
               onArg={(j, value) => patch(updateCall(plan, path, i, (x) => ({ ...x, args: x.args.map((a, q) => (q === j ? { value } : a)) })))}
               onKw={(kw, value) => patch(updateCall(plan, path, i, (x) => ({ ...x, kwargs: value === undefined ? Object.fromEntries(Object.entries(x.kwargs).filter(([q]) => q !== kw)) : { ...x.kwargs, [kw]: { value } } })))}
               onKws={(kws) => patch(updateCall(plan, path, i, (x) => { const out = { ...x.kwargs }; for (const [k, value] of Object.entries(kws)) { if (value === undefined) delete out[k]; else out[k] = { value }; } return { ...x, kwargs: out }; }))}
+              onKwargs={(kw) => patch(updateCall(plan, path, i, (x) => ({ ...x, kwargs: kw })))}
               onRemove={() => patch(removeCall(plan, path, i))} onMove={(d) => patch(moveCall(plan, path, i, d))}
               onRenameField={(from, to) => patch(updateCall(plan, path, i, (x) => ({ ...x, kwargs: Object.fromEntries(Object.entries(x.kwargs).map(([q, a]) => [q === from ? to : q, a])) })))}
               onRemoveField={(name) => patch(updateCall(plan, path, i, (x) => ({ ...x, kwargs: Object.fromEntries(Object.entries(x.kwargs).filter(([q]) => q !== name)) })))}
@@ -65,34 +68,18 @@ function Chain({ plan, path, url, onChange, selected, onSelect, onOpen, readOnly
   );
 }
 
-/** The pagination node: how to advance (rel=next / a next link / ?page= / a cursor / click a
- * load-more control / infinite scroll), the record it counts, and where to stop. */
-function Paginate({ c, readOnly, onKw, onKws }: { c: Call; readOnly?: boolean; onKw: (k: string, v: unknown) => void; onKws: (kws: Record<string, unknown>) => void }) {
-  const by = String(v(c.kwargs.by) ?? "link"); const next = String(v(c.kwargs.next) ?? "");
-  const mode = by === "click" ? (next ? "load more" : "infinite scroll") : by === "param" ? `?${String(v(c.kwargs.name) ?? "page")}=` : by === "cursor" ? "cursor" : next ? "next link" : "rel=next";
-  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
-  const In = ({ k, w, ph, mono = true }: { k: string; w: string; ph: string; mono?: boolean }) => readOnly ? (v(c.kwargs[k]) != null ? <code className="font-mono text-[10px]">{k}={String(v(c.kwargs[k]))}</code> : null)
-    : <input className={cn("h-6 rounded border border-line bg-surface px-1 text-[10px]", w, mono && "font-mono")} value={String(v(c.kwargs[k]) ?? "")} placeholder={ph} title={k} onChange={(e) => onKw(k, e.target.value || undefined)} onClick={stop} />;
-  return (
-    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1 font-mono text-[10px] text-muted">
-      {readOnly ? <span className="rounded bg-surface-2 px-1">{mode}</span>
-        : <select className="h-6 rounded border border-line bg-surface px-1 text-[10px]" value={by === "click" ? (next ? "more" : "scroll") : by === "link" && next ? "next" : by} onChange={(e) => { const m = e.target.value; onKws(m === "more" ? { by: "click", next: next || "button" } : m === "scroll" ? { by: "click", next: undefined } : m === "next" ? { by: "link", next: next || "a.next" } : { by: m, next: m === "link" ? undefined : next || undefined }); }} onClick={stop} title="how to reach the next page">
-            <option value="link">rel=next</option><option value="next">a next link</option><option value="param">?page= param</option><option value="cursor">cursor token</option><option value="more">click load more</option><option value="scroll">infinite scroll</option>
-          </select>}
-      {(next || by === "click") && by !== "param" && by !== "cursor" && <In k="next" w="w-28" ph={by === "click" ? "load-more selector" : "next link selector"} />}
-      {by === "param" && <><In k="name" w="w-16" ph="page" /><In k="start" w="w-10" ph="1" /></>}
-      {by === "cursor" && <><In k="cursor" w="w-24" ph="cursor selector" /><In k="cursor_attr" w="w-16" ph="attr" /><In k="name" w="w-14" ph="param" /></>}
-      <span>·</span>{readOnly ? <span>{String(v(c.kwargs.max_pages) ?? 20)} pages</span> : <><input type="number" min={1} className="h-6 w-12 rounded border border-line bg-surface px-1 text-[10px]" value={Number(v(c.kwargs.max_pages) ?? 5)} onChange={(e) => onKw("max_pages", Number(e.target.value))} onClick={stop} title="max_pages" /><span>pages</span></>}
-      {(by === "click" || v(c.kwargs.max_rows) != null || v(c.kwargs.records) != null) && <><In k="records" w="w-24" ph="record selector" /><In k="max_rows" w="w-12" ph="rows" /></>}
-    </span>
-  );
+/** The pagination node: the shared pager editor over the call's kwargs (one iterator + until / filter / budget). */
+function Paginate({ c, readOnly, onKwargs, onRemove }: { c: Call; readOnly?: boolean; onKwargs: (kw: Record<string, Arg>) => void; onRemove: () => void }) {
+  const p = fromKwargs(c.kwargs);
+  if (!p) return <code className="font-mono text-[10px] text-bad" title="not one of next= / pages= / cursor= / click= / scroll=">paginate(?)</code>;
+  return <PagerEditor value={p} readOnly={readOnly} className="min-w-0 flex-1" onChange={(np) => (np ? onKwargs(toKwargs(np)) : onRemove())} />;
 }
 
 const LABEL: Record<string, string> = { resolve: "open the page", select_all: "each", select: "the", attr: "read", extract: "fields", project: "rows", paginate: "pages", alias: "named by", merge: "as one dict", click: "click", write: "type", scroll: "scroll", wait_for: "wait for", goto: "go to", limit: "first", count: "count", filter: "keep" };
 
-function CallNode({ c, i, n, path, selected, count, readOnly, onSelect, onName, onArg, onKw, onKws, onRemove, onMove, onRenameField, onRemoveField, onOpen, plan, onChange, selectedPath, onSelectPath, counts, depth }: {
+function CallNode({ c, i, n, path, selected, count, readOnly, onSelect, onName, onArg, onKw, onKws, onKwargs, onRemove, onMove, onRenameField, onRemoveField, onOpen, plan, onChange, selectedPath, onSelectPath, counts, depth }: {
   c: Call; i: number; n: number; path: Path; selected: boolean; count?: number | string; readOnly?: boolean; onSelect: () => void;
-  onName: (s: string) => void; onArg: (j: number, v: unknown) => void; onKw: (k: string, v: unknown) => void; onKws: (kws: Record<string, unknown>) => void; onRemove: () => void; onMove: (d: -1 | 1) => void;
+  onName: (s: string) => void; onArg: (j: number, v: unknown) => void; onKw: (k: string, v: unknown) => void; onKws: (kws: Record<string, unknown>) => void; onKwargs: (kw: Record<string, Arg>) => void; onRemove: () => void; onMove: (d: -1 | 1) => void;
   onRenameField: (a: string, b: string) => void; onRemoveField: (a: string) => void; onOpen?: (p: Path) => void;
   plan: Plan; onChange?: (p: Plan) => void; selectedPath?: Path | null; onSelectPath?: (p: Path) => void; counts: Record<string, number | string>; depth: number;
 }) {
@@ -112,7 +99,7 @@ function CallNode({ c, i, n, path, selected, count, readOnly, onSelect, onName, 
           : <input className="h-6 min-w-[80px] flex-1 rounded border border-line bg-surface px-1 font-mono text-[11px]" value={String(first.value ?? "")} onChange={(e) => onArg(0, e.target.value)} onClick={(e) => e.stopPropagation()} />)}
         {c.name === "write" && <input className="h-6 w-28 rounded border border-line bg-surface px-1 text-[11px]" value={String(v(c.args[1]) ?? "")} placeholder="text" onChange={(e) => onArg(1, e.target.value)} onClick={(e) => e.stopPropagation()} readOnly={readOnly} />}
         {c.name === "attr" && !readOnly && <input className="h-6 w-24 rounded border border-line bg-surface px-1 font-mono text-[10px]" value={String(v(c.args[1]) ?? "")} placeholder="regex?" title="a pattern: the value is the first group (or the match)" onChange={(e) => onArg(1, e.target.value || undefined)} onClick={(e) => e.stopPropagation()} />}
-        {c.name === "paginate" && <Paginate c={c} readOnly={readOnly} onKw={onKw} onKws={onKws} />}
+        {c.name === "paginate" && <Paginate c={c} readOnly={readOnly} onKwargs={onKwargs} onRemove={onRemove} />}
         {c.name === "resolve" && <span className="font-mono text-[10px] text-muted">{v(c.kwargs.browser) === true ? "browser" : v(c.kwargs.browser) === "auto" ? "auto tier" : v(c.kwargs.browser) === false ? "static" : "auto tier"}</span>}
         {c.name === "limit" && <span className="text-muted">rows</span>}
         {count != null && <span className="rounded bg-ok-soft px-1 font-mono text-[10px] text-ok">×{count}</span>}

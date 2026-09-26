@@ -181,18 +181,28 @@ function nameFor(pick: Pick, taken: string[]): string {
   let i = 2; while (taken.includes(`${base}_${i}`)) i++; return `${base}_${i}`;
 }
 
-/** How this element could page the dataset (only outside a record: paging is the page's). */
+/** the URL params that page a listing (the package's crawl.canon table; `p` is left out -- too often a post id) */
+const PAGE_PARAMS = new Set(["page", "pg", "pagenum", "paged", "pagina", "pn"]);
+const OFFSET_PARAMS = new Set(["offset", "start", "skip"]);
+
+/** How this element could page the dataset (only outside a record: paging is the page's). The kwargs are the
+ * package's `paginate(...)`: `next=` (a selector whose href is followed), `pages=` (a URL param), `click=`. */
 export function pagerFor(pick: Pick, selector: string, inScope: boolean): { label: string; hint: string; kwargs: Record<string, unknown> } | null {
   if (inScope) return null;
   const text = (pick.text ?? "").trim().toLowerCase();
   const nextish = /^(next|next\s*(page|»|›|>)|»|›|>|more|load more|show more|see more|older)\b/.test(text) || /\bnext\b|\bmore\b/.test((pick.attrs["aria-label"] ?? pick.attrs.title ?? "").toLowerCase());
   if (pick.tag === "a" && pick.href) {
-    if (pick.attrs.rel === "next") return { label: "rel=next — walk every page", hint: "the site marks the next page; the plan follows rel=next", kwargs: { by: "link" } };
-    const m = /[?&]([a-z_]*(page|offset|start|p)[a-z_]*)=(\d+)/i.exec(pick.href);
-    if (m) return { label: `?${m[1]}= — walk the numbered pages`, hint: `the link carries ?${m[1]}=${m[3]}; the plan increments it`, kwargs: { by: "param", name: m[1] } };
-    if (nextish) return { label: "this is the next link — walk every page", hint: "each page's next link (this selector) is followed", kwargs: { by: "link", next: selector } };
+    if (pick.attrs.rel === "next") return { label: "rel=next — walk every page", hint: "the site marks the next page; each page's rel=next link is followed", kwargs: { next: 'a[rel="next"]' } };
+    let query: URLSearchParams | null = null;
+    try { query = new URL(pick.href, "http://x/").searchParams; } catch { /* not a URL */ }
+    for (const [k, val] of query ?? []) {
+      const kl = k.toLowerCase(); if (!/^\d+$/.test(val) || !(PAGE_PARAMS.has(kl) || OFFSET_PARAMS.has(kl))) continue;
+      if (OFFSET_PARAMS.has(kl)) return { label: `?${k}= — walk by ${val}`, hint: `the link is ?${k}=${val}: the plan walks ?${k}= from this page's value by ${val}`, kwargs: { pages: k, step: Number(val) || 1 } };
+      return { label: `?${k}= — walk the numbered pages`, hint: `the link carries ?${k}=${val}; the plan walks ?${k}= from this page's value by 1`, kwargs: { pages: k } };
+    }
+    if (nextish) return { label: "this is the next link — walk every page", hint: "each page's next link (this selector) is followed", kwargs: { next: selector } };
     return null;
   }
-  if (pick.tag === "button" || nextish || pick.attrs.role === "button") return { label: nextish ? "click this to load more" : "click this for more rows", hint: "on the live page: click it until nothing more loads (by=click)", kwargs: { by: "click", next: selector } };
+  if (pick.tag === "button" || nextish || pick.attrs.role === "button") return { label: nextish ? "click this to load more" : "click this for more rows", hint: "on the live page: click it until nothing more loads (click=)", kwargs: { click: selector } };
   return null;
 }
