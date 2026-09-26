@@ -7,3 +7,6 @@ storybook-static/
 # end-to-end output
 apps/playground/test-results/
 apps/playground/playwright-report/
+
+# live e2e runs write their own traces here (the spec deletes them; never commit one)
+apps/playground/e2e/traces/run-*.jsonl

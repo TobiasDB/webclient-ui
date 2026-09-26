@@ -8,7 +8,7 @@
  * stays readable and never swaps back and forth. */
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { PageFrame, Player, cn, graphLib, runLib, stagesLib, withAgent, type RunEvent } from "@webclient/ui";
+import { NetworkPanel, PageFrame, Player, cn, graphLib, networkLib, runLib, stagesLib, withAgent, type RunEvent } from "@webclient/ui";
 import { api } from "../../lib/api";
 
 type Rect = { left: number; top: number; width: number; height: number };
@@ -33,7 +33,25 @@ export function PageStage({ traceId, events, model, state, full, addr, item, max
   // the step on screen: the one selected, else this item's latest
   const latest = React.useMemo(() => runLib.latestFor(state, item), [state, item]);
   const target = addr ?? latest?.addr ?? null;
-  const chain = React.useMemo(() => (model && target != null ? runLib.pageChain(model, state, target, item) : []), [model, state, target, item]);
+  const found = React.useMemo(() => (model && target != null ? runLib.pageChain(model, state, target, item) : []), [model, state, target, item]);
+  // a nested resolve still OPENING its page (a browser load takes seconds): the chain is shown already -- the page the
+  // link was read on, and the page being opened (its URL, how long, which browser page is doing it)
+  const opening = React.useMemo(() => {
+    if (!model || target == null) return null;
+    const n = model.byAddr.get(target);
+    if (!n || (n.op !== "resolve" && n.op !== "fetch")) return null;
+    // the page it opened is on screen already (the chain ends on a page this resolve opened for this item)
+    const last = found[found.length - 1]; const ld = last ? state.docs.get(last.doc) : undefined;
+    if (ld && ld.step === target && ld.item === item) return null;
+    const run = state.nodes.get(target)?.insts.get(item);
+    if (!run || run.state !== "running") return null;
+    const from = n.input ? runLib.locate(model, state, n.input, item) : null;
+    if (!from) return null;
+    const req = [...state.requests].reverse().find((r) => r.step === target && r.item === item);
+    const lease = runLib.poolAt(events, state.n).held.find((l) => l.kind === "page" && l.step === target && l.item === item);
+    return { link: { ...from, via: n.input, opens: target } as runLib.ChainLink, url: req?.url ?? (typeof run.result?.url === "string" ? run.result.url : ""), since: run.t0, lease };
+  }, [model, state, target, item, found, events]);
+  const chain = React.useMemo(() => (opening ? [opening.link, { doc: "", hops: [], op: "resolve", addr: target!, via: target! } as runLib.ChainLink] : found), [opening, found, target]);
   // which pair of the chain is open: the last two (the page it came from, the page on screen), or one picked from the chips
   const [pairAt, setPairAt] = React.useState<number | null>(null);
   const chainKey = chain.map((c) => c.doc).join(">");
@@ -63,11 +81,32 @@ export function PageStage({ traceId, events, model, state, full, addr, item, max
     const where = shown[0] ?? (lastDoc(state) ? { doc: lastDoc(state)!, hops: [], op: "", addr: "", via: "" } : null);
     return <PagePane traceId={traceId} events={events} state={state} full={full} where={where} item={item} colour={colour} label={node?.label ?? ""} card={card} requests flying={flying} maxHeight={maxHeight} />;
   }
-  return <Chain traceId={traceId} events={events} model={model} state={state} full={full} item={item} chain={chain} at={at} onPair={setPairAt} colour={colour} label={node?.label ?? ""} card={card} flying={flying} maxHeight={maxHeight} />;
+  return <Chain traceId={traceId} events={events} model={model} state={state} full={full} item={item} chain={chain} at={at} onPair={setPairAt} colour={colour} label={node?.label ?? ""} card={card} flying={flying} maxHeight={maxHeight} pending={opening} />;
 }
 
 /** two panes, the link on the first drawn to the second */
-function Chain({ traceId, events, model, state, full, item, chain, at, onPair, colour, label, card, flying, maxHeight }: { traceId: string | null; events: RunEvent[]; model: runLib.PlanModel | null; state: runLib.RunState; full: runLib.RunState; item: string; chain: runLib.ChainLink[]; at: number; onPair: (i: number | null) => void; colour: string; label: string; card: React.ReactNode; flying: Flying[]; maxHeight: number }) {
+type Pending = { url: string; since: number; lease?: runLib.Lease } | null;
+
+/** the page a resolve is still opening: where, how long so far, which browser page */
+function Opening({ pending, t, card }: { pending: Pending; t: number; card: React.ReactNode }) {
+  return (
+    <div className="relative flex h-full min-h-0 flex-col" data-testid="opening">
+      <div className="flex items-center gap-1.5 border-b border-line px-1.5 py-0.5 text-[10px]">
+        <span className="shrink-0 font-semibold uppercase tracking-wide text-muted">page · opening</span>
+        <span className="min-w-0 truncate font-mono">{(pending?.url ?? "").replace(/^https?:\/\//, "") || "…"}</span>
+      </div>
+      <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-1 text-[11px] text-muted">
+        {card}
+        <span className="wc-cell-run size-2 rounded-full bg-accent" />
+        <span>opening the page{pending?.since && t ? ` · ${Math.max(0, t - pending.since).toFixed(1)}s` : ""}</span>
+        {pending?.lease ? <span className="font-mono text-[10px]">in the browser ({pending.lease.id}{pending.lease.waited > 0.05 ? `, queued ${pending.lease.waited.toFixed(1)}s first` : ""}) — waiting for it to render</span>
+          : <span className="text-[10px]">fetching (a browser page when it needs one)</span>}
+      </div>
+    </div>
+  );
+}
+
+function Chain({ traceId, events, model, state, full, item, chain, at, onPair, colour, label, card, flying, maxHeight, pending = null }: { traceId: string | null; events: RunEvent[]; model: runLib.PlanModel | null; state: runLib.RunState; full: runLib.RunState; item: string; chain: runLib.ChainLink[]; at: number; onPair: (i: number | null) => void; colour: string; label: string; card: React.ReactNode; flying: Flying[]; maxHeight: number; pending?: Pending }) {
   const shown = chain.slice(at, at + 2);
   const latest = at + 2 >= chain.length;
   const box = React.useRef<HTMLDivElement>(null); const toPane = React.useRef<HTMLDivElement>(null);
@@ -113,9 +152,9 @@ function Chain({ traceId, events, model, state, full, item, chain, at, onPair, c
       <div className="flex min-w-0 flex-[1] flex-col overflow-hidden rounded border border-line">
         <PagePane traceId={traceId} events={events} state={state} full={full} where={a} item={item} colour={linkColour} label={`${via?.label ?? "the link"} → followed`} compact title={`page ${at + 1} · the link it followed`} onSpot={setFrom} flying={flying} maxHeight={maxHeight} />
       </div>
-      {/* the page it opened: the step on screen */}
+      {/* the page it opened: the step on screen (or the page still being opened) */}
       <div ref={toPane} className="flex min-w-0 flex-[1.7] flex-col overflow-hidden rounded border-2 border-accent/50">
-        <PagePane traceId={traceId} events={events} state={state} full={full} where={b} item={item} colour={latest ? colour : "#2563eb"} label={latest ? label : "the link it followed"} card={latest ? card : null} requests={latest} title={`page ${at + 2}`} flying={flying} maxHeight={maxHeight} />
+        {!b.doc ? <Opening pending={pending} t={state.t} card={card} /> : <PagePane traceId={traceId} events={events} state={state} full={full} where={b} item={item} colour={latest ? colour : "#2563eb"} label={latest ? label : "the link it followed"} card={latest ? card : null} requests={latest} title={`page ${at + 2}`} flying={flying} maxHeight={maxHeight} />}
       </div>
       {arrow}
     </div>
@@ -205,7 +244,18 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
     // the spotlight first (it dims the page), the list over it (so it stays crisp)
     return [{ paths: [pathOf(found.el)], colour, label, spot: true }, ...fanHl(found.fan, pathOf, (paths, c, l, dashed) => ({ paths, colour: c, label: l, dashed }))];
   }, [found, colour, label, many, where?.take, where?.keep]);
-  const highlights = React.useMemo(() => [...flyingHl, ...base], [flyingHl, base]);
+  // THE NETWORK of this page (its network.view event): hover a request / a field to outline what it filled
+  const [netOpen, setNetOpenRaw] = React.useState(() => { try { return localStorage.getItem("wc.run2.net") === "1"; } catch { return false; } });
+  const setNetOpen = (v: boolean) => { setNetOpenRaw(v); try { localStorage.setItem("wc.run2.net", v ? "1" : "0"); } catch { /* fine */ } };
+  const netView = React.useMemo(() => { if (!docId) return null; for (let i = events.length - 1; i >= 0; i--) { const e = events[i]!; if (e.topic === "network.view" && e.document_id === docId) return e.detail as unknown as networkLib.NetworkView; } return null; }, [events, docId]);
+  const [netSel, setNetSel] = React.useState<string[] | null>(null);
+  const loadBody = React.useCallback(async (r: networkLib.NetRequest) => {
+    const ev = events.find((e) => e.topic === "network.resource" && e.document_id === docId && e.url === r.url) as { n?: number } | undefined;
+    if (!traceId || ev?.n == null) return null;
+    const full = await api.traceEvent(traceId, ev.n); return typeof full.body === "string" ? full.body : null;
+  }, [events, docId, traceId]);
+  const netHl = React.useMemo(() => { if (!parsed || !netSel?.length) return []; const els = netSel.flatMap((q) => { try { const x = parsed.querySelector(q); return x ? [x] : []; } catch { return []; } }); return els.length ? [{ paths: els.slice(0, 300).map(pathOf), colour: NET, label: `filled by the request ×${els.length}` }] : []; }, [parsed, netSel, pathOf]);
+  const highlights = React.useMemo(() => [...flyingHl, ...base, ...netHl], [flyingHl, base, netHl]);
   const [pDoc, setPDoc] = React.useState<Document | null>(null);
   const [tick, setTick] = React.useState(0);
   React.useEffect(() => { const a = setTimeout(() => setTick((x) => x + 1), 150); const b = setTimeout(() => setTick((x) => x + 1), 700); return () => { clearTimeout(a); clearTimeout(b); }; }, [state.n, pDoc]);
@@ -216,7 +266,8 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
     if (many) { const [yes, no] = split(pFound.all, where?.take, where?.keep); return [{ selector: "", els: yes, colour, label, key: "all" }, ...(no.length ? [{ selector: "", els: no, colour: "#94a3b8", dashed: true, key: "rest" }] : [])]; }
     return [{ selector: "", els: [pFound.el], colour, label, key: "own", spot: true }, ...fanHl(pFound.fan, (x) => x, (els, c, l, dashed, key) => ({ selector: "", els, colour: c, label: l, dashed, key }))];
   }, [pFound, colour, label, many, where?.take, where?.keep]);
-  const pHighlights = React.useMemo(() => [...pFlying, ...pBase], [pFlying, pBase]);
+  const pNet = React.useMemo(() => { if (!recorded || !pDoc || !netSel?.length) return []; const els = netSel.flatMap((q) => { try { const x = pDoc.querySelector(q); return x ? [x] : []; } catch { return []; } }); return els.length ? [{ selector: "", els: els.slice(0, 300), colour: NET, label: "filled by the request", key: "net" }] : []; }, [recorded, pDoc, netSel, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pHighlights = React.useMemo(() => [...pFlying, ...pBase, ...pNet], [pFlying, pBase, pNet]);
   const at = events[Math.max(0, state.n - 1)];
   const reqs = requests && dr ? dr.requests.map((k) => state.requests[k]!).filter(Boolean) : [];
   return (
@@ -229,6 +280,9 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
           {dr.status != null && <span className={cn("shrink-0 font-mono", dr.status >= 400 ? "text-bad" : "text-ok")}>{dr.status}</span>}
           {!compact && <span className="shrink-0 rounded bg-surface-2 px-1 text-muted" title={recorded ? "a browser recording, played to this moment" : "the page as captured at this moment"}>{recorded ? "recording" : "snapshot"}</span>}
           {!compact && hops && hops.length > 0 && <span className="min-w-0 truncate text-muted" title="the way down to this item's element">{hops.map((h) => `${h.sel}${h.index != null ? `[${h.index}]` : ""}`).join(" › ")}</span>}
+          <span className="flex-1" />
+          <button type="button" data-testid="net-toggle" onClick={() => setNetOpen(!netOpen)} className={cn("shrink-0 rounded px-1", netOpen ? "bg-accent-soft text-accent" : "text-muted hover:text-ink")}
+            title="this page's network: every request, and what each data request filled on the page">network{netView ? ` ${netView.requests.filter((r) => r.data).length}` : ""}</button>
         </> : <span className="text-muted">{state.n ? "no page yet" : "the plan has not run: press Run ▶, or open a recorded run"}</span>}
       </div>
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -240,7 +294,8 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
           : <div className="p-2 text-muted">{page.isLoading ? "loading the page…" : snapN == null ? "the page is being fetched…" : "no snapshot of this page"}</div>}
         {hops && hops.length > 0 && found && !found.el && page.data && <div className="absolute bottom-1 left-1 rounded bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn">this item's element is not on the page as captured</div>}
       </div>
-      {reqs.length > 0 && (
+      {netOpen && docId && <NetworkPanel className="h-[42%] shrink-0 border-t border-line" view={netView} loadBody={loadBody} onHighlight={setNetSel} />}
+      {!netOpen && reqs.length > 0 && (
         <div className="max-h-[76px] shrink-0 overflow-auto border-t border-line font-mono text-[9.5px]">
           {reqs.slice(-40).map((r) => (
             <div key={r.i} className="flex items-center gap-1.5 px-1.5 leading-[14px]" title={r.url}>
@@ -274,6 +329,8 @@ function EventCard({ told, colour, item, n }: { told: runLib.Told; colour: strin
 /** THE LIST the item came from, kept in view while its steps run: every match faint, the item's own match outlined
  * ("item 12 of 40") -- the loop is seen moving from card to card, and the element read spotlit inside it */
 const FAN = "#7c3aed";
+/** what a request filled, outlined on the page */
+const NET = "#16a34a";
 function fanHl<T, H>(fan: { all: Element[]; own: Element | null; index: number } | undefined, as: (el: Element) => T, mk: (xs: T[], colour: string, label: string | undefined, dashed: boolean, key: string) => H): H[] {
   if (!fan || fan.all.length < 2) return [];
   const rest = fan.all.filter((x) => x !== fan.own).slice(0, 200);

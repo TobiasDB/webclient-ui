@@ -2,7 +2,7 @@ import * as React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, PagerEditor, pagerLib, ParamsEditor, Player, RunGraph, runLib, Select, SkeletonPane, checkPlan, stagesLib,
+  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, NetworkPanel, PageFrame, PagerEditor, pagerLib, ParamsEditor, Player, RunGraph, runLib, Select, SkeletonPane, checkPlan, stagesLib,
   TabPanel, Tabs, Toolbar, ToolbarSpacer, cn, describe, fieldColour, graphLib, needsArg, outputName, planLib, selectors, toolAsCode, usePlayerController,
   type Edge, type FrameAction, type OpParam, type FrameHighlight, type Graph, type Highlight, type InspectAdd, type InspectRead, type Pick, type Plan, type RREvent,
 } from "@webclient/ui";
@@ -416,6 +416,9 @@ export function Author() {
     if (node.op && !needsArg(node) && node.type !== "Document") { let els = elsUp(node.id); els = selfMode ? els : els.filter(inRoots); if (els.length) hls.push({ els, colour: "#2563eb", label: node.op.name }); }
     if (building) { try { const els = (roots.length ? roots : [doc]).flatMap((r) => [...r.querySelectorAll(building)]); hls.push({ els, colour: "#f59e0b", label: "match", dashed: true }); } catch { /* bad selector */ } }
   }
+  // THE NETWORK panel (bottom, beside the rows): what a hovered request / field filled, outlined on the page
+  const [netSel, setNetSel] = React.useState<string[] | null>(null);
+  if (doc && netSel?.length) { const els = netSel.flatMap((q) => { try { const x = doc.querySelector(q); return x ? [x] : []; } catch { return []; } }); if (els.length) hls.push({ els, colour: "#16a34a", label: `filled by the request ×${els.length}` }); }
   const [showGroups, setShowGroups] = React.useState(false);
   const patternGroups = React.useMemo(() => {
     const out: { name: string; selector: string; count: number; colour: string; why: string }[] = [];
@@ -751,7 +754,9 @@ export function Author() {
   const sideShown = selfMode || (attrMode && editing);  // the picking tools: an op waiting for / re-editing its argument
   const [rowsOpen, setRowsOpenRaw] = React.useState(() => remembered("wc.author.rows", true));
   const setRowsOpen = (v: boolean) => { setRowsOpenRaw(v); try { localStorage.setItem("wc.author.rows", v ? "1" : "0"); } catch { /* fine */ } };
-  const rowsH = 210;
+  const [bottom, setBottom] = React.useState<"rows" | "network">("rows");
+  const netQ = useQuery({ queryKey: ["doc-views", sessionId, page?.docId, "network"], queryFn: () => api.docViews(sessionId!, page!.docId!, ["network"]) as Promise<{ network?: import("@webclient/ui").networkLib.NetworkView }>, enabled: !!sessionId && !!page?.docId && bottom === "network", staleTime: Infinity, retry: false });
+  const rowsH = bottom === "network" ? 300 : 210;
   // the page takes what the column leaves (the rows bar below it always stays on screen): measured, not summed
   const pageBox = React.useRef<HTMLDivElement>(null);
   const [pageH, setPageH] = React.useState(() => Math.max(320, vh - 360));
@@ -910,13 +915,17 @@ export function Author() {
           {/* the rows: the preview on this page, and the server run */}
           <section className="flex min-h-0 shrink-0 flex-col rounded border border-line" style={{ height: rowsOpen ? rowsH : 22 }}>
             <div className="flex h-[20px] shrink-0 items-center gap-2 border-b border-line px-1.5 text-[10.5px]">
-              <span className="font-medium">Rows <span className="text-muted">{shown.rows.length}</span></span>
+              <span className="flex items-center gap-0.5" role="tablist">
+                <button type="button" role="tab" onClick={() => { setBottom("rows"); if (!rowsOpen) setRowsOpen(true); }} className={cn("rounded px-1 font-medium", bottom === "rows" ? "bg-surface-2" : "text-muted hover:text-ink")}>Rows <span className="text-muted">{shown.rows.length}</span></button>
+                <button type="button" role="tab" data-testid="author-net" onClick={() => { setBottom("network"); if (!rowsOpen) setRowsOpen(true); }} className={cn("rounded px-1 font-medium", bottom === "network" ? "bg-surface-2" : "text-muted hover:text-ink")} title="this page's requests, and what each data request filled on the page">Network{netQ.data?.network ? <span className="text-muted"> {netQ.data.network.requests.filter((r) => r.data).length}</span> : null}</button>
+              </span>
               <span className="min-w-0 flex-1 truncate text-[10px] text-muted">{shown.nested ? "rows whose page is open here, with the parent row's columns" : "preview on this page"}</span>
               <button type="button" disabled={!plan} onClick={() => setGraphOpen(true)} className="rounded border border-line px-1.5 text-[10px] leading-4 hover:bg-surface-2 disabled:opacity-40" title="the plan as a pipeline graph (not run)">Graph</button>
               <button type="button" disabled={!outs.length || missing.length > 0} onClick={openRun} className="rounded bg-accent px-1.5 text-[10px] leading-4 text-white disabled:opacity-40" title={missing.length ? `${missing.length} op(s) still need an argument` : "open the plan in the Run workspace: a pipeline graph; Run ▶ there executes it live (stages, rows as they stream, errors) and records a trace"}>Open in Run ▸</button>
               <button type="button" className="text-muted hover:text-ink" onClick={() => setRowsOpen(!rowsOpen)} title={rowsOpen ? "hide the rows" : "show the rows"}>{rowsOpen ? "▾" : "▴"}</button>
             </div>
-            {rowsOpen && <div className="min-h-0 flex-1 overflow-auto">
+            {rowsOpen && bottom === "network" && <NetworkPanel className="min-h-0 flex-1" view={netQ.data?.network ?? (netQ.isLoading ? undefined : null)} onHighlight={setNetSel} />}
+            {rowsOpen && bottom === "rows" && <div className="min-h-0 flex-1 overflow-auto">
               {!outs.length ? <div className="p-2 text-[11px] text-muted">No outputs yet -- tick “output” above for a node, or use + output ▾.</div>
                 : <DataFrame rows={shown.rows} colours={columnColours(shown.rows)} dense emptyHint="Nothing matched on this page yet." />}
             </div>}

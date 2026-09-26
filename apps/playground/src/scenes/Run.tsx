@@ -3,7 +3,7 @@
  * cursor. The graph is the plan materialising; the page is the item on screen's; the timeline is everything on
  * one axis; the rows and events say it in words. */
 import * as React from "react";
-import { Chip, DataFrame, EmptyState, RunGraph, RunTimeline, cn, planLib, runLib, type RunEvent } from "@webclient/ui";
+import { Chip, DataFrame, EmptyState, PoolPanel, RunGraph, RunTimeline, cn, planLib, runLib, type RunEvent } from "@webclient/ui";
 import { useActive } from "../lib/session";
 import { PageStage } from "./run/PageStage";
 import { LoadMenu, PlanLoader, TraceList, TracesMenu } from "./run/sources";
@@ -31,6 +31,8 @@ export function Run() {
   React.useEffect(() => { if (live) setT(events.length); }, [live, events.length]);
   React.useEffect(() => { setLive(true); setPlaying(false); setSel({ addr: null, item: null }); setChainN(1); }, [src.runId, src.traceId]);
 
+  // the POOL: the engine's, so from the whole stream (its events are not the plan's), up to the moment's time
+  const poolWhole = React.useMemo(() => runLib.poolAt(src.events), [src.events]);
   const nowF = React.useRef(new runLib.RunFolder()); const fullF = React.useRef(new runLib.RunFolder());
   const state = React.useMemo(() => nowF.current.at(events, model, t), [events, model, t]);
   const full = React.useMemo(() => fullF.current.at(events, model, events.length), [events, model]);
@@ -95,6 +97,7 @@ export function Run() {
     return [v, (x: boolean) => { set(x); try { localStorage.setItem(`wc.run2.${key}`, x ? "1" : "0"); } catch { /* fine */ } }];
   };
   const [timeOpen, setTimeOpen] = usePanel("timeline", true);
+  const [poolOpen, setPoolOpen] = usePanel("pool", true);
   const [rowsOpen, setRowsOpen] = usePanel("rows");
   const [evOpen, setEvOpen] = usePanel("events");
 
@@ -105,6 +108,9 @@ export function Run() {
   const sample = (() => { let b: (typeof src.samples)[number] | undefined; for (const x of src.samples) { if (x.ts <= (state.t || Infinity)) b = x; else break; } return b; })();
   const maxMem = Math.max(0, ...src.samples.map((x) => x.mem_mb ?? 0)), maxCpu = Math.max(0, ...src.samples.map((x) => x.cpu_pct ?? 0));
   const errors = state.errors.filter((e) => e.raised);
+  const tNow = state.t || Number(events[events.length - 1]?.ts ?? 0);
+  const poolNow = runLib.poolAt(src.events, (() => { let k = 0; while (k < src.events.length && Number(src.events[k]!.ts ?? 0) <= tNow) k++; return k; })());
+  const pagesHeld = poolNow.held.filter((l) => l.kind === "page").length; const pageK = poolWhole.kinds.get("page");
   const secs = state.t && state.t0 ? (state.t - state.t0).toFixed(1) : "0.0";
   const rootUrl = src.url ?? (full.docs.values().next().value as runLib.DocRun | undefined)?.url;
   return (
@@ -154,6 +160,11 @@ export function Run() {
             <PageStage traceId={src.traceId} events={events} model={model} state={state} full={full} addr={stepOnScreen} item={item} row={!!sel.row} maxHeight={640} onChain={(n) => setChainN((c) => Math.max(c, n))} />  {/* a run that has shown a chain keeps the room for it: no widening / narrowing as follow moves */}
           </section>
         </div>
+        {/* concurrency: the pool the run holds -- pages against the limit, what is queued, which step holds each */}
+        {poolWhole.kinds.size > 0 && <Fold title="concurrency" hint={`${pagesHeld}/${pageK?.limit ?? "?"} browser pages held · ${poolNow.kinds.get("page")?.waiting ?? 0} queued at this moment${poolOpen ? " · click a page to go to its step" : ""}`} open={poolOpen} onToggle={() => setPoolOpen(!poolOpen)} className={poolOpen ? "max-h-[140px]" : ""}>
+          <PoolPanel now={poolNow} whole={poolWhole} model={model} t={tNow} t0={state.t0 || Number(events[0]?.ts ?? 0)} t1={Number(events[events.length - 1]?.ts ?? 0)}
+            onPick={(l) => { if (l.step) setSel({ addr: model?.byAddr.has(l.step) ? l.step : null, item: l.item || null }); }} />
+        </Fold>}
         {/* everything on one time axis */}
         <Fold title="timeline" hint={timeOpen ? "click or drag to go to a moment" : `${full.requests.length} requests · ${full.docs.size} pages · ${full.actions.length} actions`} open={timeOpen} onToggle={() => setTimeOpen(!timeOpen)} className={timeOpen ? "max-h-[180px]" : ""}>
           {events.length ? <RunTimeline className="min-h-0 flex-1 p-1" events={events} model={model} full={full} at={t} onSeek={seek} samples={src.samples} addr={sel.addr} onLane={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a, row: false }))} /> : <div className="p-2 text-muted">nothing has run yet</div>}
