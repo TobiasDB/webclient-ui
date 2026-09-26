@@ -3,7 +3,15 @@
  * branches off the node it runs on onto its own lane below, left to right again; the output (project /
  * merge) sits at the far right with every column flowing into it. */
 
-import type { PlanModel } from "./plan";
+import type { PlanModel, PNode } from "./plan";
+
+/** the column a branch leads to (the nearest column below it), for its lane's name */
+function columnOf(m: PlanModel, n: PNode): string | undefined {
+  const byInput = (a: string) => m.nodes.filter((x) => x.input === a || (x.input && m.byAddr.get(x.input)?.same === a));
+  let cur: PNode | undefined = n;
+  for (let k = 0; cur && k < 40; k++) { if (cur.column) return cur.column; cur = byInput(cur.addr)[0]; }
+  return undefined;
+}
 
 export type Pos = { x: number; y: number; col: number; lane: number };
 export type Layout = {
@@ -23,19 +31,25 @@ export function layoutOf(m: PlanModel): Layout {
   const lanes: Layout["lanes"] = [];
   let nextLane = 1;
   const output = new Set(m.nodes.filter((n) => (n.op === "project" || n.op === "merge") && n.depth === 0).map((n) => n.addr));
-  for (const n of m.nodes) {
+  const shown = m.nodes.filter((n) => !n.same);
+  const parentOf = (n: PNode) => (n.input ? m.byAddr.get(n.input)?.same ?? n.input : "");
+  const used = new Set<string>(); // a node whose lane has been continued by a child
+  for (const n of shown) {
     if (output.has(n.addr)) continue;
-    const inCol = col.get(n.input) ?? 0; const inLane = lane.get(n.input) ?? 0;
-    if (n.host) {
-      // a sub-plan: its own lane, starting beside the node it runs on
+    const p = parentOf(n);
+    const inCol = col.get(p) ?? 0; const inLane = lane.get(p) ?? 0;
+    // the first child of a node continues its lane -- unless it starts a sub-plan (a column) or the lane is taken:
+    // then it BRANCHES onto a lane of its own, below
+    const branch = !!n.host || used.has(p);
+    if (branch) {
       const l = nextLane++; lane.set(n.addr, l); col.set(n.addr, inCol + 1);
-      const hostOp = m.byAddr.get(n.host)?.op;
-      const label = n.seg?.startsWith("kw:") ? n.seg.slice(3) : hostOp === "step" ? "then" : !hostOp ? "the column's name, read from the page" : hostOp === "filter" ? "keep when" : hostOp === "extract" && n.seg?.startsWith("arg:") ? "a column named from the page" : n.seg ?? "";
-      lanes.push({ lane: l, label, host: n.host, first: n.addr, y: 0 });
-    } else {
-      // the same lane as its input, one column on (a sub-plan's later steps follow its first, on its lane)
-      lane.set(n.addr, n.input === "" ? 0 : inLane); col.set(n.addr, (n.input === "" ? 0 : inCol) + 1);
-    }
+      const hostOp = n.host ? m.byAddr.get(n.host)?.op : undefined;
+      const label = n.host
+        ? (n.seg?.startsWith("kw:") ? n.seg.slice(3) : hostOp === "step" ? "then" : !hostOp ? "the column's name, read from the page" : hostOp === "filter" ? "keep when" : hostOp === "extract" && n.seg?.startsWith("arg:") ? "a column named from the page" : n.seg ?? "")
+        : columnOf(m, n) ?? "";
+      lanes.push({ lane: l, label, host: p, first: n.addr, y: 0 });
+    } else { lane.set(n.addr, p === "" ? 0 : inLane); col.set(n.addr, (p === "" ? 0 : inCol) + 1); }
+    used.add(p);
   }
   const maxCol = Math.max(0, ...[...col.values()]);
   for (const a of output) { col.set(a, maxCol + 1); lane.set(a, 0); }
@@ -59,8 +73,14 @@ export function layoutOf(m: PlanModel): Layout {
   const pos = new Map<string, Pos>();
   for (const [a, c] of col) { const l = lane.get(a) ?? 0; pos.set(a, { col: c, lane: l, x: PAD + c * COL_W, y: PAD + l * LANE_H }); }
   for (const L of lanes) L.y = PAD + L.lane * LANE_H;
-  const edges = m.nodes.map((n) => ({ from: n.input, to: n.addr })).filter((e) => pos.has(e.from) && pos.has(e.to));
-  const outputs = [...output].flatMap((o) => m.columns.map((c) => ({ from: c.from, to: o, name: c.name })));
+  const edges = shown.map((n) => ({ from: parentOf(n), to: n.addr })).filter((e) => pos.has(e.from) && pos.has(e.to));
+  // one arrow per (node -> output), naming every column it fills
+  const outs = new Map<string, { from: string; to: string; name: string }>();
+  for (const o of output) for (const c of m.columns) {
+    const from = m.byAddr.get(c.from)?.same ?? c.from; const k = `${from}>${o}`;
+    const cur = outs.get(k); outs.set(k, cur ? { ...cur, name: `${cur.name}, ${c.name}` } : { from, to: o, name: c.name });
+  }
+  const outputs = [...outs.values()];
   const width = PAD * 2 + (Math.max(...[...col.values()]) + 1) * COL_W;
   const height = PAD * 2 + rows * LANE_H;
   return { pos, edges, lanes, width, height, outputs };

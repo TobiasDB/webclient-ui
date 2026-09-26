@@ -182,3 +182,14 @@ export function latestFor(s: RunState, item: ItemKey): { addr: string; inst: Ins
   }
   return best;
 }
+
+/** a shown node's runs: its own and those of the steps that are the same (merged per item: a finished run wins) */
+export function runOf(s: RunState, m: PlanModel, addr: string): NodeRun | undefined {
+  const all = (m.members.get(addr) ?? [addr]).map((a) => s.nodes.get(a)).filter(Boolean) as NodeRun[];
+  if (all.length <= 1) return all[0];
+  const insts = new Map<ItemKey, Inst>();
+  for (const nr of all) for (const [k, v] of nr.insts) { const cur = insts.get(k); if (!cur || (cur.state === "running" && v.state !== "running") || (v.state === "failed")) insts.set(k, cur && v.state === "running" ? cur : v); }
+  let done = 0, failed = 0, running = 0;
+  for (const v of insts.values()) { if (v.state === "done") done++; else if (v.state === "failed") failed++; else running++; }
+  return { addr, insts, done, failed, running, firstT: Math.min(...all.map((x) => x.firstT ?? Infinity)), lastT: Math.max(...all.map((x) => x.lastT ?? 0)) };
+}

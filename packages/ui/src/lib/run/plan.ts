@@ -39,6 +39,9 @@ export type PNode = {
   depth: number;
   /** a short signature: `select_all("ol.row li")` */
   label: string;
+  /** the SAME step as another (the same op, args and input, per the same items -- e.g. the `select("h3 a")` two
+   * columns each start with): shown as that one node, its runs merged; the address it is shown as */
+  same?: string;
 };
 
 export type PlanModel = {
@@ -51,7 +54,12 @@ export type PlanModel = {
   byAddr: Map<string, PNode>;
   /** the projected columns and the node each is filled from */
   columns: { name: string; from: string }[];
+  /** a shown node's addresses: itself and the steps that are the same (see `PNode.same`) */
+  members: Map<string, string[]>;
 };
+
+/** the address a step is SHOWN as (itself, or the step it is the same as) */
+export const shownAs = (m: PlanModel, addr: string): string => m.byAddr.get(addr)?.same ?? addr;
 
 /** ops acting on a Collection AS A WHOLE (the executor's `_COLL_OPS`); anything else after a Collection runs per item */
 export const COLL_OPS = new Set(["extract", "filter", "project", "limit", "documents", "merge"]);
@@ -137,7 +145,19 @@ export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, 
   };
 
   walk(plan, [], "", rootType, null, 0);
-  return { planId, stepMap, rootType, nodes, byAddr: new Map(nodes.map((n) => [n.addr, n])), columns };
+  // THE SAME STEP, once: columns that start alike (select("h3 a") then attr("title") | attr("href")) share their
+  // steps -- one node, the reads branching off it. Steps with sub-plans (extract, step) stay their own.
+  const key = new Map<string, string>(); const members = new Map<string, string[]>();
+  const shown = (a: string) => nodes.find((x) => x.addr === a)?.same ?? a;
+  for (const n of nodes) {
+    members.set(n.addr, [n.addr]);
+    if (n.label.endsWith("…)") || n.op === "project" || n.op === "merge") continue;
+    const k = `${shown(n.input)}|${n.per ?? ""}|${n.op}|${JSON.stringify(n.args)}|${JSON.stringify(n.kwargs)}`;
+    const first = key.get(k);
+    if (first) { n.same = first; members.get(first)!.push(n.addr); members.delete(n.addr); }
+    else key.set(k, n.addr);
+  }
+  return { planId, stepMap, rootType, nodes, byAddr: new Map(nodes.map((n) => [n.addr, n])), columns, members };
 }
 
 /** a node's chain of ancestors by input (root first), itself last */

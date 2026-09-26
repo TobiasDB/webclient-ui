@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "../../lib/cn";
 import { ACTION_COLOUR, actionOf, type RunEvent } from "../../lib/stages";
 import type { PlanModel } from "../../lib/run/plan";
-import type { RunState } from "../../lib/run/state";
+import { runOf, type RunState } from "../../lib/run/state";
 
 export type RunTimelineProps = {
   events: RunEvent[];
@@ -39,9 +39,9 @@ export function RunTimeline({ events, model, full, at, onSeek, addr, onLane, sam
 
   const steps = React.useMemo(() => {
     if (!model) return [];
-    return model.nodes.filter((n) => full.nodes.get(n.addr)?.insts.size).map((n) => {
+    return model.nodes.filter((n) => !n.same && runOf(full, model, n.addr)?.insts.size).map((n) => {
       const run = new Float32Array(px), fail = new Float32Array(px); let max = 0;
-      for (const inst of full.nodes.get(n.addr)!.insts.values()) {
+      for (const inst of runOf(full, model, n.addr)!.insts.values()) {
         const a = Math.max(0, Math.floor(X(inst.t0))), b = Math.min(px - 1, Math.max(a, Math.floor(X(inst.t1 ?? inst.t0))));
         for (let k = a; k <= b; k++) { run[k]! += 1; if (inst.state === "failed") fail[k]! += 1; }
       }

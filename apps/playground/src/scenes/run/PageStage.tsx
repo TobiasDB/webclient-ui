@@ -144,7 +144,7 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
         {card}
         {!docId ? null
           : !traceId ? <div className="p-2 text-muted">this run is not recorded: no pages to show</div>
-          : recorded ? (rr.data?.length ? <Player events={rr.data as never} seekTo={at?.ts ? at.ts * 1000 : null} controls={false} pulses={false} highlights={pHighlights} scrollTo={pFound?.el ?? null} onDocument={setPDoc} onSpot={onSpot} maxHeight={maxHeight} /> : <div className="p-2 text-muted">{rr.isLoading ? "loading the recording…" : "no recording of this page"}</div>)
+          : recorded ? (rr.data?.length ? <Player events={rr.data as never} seekTo={at?.ts ? at.ts * 1000 : null} controls={false} pulses={false} glide pace={0} highlights={pHighlights} scrollTo={pFound?.el ?? null} onDocument={setPDoc} onSpot={onSpot} maxHeight={maxHeight} /> : <div className="p-2 text-muted">{rr.isLoading ? "loading the recording…" : "no recording of this page"}</div>)
           : page.data?.content ? <PageFrame html={page.data.content} base={page.data.final_url ?? page.data.url} stripScripts highlights={highlights} scrollTo={found?.el ? graphLib.pathOf(found.el) : null} onSpot={onSpot} maxHeight={maxHeight} width={compact ? 1100 : 1180} />
           : <div className="p-2 text-muted">{page.isLoading ? "loading the page…" : snapN == null ? "the page is being fetched…" : "no snapshot of this page"}</div>}
         {hops && hops.length > 0 && found && !found.el && page.data && <div className="absolute bottom-1 left-1 rounded bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn">this item's element is not on the page as captured</div>}

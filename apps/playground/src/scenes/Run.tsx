@@ -50,7 +50,20 @@ export function Run() {
   React.useEffect(() => {
     if (!playing || !events.length) return;
     let i = t;
-    if (speed === 0) { const h = setInterval(() => { i = moment(i, 1); setT(i); if (i >= events.length) setPlaying(false); }, 350); return () => clearInterval(h); }
+    if (speed === 0) {
+      // step by step: one moment at a time -- dwelling as long as the run took to get there (0.35s-2.5s), so a
+      // recording plays what happened in between (the pointer, the click, the page changing) at its own pace
+      let timer: ReturnType<typeof setTimeout>; let on = true;
+      // step to the next moment, THEN stay while the recording glides there (what happened in between is seen)
+      const next = () => {
+        if (!on) return;
+        const j = moment(i, 1); const from = Number(events[Math.max(0, i - 1)]?.ts ?? 0), to = Number(events[Math.max(0, j - 1)]?.ts ?? 0);
+        i = j; setT(i);
+        if (i >= events.length) { setPlaying(false); return; }
+        timer = setTimeout(next, Math.min(2500, Math.max(350, (to && from ? to - from : 0) * 1000)));
+      };
+      timer = setTimeout(next, 350); return () => { on = false; clearTimeout(timer); };
+    }
     const ts = events.map((e) => Number(e.ts ?? 0)); let clock = ts[Math.max(0, i - 1)] || ts.find((x) => x > 0) || 0;
     const h = setInterval(() => { clock += 0.05 * speed; while (i < ts.length && (ts[i] || clock) <= clock) i++; setT(i); if (i >= ts.length) setPlaying(false); }, 50);
     return () => clearInterval(h);
@@ -118,7 +131,7 @@ export function Run() {
               {plan && <span className="min-w-0 truncate font-mono text-muted" title={planLib.describe(plan)}>{planLib.describe(plan)}</span>}
             </div>
             <div className="min-h-0 flex-1">
-              {model ? <RunGraph model={model} state={state} item={item} addr={sel.addr} rootUrl={rootUrl} focus={sel.addr ?? focusAddr}
+              {model ? <RunGraph model={model} state={state} item={item} addr={sel.addr} rootUrl={rootUrl} focus={model ? runLib.shownAs(model, sel.addr ?? focusAddr ?? "") : null}
                 onSelect={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a }))} onPick={(k) => setSel((s) => ({ ...s, item: k }))} />
                 : <div className="p-3 text-muted">{src.traceId ? "this recording carries no plan: its pages and requests are on the timeline and the page" : "…"}</div>}
             </div>

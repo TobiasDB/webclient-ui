@@ -57,6 +57,8 @@ export type PlayerProps = {
   pulses?: boolean;
   /** keep this element (in the rebuilt page) in view -- scrolled within the replay, never the page around it */
   scrollTo?: Element | null;
+  /** a short step FORWARD of `seekTo` plays the recording there at 1x (what happened in between is seen), not a jump */
+  glide?: boolean;
   /** where the SPOTLIT element is on screen (window px); null when there is none */
   onSpot?: (rect: { left: number; top: number; width: number; height: number } | null) => void;
 };
@@ -76,6 +78,8 @@ const NO_HIGHLIGHTS: Highlight[] = [];
 /** where OUR pointer last was, in the page's DOCUMENT coordinates -- kept across remounts (a live
  * page restarts its mirror on every navigation / step), so the pointer always moves on from there */
 let lastPointer: { x: number; y: number } | null = null;
+/** the longest step forward that is played rather than jumped (ms of the recording) */
+const GLIDE_MAX_MS = 4000;
 
 /** scroll the REBUILT page's own window to an element -- never `scrollIntoView`: the mirror's frame is
  * same-origin, so that also scrolls every ancestor (the workspace jumped whenever a line was focused) */
@@ -86,7 +90,7 @@ function scrollWithin(el: Element, block: "start" | "center"): void {
   w.scrollTo({ top: Math.max(0, top), left: w.scrollX });
 }
 
-export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, shiftPick = false, onClickThrough, focus = null, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, pulses: showPulses = true, scrollTo = null, onSpot, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
+export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, shiftPick = false, onClickThrough, focus = null, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, pulses: showPulses = true, scrollTo = null, onSpot, glide = false, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
   const ownCtl = React.useMemo(() => new PlayerController(), []);
   const ctl = controller ?? ownCtl;
   const [pace, setPace] = React.useState(paceProp);
@@ -116,9 +120,14 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
   // it is drawn at document - scroll
   const [cursor, setCursor] = React.useState<{ x: number; y: number; down: boolean } | null>(lastPointer ? { ...lastPointer, down: false } : null);
   const cursorAnim = React.useRef(0);
+  const glideTo = React.useRef<number | null>(null);
+  const playingRef = React.useRef(false); playingRef.current = playing && glideTo.current == null;
+  const speedRef = React.useRef(1); speedRef.current = speed;
+  const skipRef = React.useRef(true); skipRef.current = skip;
   /** a caller names the element in focus (``scrollTo``): the pointer goes THERE, not to a step's first match */
   const controlled = React.useRef(false);
   controlled.current = scrollTo != null || highlights.some((h) => h.spot);
+  const scrollToRef = React.useRef<Element | null>(null); scrollToRef.current = scrollTo;
   const liveClock = React.useRef<{ baseline: number; t0: number } | null>(null);
   /** add a live event stamped no later than the replay clock's now (it applies at once, order kept) */
   const liveAdd = (r: { addEvent: (e: unknown) => void }, e: { timestamp: number }) => {
@@ -163,6 +172,10 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
           const args = (payload.args ?? {}) as { selector?: string; from?: number[]; to?: number[] };
           pulse(tag, `${payload.action}${args.selector ? ` ${args.selector}` : ""}`);
           if (args.selector) flashSelector(String(args.selector));
+          if ((payload.action === "click" || payload.action === "write") && controlled.current && scrollToRef.current?.isConnected) {
+            const el = scrollToRef.current; const w = el.ownerDocument.defaultView; const r = el.getBoundingClientRect();
+            moveCursor(undefined, [r.left + r.width / 2 + (w?.scrollX ?? 0), r.top + r.height / 2 + (w?.scrollY ?? 0)], true);  // the click, seen on its element
+          }
           if ((payload.action === "click" || payload.action === "write") && !controlled.current) { const w = doc()?.defaultView; const target = (args.selector ? centreOf(String(args.selector)) : undefined) ?? (args.to ? [args.to[0]! + (w?.scrollX ?? 0), args.to[1]! + (w?.scrollY ?? 0)] : undefined); moveCursor(undefined, target, true); }
         }
         // a step's own element is only known to a caller that tracks the item (``scrollTo``): then the pointer
@@ -192,7 +205,9 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
       }
       else if (autoPlay) { r.play(0); setPlaying(true); }
       else r.pause(0);
-      const tick = () => { if (!rep.current) return; const t = rep.current.getCurrentTime(); setTime(t); cbs.current.onTime?.(toRecordedRef.current(m.startTime + t)); refreshRef.current(); raf = requestAnimationFrame(tick); };
+      const tick = () => { if (!rep.current) return; const t = rep.current.getCurrentTime();
+        if (glideTo.current != null && t >= glideTo.current) { rep.current.pause(glideTo.current); glideTo.current = null; rep.current.setConfig?.({ speed: speedRef.current, skipInactive: skipRef.current }); }
+        setTime(t); cbs.current.onTime?.(toRecordedRef.current(m.startTime + t)); refreshRef.current(); raf = requestAnimationFrame(tick); };
       raf = requestAnimationFrame(tick);
     })();
     return () => { cancelled = true; cancelAnimationFrame(raf); try { r?.destroy?.(); } catch { /* gone */ } rep.current = null; };
@@ -208,7 +223,15 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
 
   React.useEffect(() => { rep.current?.setConfig?.({ speed }); }, [speed]);
   React.useEffect(() => { rep.current?.setConfig?.({ skipInactive: skip }); }, [skip]);
-  React.useEffect(() => { if (seekTo == null || !rep.current || live) return; const off = Math.max(0, toPaced(seekTo) - meta.startTime); if (Math.abs(off - rep.current.getCurrentTime()) > 30) { rep.current.pause(off); setTime(off); } }, [seekTo, meta.startTime, live, toPaced]);
+  React.useEffect(() => {
+    if (seekTo == null || !rep.current || live) return;
+    const off = Math.max(0, toPaced(seekTo) - meta.startTime); const cur = rep.current.getCurrentTime();
+    if (Math.abs(off - cur) <= 30) return;
+    // GLIDE: a short step forward is PLAYED (at 1x) instead of jumped -- what happened in between (a click, the
+    // DOM it changed, a panel loading) is seen happening; a step back or a long jump is a seek
+    if (glide && off > cur && off - cur <= GLIDE_MAX_MS) { glideTo.current = off; if (!playingRef.current) { rep.current.setConfig?.({ speed: 1, skipInactive: false }); rep.current.play(cur); } return; }
+    glideTo.current = null; rep.current.pause(off); setTime(off);
+  }, [seekTo, meta.startTime, live, toPaced, glide]);
 
   // -- scale to fit --------------------------------------------------------------
   React.useLayoutEffect(() => {

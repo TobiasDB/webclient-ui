@@ -160,3 +160,18 @@ describe("a limit keeps its items", () => {
     expect(pm.byAddr.get("6/kw:t/0")!.cap).toBe(6);
   });
 });
+
+describe("the same step is one node", () => {
+  it("columns that start with the same select share it: one node, the reads branching off it", () => {
+    const c = (name: string, ...args: unknown[]) => [{ kind: "get" as const, name }, { kind: "call" as const, name, args: args.map((v) => ({ value: v })), kwargs: {} }];
+    const col = (...steps: ReturnType<typeof c>[]) => ({ plan: { root: "Document" as const, steps: steps.flat() } });
+    const p: Plan = { root: "Reference", steps: [...c("resolve"), ...c("select_all", "li"), { kind: "get", name: "extract" }, { kind: "call", name: "extract", args: [], kwargs: { title: col(c("select", "h3 a"), c("attr", "title")), link: col(c("select", "h3 a"), c("attr", "href")) } }] };
+    const pm = planModel(p);
+    expect(pm.byAddr.get("4/kw:link/0")!.same).toBe("4/kw:title/0");
+    expect(pm.members.get("4/kw:title/0")).toEqual(["4/kw:title/0", "4/kw:link/0"]);
+    const L = layoutOf(pm);
+    expect(L.pos.has("4/kw:link/0")).toBe(false);
+    expect(L.edges).toContainEqual({ from: "4/kw:title/0", to: "4/kw:link/2" });   // href read off the one select
+    expect(L.pos.get("4/kw:link/2")!.lane).not.toBe(L.pos.get("4/kw:title/2")!.lane);
+  });
+});

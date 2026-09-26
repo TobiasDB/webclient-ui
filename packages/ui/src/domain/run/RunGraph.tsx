@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "../../lib/cn";
 import { CARD_H, CARD_W, layoutOf, type Layout } from "../../lib/run/layout";
 import type { PlanModel } from "../../lib/run/plan";
-import { expectedOf, type Inst, type ItemKey, type RunState } from "../../lib/run/state";
+import { expectedOf, runOf, type Inst, type ItemKey, type RunState } from "../../lib/run/state";
 import { StepCard } from "./StepCard";
 
 export type RunGraphProps = {
@@ -44,7 +44,7 @@ export function RunGraph({ model, state, item, addr, onSelect, onPick, rootUrl, 
   }, [model, state]);
   const fanTotal = (a: string) => { let t = 0, any = false; for (const [k, n] of state.fanN) if (k.startsWith(`${a}|`)) { t += n; any = true; } return any ? t : undefined; };
   const instFor = (a: string): Inst | undefined => {
-    const nr = state.nodes.get(a); if (!nr) return undefined;
+    const nr = runOf(state, model, a); if (!nr) return undefined;
     const own = nr.insts.get(item); if (own) return own;
     for (const [k, v] of nr.insts) if (item && k.startsWith(`${item}.`)) return v;
     const parts = item ? item.split(".") : [];
@@ -98,12 +98,12 @@ export function RunGraph({ model, state, item, addr, onSelect, onPick, rootUrl, 
       onPointerUp={(e) => { const d = drag.current; drag.current = null; if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 3) onSelect?.(null); }}>
       <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})`, width: L.width, height: L.height, transition: glide ? "transform 300ms ease-out" : undefined }}>
         <Edges L={L} model={model} state={state} />
-        {L.lanes.map((l) => { const p = L.pos.get(l.first); return p ? <div key={l.lane} className="absolute font-mono text-[10px] font-medium text-muted" style={{ left: p.x, top: p.y - 13 }}>{l.label}</div> : null; })}
+        {L.lanes.map((l) => { const p = L.pos.get(l.first); return p ? <div key={l.first} className="absolute font-mono text-[10px] font-medium text-muted" style={{ left: p.x, top: p.y - 13 }}>{l.label}</div> : null; })}
         <StepCard node={null} item={item} active={false} selected={addr === ""} rootUrl={rootUrl} onSelect={() => onSelect?.("")}
           style={{ left: L.pos.get("")!.x, top: L.pos.get("")!.y, width: CARD_W, height: CARD_H }} />
-        {model.nodes.map((n) => {
+        {model.nodes.filter((n) => !n.same).map((n) => {
           const p = L.pos.get(n.addr); if (!p) return null;
-          const nr = state.nodes.get(n.addr); const inst = instFor(n.addr);
+          const nr = runOf(state, model, n.addr); const inst = instFor(n.addr);
           const docId = inst?.result?.document_id ?? undefined;
           return (
             <StepCard key={n.addr} node={n} run={nr} expected={n.per ? expectedOf(state, model, n.addr) : undefined} item={item} inst={inst}
@@ -136,7 +136,7 @@ function Edges({ L, model, state }: { L: Layout; model: PlanModel; state: RunSta
       <defs><marker id="wc-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8" /></marker></defs>
       {L.edges.map((e) => {
         const a = L.pos.get(e.from), b = L.pos.get(e.to); if (!a || !b) return null;
-        const nr = state.nodes.get(e.to); const ran = !!nr?.insts.size; const active = (nr?.running ?? 0) > 0; const failed = (nr?.failed ?? 0) > 0;
+        const nr = runOf(state, model, e.to); const ran = !!nr?.insts.size; const active = (nr?.running ?? 0) > 0; const failed = (nr?.failed ?? 0) > 0;
         return <g key={`${e.from}>${e.to}`}>
           <path d={path(a, b)} fill="none" stroke={failed ? "#dc2626" : ran ? "#64748b" : "#cbd5e1"} strokeWidth={ran ? 1.6 : 1.2} strokeDasharray={ran ? undefined : "4 3"} markerEnd="url(#wc-arrow)" style={{ transition: "stroke 200ms" }} />
           {active && <path d={path(a, b)} fill="none" stroke="#2457e6" strokeWidth={2.4} className="wc-edge-flow" />}
@@ -144,10 +144,9 @@ function Edges({ L, model, state }: { L: Layout; model: PlanModel; state: RunSta
       })}
       {L.outputs.map((o) => {
         const a = L.pos.get(o.from), b = L.pos.get(o.to); if (!a || !b) return null;
-        const filled = !!state.nodes.get(o.from)?.done;
+        const filled = !!runOf(state, model, o.from)?.done;
         return <path key={`${o.from}>${o.to}`} d={path(a, b)} fill="none" stroke={filled ? "#0f172a" : "#cbd5e1"} strokeOpacity={filled ? 0.55 : 1} strokeWidth={1.2} strokeDasharray="2 3" markerEnd="url(#wc-arrow)" />;
       })}
-      {void model}
     </svg>
   );
 }

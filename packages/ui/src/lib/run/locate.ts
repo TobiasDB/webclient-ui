@@ -53,6 +53,9 @@ export function locate(m: PlanModel, s: RunState, addr: string, item: ItemKey): 
   const upto = pageAt >= 0 ? pageAt : lin.length - 1;
   for (let j = 0; j <= upto; j++) if (PAGE_OPS.has(lin[j]!.op) && lin[j]!.type !== "Element" && (j < pageAt || lin[j]!.type === "Document" && j === pageAt)) start = j + 1;
   const hops: Hop[] = [];
+  // an ACTION's target (click / write / ... name the element they act on) is the element -- found within what
+  // the way down reached (the page, or the item's element)
+  const acting = target !== undefined && ACTION_OPS.has(target.op) && target.arg ? target : undefined;
   for (const n of lin.slice(start)) {
     if ((n.op === "select" || n.op === "select_all") && n.arg) {
       // a select_all that later steps run per item of: this item's match; else all of them
@@ -61,8 +64,11 @@ export function locate(m: PlanModel, s: RunState, addr: string, item: ItemKey): 
       else hops.push(n.op === "select_all" ? { sel: n.arg, all: true } : { sel: n.arg });
     }
   }
+  if (acting) hops.push({ sel: acting.arg! });
   return { doc, hops, op: target.op, addr: target.addr };
 }
+
+const ACTION_OPS = new Set(["click", "write", "scroll", "wait_for", "hover", "press"]);
 
 /** the part of an item path that indexes fan-out `fan` (a nested fan-out's items are `outer.inner`) */
 function itemAt(m: PlanModel, lin: PNode[], fan: PNode, item: ItemKey): ItemKey {
