@@ -14,7 +14,7 @@ export const keyOf = (item: number[] | null | undefined): ItemKey => (item ?? []
 
 export type Result = {
   op?: string; kind?: string; document_id?: string | null; parent?: string | null; url?: string;
-  n?: number; of?: string; preview?: unknown; ms?: number; ok?: boolean; error?: string; message?: string;
+  n?: number; of?: string; kept?: number[]; preview?: unknown; ms?: number; ok?: boolean; error?: string; message?: string;
 };
 /** one run of a step for one item */
 export type Inst = { item: ItemKey; state: "running" | "done" | "failed"; first: number; last: number; t0: number; t1?: number; result?: Result };
@@ -155,6 +155,7 @@ export function expectedOf(s: RunState, m: PlanModel, addr: string): number | un
   const pn = m.byAddr.get(addr); if (!pn?.per) return 1;
   let total = 0, any = false;
   for (const [k, n] of s.fanN) { if (k.startsWith(`${pn.per}|`)) { total += n; any = true; } }
+  if (pn.filtered) { let kept = 0, anyF = false; for (const inst of s.nodes.get(pn.filtered)?.insts.values() ?? []) if (inst.result?.n != null) { kept += inst.result.n; anyF = true; } if (anyF) return pn.cap != null ? Math.min(kept, pn.cap) : kept; }
   return any ? (pn.cap != null ? Math.min(total, pn.cap) : total) : undefined;
 }
 

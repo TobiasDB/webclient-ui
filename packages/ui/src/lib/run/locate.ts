@@ -8,7 +8,7 @@ import type { ItemKey, RunState } from "./state";
 import { lineage, type PlanModel, type PNode } from "./plan";
 
 export type Hop = { sel: string; index?: number; all?: boolean };
-export type Where = { doc: string; hops: Hop[]; op: string; addr: string; /** the step found MANY (a select_all itself): all of them are its result */ many?: boolean; /** of those, the first n (a limit) */ take?: number };
+export type Where = { doc: string; hops: Hop[]; op: string; addr: string; /** the step found MANY (a select_all itself): all of them are its result */ many?: boolean; /** of those, the first n (a limit) */ take?: number; /** of those, these (a filter's kept) */ keep?: number[] };
 
 const PAGE_OPS = new Set(["resolve", "fetch", "paginate", "click", "write", "scroll", "wait_for", "goto", "reload", "step"]);
 const isDoc = (d: unknown): d is string => typeof d === "string" && d.startsWith("doc:");
@@ -30,12 +30,19 @@ export function localIndex(s: RunState, fan: string, item: ItemKey): { index: nu
   for (const inst of insts) { const n = inst.result?.n ?? s.fanN.get(`${fan}|${inst.item}`) ?? 0; if (k < from + n) return { index: k - from, doc: docOfResult(inst.result) }; from += n; }
   return { index: k };
 }
+const parentKey = (item: ItemKey): ItemKey => (item.includes(".") ? item.slice(0, item.lastIndexOf(".")) : "");
 const cmpKey = (a: string, b: string) => { const x = a.split(".").map(Number), y = b.split(".").map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] ?? -1) - (y[i] ?? -1); if (d) return d; } return 0; };
 const docOfResult = (r?: { document_id?: string | null; parent?: string | null }) => (isDoc(r?.document_id) ? r!.document_id! : isDoc(r?.parent) ? r!.parent! : undefined);
 
 export function locate(m: PlanModel, s: RunState, addr: string, item: ItemKey): Where | null {
   const lin = lineage(m, addr); if (!lin.length) return null;
   const target = lin[lin.length - 1]!;
+  // a FILTER: the selection it filters, the ones it kept
+  if (target.op === "filter" && target.input) {
+    const w = locate(m, s, target.input, item);
+    const kept = s.nodes.get(target.addr)?.insts.get(parentKey(item))?.result?.kept ?? s.nodes.get(target.addr)?.insts.get("")?.result?.kept;
+    if (w) { const hops = w.hops.slice(); const last = hops[hops.length - 1]; if (last) hops[hops.length - 1] = { sel: last.sel, all: true }; return { ...w, hops, many: true, ...(kept ? { keep: kept } : {}), op: "filter", addr: target.addr }; }
+  }
   // a LIMIT: the selection it limits (the select_all's matches), the first n of them
   if (target.op === "limit" && target.input) {
     const w = locate(m, s, target.input, item);
@@ -66,7 +73,13 @@ export function locate(m: PlanModel, s: RunState, addr: string, item: ItemKey): 
     if ((n.op === "select" || n.op === "select_all") && n.arg) {
       // a select_all that later steps run per item of: this item's match; else all of them
       const feeds = lin.some((x) => x.per === n.addr);
-      if (n.op === "select_all" && feeds) { const li = localIndex(s, n.addr, itemAt(m, lin, n, item)); hops.push({ sel: n.arg, index: li?.index ?? 0 }); }
+      if (n.op === "select_all" && feeds) {
+        // after a filter, items are numbered among what it KEPT: its result maps them back to the match they are
+        let it = itemAt(m, lin, n, item);
+        const f = lin.find((x) => x.per === n.addr && x.filtered)?.filtered;
+        if (f) { const kept = s.nodes.get(f)?.insts.get(parentKey(it))?.result?.kept; const parts = it.split("."); const k = Number(parts[parts.length - 1]); if (kept && kept[k] != null) { parts[parts.length - 1] = String(kept[k]); it = parts.join("."); } }
+        const li = localIndex(s, n.addr, it); hops.push({ sel: n.arg, index: li?.index ?? 0 });
+      }
       else hops.push(n.op === "select_all" ? { sel: n.arg, all: true } : { sel: n.arg });
     }
   }

@@ -231,3 +231,20 @@ describe("where a row came from", () => {
     expect(src[1]!.cols).toEqual([{ name: "info", hops: [{ sel: "tr", all: true }], many: true }]);
   });
 });
+
+import filtered from "./fixtures/filtered-run.json";
+describe("after a filter", () => {
+  const fm = planModel(filtered.plan as unknown as Plan);
+  const fs = stateAt(filtered.events as unknown as RunEvent[], fm);
+  it("an item numbered among the kept is found as the match it is", () => {
+    expect(fm.byAddr.get("6")!.filtered).toBe("4");
+    const w = locate(fm, fs, "6", "1")!;                       // item 1 read "2": the 3rd li
+    expect(w.hops).toEqual([{ sel: "li", index: 2 }]);
+    const dom = new DOMParser().parseFromString(filtered.html, "text/html");
+    expect(resolveHops(dom, w.hops).el?.textContent).toBe("2");
+    expect(expectedOf(fs, fm, "6")).toBe(3);
+  });
+  it("the filter step shows the selection it filtered, the kept ones taken", () => {
+    expect(locate(fm, fs, "4", "")).toMatchObject({ many: true, keep: [0, 2, 3], hops: [{ sel: "li", all: true }] });
+  });
+});

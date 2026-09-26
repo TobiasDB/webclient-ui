@@ -1,0 +1,860 @@
+{
+"plan": {
+"root": "Reference",
+"steps": [
+{
+"kind": "get",
+"name": "resolve"
+},
+{
+"kind": "call",
+"name": "resolve",
+"args": [],
+"kwargs": {}
+},
+{
+"kind": "get",
+"name": "select_all"
+},
+{
+"kind": "call",
+"name": "select_all",
+"args": [
+{
+"value": "li"
+}
+],
+"kwargs": {}
+},
+{
+"kind": "get",
+"name": "filter"
+},
+{
+"kind": "call",
+"name": "filter",
+"args": [
+{
+"plan": {
+"root": "Document",
+"steps": [
+{
+"kind": "get",
+"name": "attr"
+},
+{
+"kind": "call",
+"name": "attr",
+"args": [
+{
+"value": "class"
+}
+],
+"kwargs": {}
+},
+{
+"kind": "op",
+"name": "eq",
+"args": [
+{
+"value": "r keep"
+}
+]
+}
+]
+}
+}
+],
+"kwargs": {}
+},
+{
+"kind": "get",
+"name": "attr"
+},
+{
+"kind": "call",
+"name": "attr",
+"args": [
+{
+"value": "text"
+}
+],
+"kwargs": {}
+}
+]
+},
+"html": "<ul><li class=\"r keep\">0</li><li class=\"r\">1</li><li class=\"r keep\">2</li><li class=\"r keep\">3</li><li class=\"r\">4</li></ul>",
+"events": [
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 2,
+"seq": 2,
+"ts": 1790421055.6711512,
+"run_id": "run-20260926-121055-1cb9",
+"phase": "started",
+"detail": {}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 3,
+"seq": 3,
+"ts": 1790421055.671801,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "0",
+"phase": "step",
+"detail": {
+"op": "resolve",
+"selector": null,
+"args": []
+}
+},
+{
+"topic": "resource",
+"version": 1,
+"source": "pool",
+"n": 4,
+"seq": 4,
+"ts": 1790421055.684048,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "0",
+"detail": {
+"what": "created",
+"kind": "http",
+"total": 1
+}
+},
+{
+"topic": "snapshot",
+"version": 1,
+"source": "core-trace",
+"n": 5,
+"seq": 1,
+"ts": 1790421055.6879811,
+"document_id": "doc:000-002",
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "0",
+"phase": "fetch",
+"url": "http://localhost:58948/",
+"final_url": "http://localhost:58948/",
+"kind": "html",
+"status_code": 200,
+"headers": {
+"server": "Werkzeug/3.1.8 Python/3.12.12",
+"date": "Sat, 26 Sep 2026 11:10:55 GMT",
+"content-type": "text/html",
+"content-length": "124",
+"connection": "close"
+},
+"tiers": []
+},
+{
+"topic": "network.navigation",
+"version": 1,
+"source": "core-network",
+"n": 6,
+"seq": 2,
+"ts": 1790421055.688043,
+"document_id": "doc:000-002",
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "0",
+"status_code": 200,
+"method": "get",
+"url": "http://localhost:58948/",
+"headers": {
+"server": "Werkzeug/3.1.8 Python/3.12.12",
+"date": "Sat, 26 Sep 2026 11:10:55 GMT",
+"content-type": "text/html",
+"content-length": "124",
+"connection": "close"
+},
+"elapsed": 0.0035142080014338717
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 7,
+"seq": 3,
+"ts": 1790421055.688127,
+"document_id": "doc:000-002",
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "0",
+"phase": "result",
+"detail": {
+"op": "resolve",
+"ms": 16.33,
+"kind": "Document",
+"document_id": "doc:000-002",
+"parent": "ref:000-001",
+"url": "http://localhost:58948/",
+"ok": true
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 8,
+"seq": 4,
+"ts": 1790421055.688169,
+"document_id": "doc:000-002",
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "2",
+"phase": "step",
+"detail": {
+"op": "select_all",
+"selector": "li",
+"args": [
+"li"
+]
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 9,
+"seq": 5,
+"ts": 1790421055.694388,
+"document_id": "doc:000-002",
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "2",
+"phase": "fanout",
+"detail": {
+"op": "select_all",
+"selector": "li",
+"n": 5
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 10,
+"seq": 6,
+"ts": 1790421055.694436,
+"document_id": "doc:000-002",
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "2",
+"phase": "result",
+"detail": {
+"op": "select_all",
+"ms": 6.27,
+"kind": "Collection",
+"n": 5,
+"of": "Element",
+"document_id": null,
+"parent": "doc:000-002",
+"ok": true
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 11,
+"seq": 5,
+"ts": 1790421055.694541,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4/arg:0/0",
+"item": [
+0
+],
+"phase": "step",
+"detail": {
+"op": "attr",
+"selector": "class",
+"args": [
+"class"
+]
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 12,
+"seq": 6,
+"ts": 1790421055.694614,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4/arg:0/0",
+"item": [
+0
+],
+"phase": "result",
+"detail": {
+"op": "attr",
+"ms": 0.08,
+"kind": "value",
+"preview": "r keep",
+"ok": true
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 13,
+"seq": 7,
+"ts": 1790421055.694647,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4",
+"item": [
+0
+],
+"phase": "item",
+"detail": {
+"status": "ok"
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 14,
+"seq": 8,
+"ts": 1790421055.6946828,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4/arg:0/0",
+"item": [
+1
+],
+"phase": "step",
+"detail": {
+"op": "attr",
+"selector": "class",
+"args": [
+"class"
+]
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 15,
+"seq": 9,
+"ts": 1790421055.694732,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4/arg:0/0",
+"item": [
+1
+],
+"phase": "result",
+"detail": {
+"op": "attr",
+"ms": 0.05,
+"kind": "value",
+"preview": "r",
+"ok": true
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 16,
+"seq": 10,
+"ts": 1790421055.6947572,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4",
+"item": [
+1
+],
+"phase": "item",
+"detail": {
+"status": "ok"
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 17,
+"seq": 11,
+"ts": 1790421055.694787,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4/arg:0/0",
+"item": [
+2
+],
+"phase": "step",
+"detail": {
+"op": "attr",
+"selector": "class",
+"args": [
+"class"
+]
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 18,
+"seq": 12,
+"ts": 1790421055.6948311,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4/arg:0/0",
+"item": [
+2
+],
+"phase": "result",
+"detail": {
+"op": "attr",
+"ms": 0.05,
+"kind": "value",
+"preview": "r keep",
+"ok": true
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 19,
+"seq": 13,
+"ts": 1790421055.6948538,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4",
+"item": [
+2
+],
+"phase": "item",
+"detail": {
+"status": "ok"
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 20,
+"seq": 14,
+"ts": 1790421055.6948822,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4/arg:0/0",
+"item": [
+3
+],
+"phase": "step",
+"detail": {
+"op": "attr",
+"selector": "class",
+"args": [
+"class"
+]
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 21,
+"seq": 15,
+"ts": 1790421055.694925,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4/arg:0/0",
+"item": [
+3
+],
+"phase": "result",
+"detail": {
+"op": "attr",
+"ms": 0.05,
+"kind": "value",
+"preview": "r keep",
+"ok": true
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 22,
+"seq": 16,
+"ts": 1790421055.694947,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4",
+"item": [
+3
+],
+"phase": "item",
+"detail": {
+"status": "ok"
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 23,
+"seq": 17,
+"ts": 1790421055.694973,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4/arg:0/0",
+"item": [
+4
+],
+"phase": "step",
+"detail": {
+"op": "attr",
+"selector": "class",
+"args": [
+"class"
+]
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 24,
+"seq": 18,
+"ts": 1790421055.695015,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4/arg:0/0",
+"item": [
+4
+],
+"phase": "result",
+"detail": {
+"op": "attr",
+"ms": 0.04,
+"kind": "value",
+"preview": "r",
+"ok": true
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 25,
+"seq": 19,
+"ts": 1790421055.6950378,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4",
+"item": [
+4
+],
+"phase": "item",
+"detail": {
+"status": "ok"
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 26,
+"seq": 7,
+"ts": 1790421055.6951108,
+"document_id": "doc:000-002",
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "4",
+"phase": "result",
+"detail": {
+"op": "filter",
+"ms": 0.64,
+"kind": "Collection",
+"n": 3,
+"of": "Element",
+"document_id": null,
+"parent": "doc:000-002",
+"kept": [
+0,
+2,
+3
+],
+"ok": true
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 27,
+"seq": 20,
+"ts": 1790421055.695146,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "6",
+"phase": "parallel",
+"detail": {
+"n": 3,
+"limit": 3,
+"bound": "http",
+"ops": [
+"attr"
+]
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 28,
+"seq": 21,
+"ts": 1790421055.6952069,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "6",
+"item": [
+0
+],
+"phase": "step",
+"detail": {
+"op": "attr",
+"selector": "text",
+"args": [
+"text"
+]
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 29,
+"seq": 22,
+"ts": 1790421055.695264,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "6",
+"item": [
+0
+],
+"phase": "result",
+"detail": {
+"op": "attr",
+"ms": 0.06,
+"kind": "value",
+"preview": "0",
+"ok": true
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 30,
+"seq": 23,
+"ts": 1790421055.695284,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"item": [
+0
+],
+"phase": "item",
+"detail": {
+"status": "ok"
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 31,
+"seq": 24,
+"ts": 1790421055.695313,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "6",
+"item": [
+1
+],
+"phase": "step",
+"detail": {
+"op": "attr",
+"selector": "text",
+"args": [
+"text"
+]
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 32,
+"seq": 25,
+"ts": 1790421055.6954072,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "6",
+"item": [
+1
+],
+"phase": "result",
+"detail": {
+"op": "attr",
+"ms": 0.1,
+"kind": "value",
+"preview": "2",
+"ok": true
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 33,
+"seq": 26,
+"ts": 1790421055.6954272,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"item": [
+1
+],
+"phase": "item",
+"detail": {
+"status": "ok"
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 34,
+"seq": 27,
+"ts": 1790421055.695454,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "6",
+"item": [
+2
+],
+"phase": "step",
+"detail": {
+"op": "attr",
+"selector": "text",
+"args": [
+"text"
+]
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 35,
+"seq": 28,
+"ts": 1790421055.695499,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"step": "6",
+"item": [
+2
+],
+"phase": "result",
+"detail": {
+"op": "attr",
+"ms": 0.05,
+"kind": "value",
+"preview": "3",
+"ok": true
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 36,
+"seq": 29,
+"ts": 1790421055.695518,
+"plan_id": "4dcd3fe11e02",
+"run_id": "run-20260926-121055-1cb9",
+"item": [
+2
+],
+"phase": "item",
+"detail": {
+"status": "ok"
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 37,
+"seq": 30,
+"ts": 1790421055.695626,
+"run_id": "run-20260926-121055-1cb9",
+"phase": "row",
+"detail": {
+"index": 0,
+"row": "0"
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 38,
+"seq": 31,
+"ts": 1790421055.6957161,
+"run_id": "run-20260926-121055-1cb9",
+"phase": "row",
+"detail": {
+"index": 1,
+"row": "2"
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 39,
+"seq": 32,
+"ts": 1790421055.695789,
+"run_id": "run-20260926-121055-1cb9",
+"phase": "row",
+"detail": {
+"index": 2,
+"row": "3"
+}
+},
+{
+"topic": "plan",
+"version": 1,
+"source": "core",
+"n": 40,
+"seq": 33,
+"ts": 1790421055.695913,
+"run_id": "run-20260926-121055-1cb9",
+"phase": "done",
+"detail": {
+"rows": 3
+}
+}
+]
+}
