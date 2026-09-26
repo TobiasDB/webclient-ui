@@ -10,6 +10,7 @@ import { API_URL, api, ApiError } from "../lib/api";
 import { call as callBody, plan as planBody, useActive, useSession } from "../lib/session";
 import { useTryRun } from "./run/useTryRun";
 import { encSpec } from "./Run";
+import { decSpec } from "./run/sources";
 
 const { addNode, updateNode, setMod, opOf, emptyGraph, children, pageOf, stateOf, stepsOfPage, evalAt, ACTIONS, evalNode, elementsOf, sample, hrefOf, compile, decompile, outputs, inputOf, pathOf, byPath, incomplete, isEl } = graphLib;
 const isPlain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v) && typeof (v as { base64?: unknown }).base64 !== "string";
@@ -89,14 +90,16 @@ export function Author() {
   const select = (id: string, edit = false) => { setSelectedRaw(id); setEditing(edit); setPickEl(null); setBuilding(null); };
   const reset = (s: State | null, sel = "root", keep: Record<string, Page> = {}) => { setStateRaw(s); history.current = []; setPages(keep); setDocs({}); select(sel); setRun({ busy: false }); };
   const start = (url: string, tier: Tier, keep?: Page) => { let g = emptyGraph(url); const r = addNode(g, g.root, opOf("resolve", [], browserKw(tier)), returns); g = r.graph; reset({ tier, graph: g }, r.id, keep ? { [r.id]: keep } : {}); };
-  React.useEffect(() => { if (!active) return; setParams((q) => { const n = new URLSearchParams(q); if (state) n.set("g", enc(state)); else n.delete("g"); n.delete("url"); n.delete("doc"); n.delete("p"); return n; }, { replace: true }); }, [state, active, setParams]);
+  React.useEffect(() => { if (!active) return; setParams((q) => { const n = new URLSearchParams(q); if (state) n.set("g", enc(state)); else n.delete("g"); n.delete("url"); n.delete("doc"); n.delete("p"); n.delete("plan"); return n; }, { replace: true }); }, [state, active, setParams]);
   React.useEffect(() => {
     if (!active) return;
+    const planParam = params.get("plan");  // an authored plan handed over (from Onboard): decompile it into the graph
+    if (planParam) { const sp = decSpec(planParam); if (sp) { reset({ tier: "auto", graph: decompile(sp.plan, sp.url ?? "", returns) }); return; } }
     const url = params.get("url"); const doc = params.get("doc"); const tier = (params.get("tier") as Tier) ?? "auto";
     if (url) start(url, tier);
     else if (doc && sessionId) api.docs(sessionId).then((ds) => { const h = ds.find((d) => d.id === doc); if (h) start(h.url ?? "", h.tier === "browser" ? "always" : "false", { docId: h.id, live: !!h.live, url: h.url ?? "" }); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, params.get("url"), params.get("doc"), sessionId]);
+  }, [active, params.get("url"), params.get("doc"), params.get("plan"), sessionId]);
   const graph = state?.graph ?? null;
   const tier = state?.tier ?? "auto";
   const node = graph ? graph.nodes[selected] ?? graph.nodes[graph.root] : undefined;

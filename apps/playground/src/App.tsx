@@ -10,10 +10,11 @@ import { Tools } from "./scenes/Tools";
 import { Run } from "./scenes/Run";
 import { Settings } from "./scenes/Settings";
 import { Loops } from "./scenes/Loops";
+import { Onboard } from "./scenes/Onboard";
 import { DocumentStrip } from "./components/DocumentStrip";
 
 const WORKSPACES = [
-  ["/", "Home"], ["/author", "Author"], ["/run", "Run"], ["/loops", "Crawl · Loops"], ["/tools", "Tools"], ["/settings", "Settings"],
+  ["/", "Home"], ["/onboard", "Onboard"], ["/author", "Author"], ["/run", "Run"], ["/loops", "Crawl · Loops"], ["/tools", "Tools"], ["/settings", "Settings"],
 ] as const;
 
 /** The live stream shared by every workspace (the run bar) -- one socket, resumed by cursor. */
@@ -66,6 +67,7 @@ export function App() {
             back and forward, never loses what you were doing; the URL carries the essentials */}
         <Keep path="/" exact><Home /></Keep>
         <Keep path="/author"><Author /></Keep>
+        <Keep path="/onboard"><Onboard /></Keep>
         {/* the three former workspaces live on as redirects into Author */}
         <Routes>
           <Route path="/explore" element={<Redirect />} /><Route path="/query" element={<Redirect />} /><Route path="/interact" element={<Redirect />} />

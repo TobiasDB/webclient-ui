@@ -117,6 +117,27 @@ export const api = {
   crawlClose: (id: string) => call<{ id: string }>(`/crawls/${id}`, { method: "DELETE" }),
   loops: () => call<WaitingLoop[]>("/loops"),
   resume: (id: string, answer: unknown) => call<Record<string, unknown>>(`/loops/${encodeURIComponent(id)}/resume`, { method: "POST", body: JSON.stringify({ answer }) }),
+  /** worked onboarding EXAMPLES, one per dataset shape (built by the pipeline against the lab; no model) */
+  examples: () => call<OnboardingExample[]>("/examples"),
+  /** run the pipeline live for a company + brief (needs a model configured on the API, else 400) */
+  onboard: (body: Record<string, unknown>) => call<OnboardingResult>("/onboard", { method: "POST", body: JSON.stringify(body) }),
+};
+
+/** one authored query as the UI shows it: the plan (openable in Author), the blob (runnable in Run), and its assessments */
+export type QueryView = {
+  mode: string; describe: string; blob: string; plan: Record<string, unknown>; row_count: number; sample: unknown[];
+  timeliness: string; completeness: string; correctness: string; covers_all: boolean; correct: boolean;
+};
+/** a worked onboarding: the source + brief and the A/latest + B/all query views */
+export type OnboardingExample = {
+  name: string; title: string; description: string; source: string; ok: boolean; reason: string; binary: boolean;
+  brief: { description: string; fields: string[] }; resolve: Record<string, unknown>;
+  latest: QueryView | null; all: QueryView | null;
+};
+/** the full live-onboarding result (the pipeline's OnboardingResult, serialised) */
+export type OnboardingResult = {
+  company: string; ok: boolean; reason: string; evaluation?: { url: string } | null;
+  query_latest?: QueryView | null; query_all?: QueryView | null; steps: string[];
 };
 
 export function subscribe(onEvent: (e: Event) => void, opts: { since?: number; topic?: string; onOpen?: () => void; onClose?: () => void } = {}) {
