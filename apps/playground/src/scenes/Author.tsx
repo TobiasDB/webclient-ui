@@ -752,7 +752,14 @@ export function Author() {
   const [rowsOpen, setRowsOpenRaw] = React.useState(() => remembered("wc.author.rows", true));
   const setRowsOpen = (v: boolean) => { setRowsOpenRaw(v); try { localStorage.setItem("wc.author.rows", v ? "1" : "0"); } catch { /* fine */ } };
   const rowsH = 210;
-  const pageH = Math.max(320, vh - 44 - 30 - 46 - (rowsOpen ? rowsH : 22) - 10 - (pageNode ? 22 : 0));  // the steps bar is always there: the page never jumps
+  // the page takes what the column leaves (the rows bar below it always stays on screen): measured, not summed
+  const pageBox = React.useRef<HTMLDivElement>(null);
+  const [pageH, setPageH] = React.useState(() => Math.max(320, vh - 360));
+  React.useLayoutEffect(() => {
+    const el = pageBox.current; if (!el) return;
+    const ro = new ResizeObserver(() => setPageH(Math.max(120, Math.round(el.getBoundingClientRect().height))));
+    ro.observe(el); return () => ro.disconnect();
+  });
   /** each output's colour -- the same on the plan line, the page outline and its rows column */
   const colourOf = React.useMemo(() => { const m: Record<string, string> = {}; outs.forEach((o, i) => { if (o.output) m[o.output] = fieldColour(i); }); return m; }, [outs]);
   const columnColours = (rows: Record<string, unknown>[]) => { const m: Record<string, string> = {}; for (const r of rows.slice(0, 5)) for (const k of Object.keys(r)) { const parts = k.split("."); for (let i = parts.length - 1; i >= 0; i--) { const c = colourOf[parts[i]!]; if (c) { m[k] = c; break; } } } return m; };
@@ -874,7 +881,7 @@ export function Author() {
             <button type="button" className="px-0.5 text-muted hover:text-ink disabled:opacity-30" disabled={stepIx < 0 || stepIx >= pageSteps.length - 1} onClick={() => stepIx < pageSteps.length - 1 && select(pageSteps[stepIx + 1]!.id)} title="the step after">▶</button>
             <span className="ml-1 text-muted">{atHead ? "live: click to interact · shift-click to record a step" : "a snapshot: shift-click to fork from here (the later steps are kept as a branch)"}</span>
           </div>}
-          <div className="relative shrink-0 overflow-hidden" style={{ height: pageH }}>
+          <div ref={pageBox} className="relative min-h-0 flex-1 overflow-hidden">
           {!pageNode ? (
             <section className="rounded-md border border-line p-3 text-[12px]">
               <Input mono value={graph.url} onChange={(e) => setGraph((g) => ({ ...g, url: e.target.value }))} className="mb-2 w-full" />
