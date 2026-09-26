@@ -134,3 +134,28 @@ export function pageChain(m: PlanModel, s: RunState, addr: string, item: ItemKey
   }
   return out;
 }
+
+export type RowPage = { doc: string; cols: { name: string; hops: Hop[]; many?: boolean }[]; /** the link on this page that opened the next */ link?: Hop[] };
+
+/** WHERE A ROW CAME FROM: each output column of the item's row, found on its page (the listing's title, the
+ * detail page's description, a page further on's category...) -- the pages in the order the item reached them,
+ * each with its columns and the link it followed to the next. */
+export function rowSources(m: PlanModel, s: RunState, item: ItemKey): RowPage[] {
+  const pages = new Map<string, RowPage>();
+  const links = new Map<string, Hop[]>();
+  const shownAddr = (a: string): string => { let x = a; for (let k = 0; k < 50; k++) { const n = m.byAddr.get(x); if (!n) break; if (n.same) { x = n.same; continue; } if (n.op === "extract" || n.op === "project" || n.op === "merge") { x = n.input; continue; } break; } return x; };
+  for (const c of m.columns) {
+    const leaf = m.byAddr.get(c.from); if (!leaf || leaf.depth !== 1) continue; // the row's own columns (not a nested list's)
+    const addr = shownAddr(c.from);
+    const w = locate(m, s, addr, item); if (!w) continue;
+    const p = pages.get(w.doc) ?? { doc: w.doc, cols: [] }; p.cols.push({ name: c.name, hops: w.hops, ...(w.many ? { many: true } : {}) }); pages.set(w.doc, p);
+    const chain = pageChain(m, s, addr, item);
+    for (let i = 0; i < chain.length - 1; i++) {
+      const from = chain[i]!;
+      if (!links.has(from.doc)) links.set(from.doc, from.hops);
+      if (!pages.has(from.doc)) pages.set(from.doc, { doc: from.doc, cols: [] });
+    }
+  }
+  for (const [doc, hops] of links) { const p = pages.get(doc); if (p) p.link = hops; }
+  return [...pages.values()].sort((a, b) => (s.docs.get(a.doc)?.first ?? 0) - (s.docs.get(b.doc)?.first ?? 0));
+}

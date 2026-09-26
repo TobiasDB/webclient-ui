@@ -11,7 +11,7 @@ import { useRunSource } from "./run/useRunSource";
 
 export { encSpec } from "./run/sources";
 
-type Sel = { addr: string | null; item: runLib.ItemKey | null };
+type Sel = { addr: string | null; item: runLib.ItemKey | null; /** show where the item's row came from */ row?: boolean };
 
 export function Run() {
   const active = useActive("/run");
@@ -124,7 +124,7 @@ export function Run() {
           <input type="range" min={0} max={Math.max(1, events.length)} value={Math.min(t, events.length)} onChange={(e) => seek(Number(e.target.value))} className="w-56" aria-label="the moment" />
           <button type="button" className={cn("rounded px-1 text-[10px]", live ? "bg-accent-soft text-accent" : "text-muted hover:text-ink")} onClick={() => { setLive(true); setPlaying(false); }} title="follow the run live / go to the end">{live ? (running ? "● live" : "end") : `${t}/${events.length}`}</button>
         </div>
-        <button type="button" data-act="follow" onClick={() => setSel({ addr: null, item: null })} className={cn("rounded px-1.5 text-[10px]", sel.item != null || sel.addr ? "text-muted hover:text-ink" : "bg-accent-soft text-accent")} title={followMode === "moment" ? "follow: the screen shows the step that just fired, whichever item" : "follow: the screen stays with the oldest item still running"}>{sel.item != null || sel.addr ? `watching ${sel.item ? `item ${sel.item}` : "a step"} · follow` : `● follow${item ? ` · item ${item}` : ""}`}</button>
+        <button type="button" data-act="follow" onClick={() => setSel({ addr: null, item: null })} className={cn("rounded px-1.5 text-[10px]", sel.item != null || sel.addr ? "text-muted hover:text-ink" : "bg-accent-soft text-accent")} title={followMode === "moment" ? "follow: the screen shows the step that just fired, whichever item" : "follow: the screen stays with the oldest item still running"}>{sel.item != null || sel.addr ? `watching ${sel.row ? `item ${sel.item}'s row` : sel.item ? `item ${sel.item}` : "a step"} · follow` : `● follow${item ? ` · item ${item}` : ""}`}</button>
         <select className="h-5 rounded border border-line bg-surface text-[10px]" value={followMode} onChange={(e) => setFollow(e.target.value as "moment" | "item")} title="what follow shows: each step as it fires (any item), or one item at a time">
           <option value="moment">the moment</option><option value="item">one item at a time</option>
         </select>
@@ -145,23 +145,23 @@ export function Run() {
             </div>
             <div className="min-h-0 flex-1">
               {model ? <RunGraph model={model} state={state} item={item} addr={sel.addr} rootUrl={rootUrl} focus={model ? runLib.shownAs(model, sel.addr ?? focusAddr ?? "") : null}
-                onSelect={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a }))} onPick={(k) => setSel((s) => ({ ...s, item: k }))}
+                onSelect={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a, row: false }))} onPick={(k) => setSel((s) => ({ ...s, item: k, row: false }))}
                 onPickRun={(a, k, i) => { setSel({ addr: a, item: k }); seek(i + 1); }} />
                 : <div className="p-3 text-muted">{src.traceId ? "this recording carries no plan: its pages and requests are on the timeline and the page" : "…"}</div>}
             </div>
           </section>
           <section className="flex min-h-0 flex-col overflow-hidden rounded border border-line">
-            <PageStage traceId={src.traceId} events={events} model={model} state={state} full={full} addr={stepOnScreen} item={item} maxHeight={640} onChain={(n) => setChainN((c) => Math.max(c, n))} />  {/* a run that has shown a chain keeps the room for it: no widening / narrowing as follow moves */}
+            <PageStage traceId={src.traceId} events={events} model={model} state={state} full={full} addr={stepOnScreen} item={item} row={!!sel.row} maxHeight={640} onChain={(n) => setChainN((c) => Math.max(c, n))} />  {/* a run that has shown a chain keeps the room for it: no widening / narrowing as follow moves */}
           </section>
         </div>
         {/* everything on one time axis */}
         <Fold title="timeline" hint={timeOpen ? "click or drag to go to a moment" : `${full.requests.length} requests · ${full.docs.size} pages · ${full.actions.length} actions`} open={timeOpen} onToggle={() => setTimeOpen(!timeOpen)} className={timeOpen ? "max-h-[180px]" : ""}>
-          {events.length ? <RunTimeline className="min-h-0 flex-1 p-1" events={events} model={model} full={full} at={t} onSeek={seek} samples={src.samples} addr={sel.addr} onLane={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a }))} /> : <div className="p-2 text-muted">nothing has run yet</div>}
+          {events.length ? <RunTimeline className="min-h-0 flex-1 p-1" events={events} model={model} full={full} at={t} onSeek={seek} samples={src.samples} addr={sel.addr} onLane={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a, row: false }))} /> : <div className="p-2 text-muted">nothing has run yet</div>}
         </Fold>
         <div className={cn("grid min-h-0 grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] items-start gap-1", (rowsOpen || evOpen) && "h-[30%] items-stretch")}>
           <Fold title="rows" hint={`${state.rows.length} projected${!live ? " so far" : ""} · click one to see where it came from`} open={rowsOpen} onToggle={() => setRowsOpen(!rowsOpen)}>
             <div className="min-h-0 flex-1 overflow-auto">{state.rows.length
-              ? <DataFrame dense rows={state.rows.map((r) => ({ item: r.item, ...(r.row && typeof r.row === "object" && !Array.isArray(r.row) ? (r.row as Record<string, unknown>) : { value: r.row }) }))} selected={state.rows.findIndex((r) => r.item === item)} onRow={(i) => setSel({ addr: null, item: state.rows[i]?.item ?? null })} />
+              ? <DataFrame dense rows={state.rows.map((r) => ({ item: r.item, ...(r.row && typeof r.row === "object" && !Array.isArray(r.row) ? (r.row as Record<string, unknown>) : { value: r.row }) }))} selected={state.rows.findIndex((r) => r.item === item)} onRow={(i) => setSel({ addr: null, item: state.rows[i]?.item ?? null, row: true })} />
               : <div className="p-2 text-muted">{running ? "waiting for the first row…" : "no rows at this moment"}</div>}</div>
           </Fold>
           <Fold title="events" hint={`${item ? `item ${item}'s` : "the run's"}, in words · up to #${t}`} open={evOpen} onToggle={() => setEvOpen(!evOpen)}>

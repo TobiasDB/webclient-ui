@@ -12,7 +12,7 @@ import { PageFrame, Player, cn, graphLib, runLib, stagesLib, withAgent, type Run
 import { api } from "../../lib/api";
 
 type Rect = { left: number; top: number; width: number; height: number };
-type Flying = { doc: string; hops: runLib.Hop[]; label: string; colour: string };
+type Flying = { doc: string; hops: runLib.Hop[]; label: string; colour: string; /** every match (a list column) */ many?: boolean };
 type Props = {
   traceId: string | null;
   events: RunEvent[];
@@ -25,9 +25,11 @@ type Props = {
   maxHeight: number;
   /** how many pages the item's chain shows (the Run layout gives a chain more room) */
   onChain?: (n: number) => void;
+  /** show where the item's ROW came from: every page a column was read on, each value outlined */
+  row?: boolean;
 };
 
-export function PageStage({ traceId, events, model, state, full, addr, item, maxHeight, onChain }: Props) {
+export function PageStage({ traceId, events, model, state, full, addr, item, maxHeight, onChain, row }: Props) {
   // the step on screen: the one selected, else this item's latest
   const latest = React.useMemo(() => runLib.latestFor(state, item), [state, item]);
   const target = addr ?? latest?.addr ?? null;
@@ -50,6 +52,7 @@ export function PageStage({ traceId, events, model, state, full, addr, item, max
   }, [model, state, target, item]);
   const card = told && ev ? <EventCard key={ev.i} told={told} colour={colour} item={runLib.keyOf(ev.e.item)} n={(ev.e as { n?: number }).n} /> : null;
 
+  if (row && model) return <RowView traceId={traceId} events={events} model={model} state={state} full={full} item={item} maxHeight={maxHeight} onChain={onChain} />;
   // no plan / nothing located: the page last touched, alone
   if (shown.length <= 1) {
     const where = shown[0] ?? (lastDoc(state) ? { doc: lastDoc(state)!, hops: [], op: "", addr: "", via: "" } : null);
@@ -110,6 +113,65 @@ function Chain({ traceId, events, model, state, full, item, shown, folded, colou
   );
 }
 
+const COLS = ["#16a34a", "#0891b2", "#9333ea", "#ea580c", "#db2777", "#0d9488", "#ca8a04"];
+
+/** WHERE A ROW CAME FROM: the pages its columns were read on, side by side in the order the item reached them --
+ * each value outlined with its column's name, the link each page followed spotlit, an arrow from it to the page it
+ * opened; pages beyond three fold into chips */
+function RowView({ traceId, events, model, state, full, item, maxHeight, onChain }: { traceId: string | null; events: RunEvent[]; model: runLib.PlanModel; state: runLib.RunState; full: runLib.RunState; item: string; maxHeight: number; onChain?: (n: number) => void }) {
+  const pages = React.useMemo(() => runLib.rowSources(model, state, item), [model, state, item]);
+  const colour = React.useMemo(() => { const m = new Map<string, string>(); model.columns.forEach((c, i) => m.set(c.name, COLS[i % COLS.length]!)); return m; }, [model]);
+  const shown = pages.slice(-3); const folded = pages.slice(0, -3);
+  React.useEffect(() => { onChain?.(Math.max(1, shown.length)); }, [shown.length, onChain]);
+  const box = React.useRef<HTMLDivElement>(null); const panes = React.useRef<(HTMLDivElement | null)[]>([]);
+  const [spots, setSpots] = React.useState<(Rect | null)[]>([]);
+  const [, bump] = React.useState(0);
+  React.useEffect(() => { const el = box.current; if (!el) return; const ro = new ResizeObserver(() => bump((x) => x + 1)); ro.observe(el); return () => ro.disconnect(); }, []);
+  if (!pages.length) return <div className="p-3 text-muted">item {item || "—"}: none of its row's values have been read yet</div>;
+  const c = box.current?.getBoundingClientRect();
+  const arrows = c ? shown.slice(0, -1).map((p, k) => {
+    const to = panes.current[k + 1]?.getBoundingClientRect(); const from = spots[k]; if (!to) return null;
+    const x2 = to.left - c.left + 2, y2 = to.top - c.top + 34;
+    const ok = from && from.width > 0 && from.left < to.left;
+    const x1 = ok ? Math.min(from!.left + from!.width, to.left - 12) - c.left : x2 - 50, y1 = ok ? from!.top + from!.height / 2 - c.top : y2;
+    const dx = Math.max(24, (x2 - x1) * 0.5);
+    return <g key={p.doc}>{ok && <circle cx={x1} cy={y1} r={4} fill="#2563eb" />}<path d={`M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`} fill="none" stroke="#2563eb" strokeWidth={2.2} strokeDasharray={ok ? undefined : "4 3"} markerEnd="url(#wc-row-arrow)" className="wc-chain-arrow" /></g>;
+  }) : [];
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex min-w-0 flex-wrap items-center gap-1 border-b border-line px-1.5 py-0.5 text-[10px]">
+        <span className="shrink-0 font-semibold uppercase tracking-wide text-muted">row of item {item}</span>
+        {pages.map((p, i) => p.cols.map((col) => <span key={`${p.doc}${col.name}`} className="rounded-full px-1.5 font-mono text-white" style={{ background: colour.get(col.name) }} title={`read on page ${i + 1}`}>{col.name} ← page {i + 1}</span>))}
+      </div>
+      <div ref={box} className="relative flex min-h-0 flex-1 gap-2 p-1">
+        {folded.length > 0 && (
+          <div className="flex w-[92px] shrink-0 flex-col gap-1 overflow-auto border-r border-line pr-1">
+            {folded.map((f, i) => { const d = state.docs.get(f.doc); return (
+              <div key={f.doc} className="rounded border border-line bg-surface-2 px-1 py-0.5 text-[9px] leading-tight">
+                <div className="font-semibold text-muted">page {i + 1}</div>
+                <div className="truncate font-mono" title={d?.url}>{shortPath(d?.url)}</div>
+                {f.cols.map((col) => <div key={col.name} className="truncate" style={{ color: colour.get(col.name) }}>→ {col.name}</div>)}
+              </div>); })}
+          </div>
+        )}
+        {shown.map((p, k) => {
+          const marks: Flying[] = p.cols.map((col) => ({ doc: p.doc, hops: col.hops, label: `→ ${col.name}`, colour: colour.get(col.name)!, many: col.many }));
+          return (
+            <div key={p.doc} ref={(el) => { panes.current[k] = el; }} className="flex min-w-0 flex-1 flex-col overflow-hidden rounded border border-line">
+              <PagePane traceId={traceId} events={events} state={full} full={full} where={{ doc: p.doc, hops: p.link ?? [] }} item={item} colour="#2563eb" label="the link it followed"
+                compact title={`page ${folded.length + k + 1}`} flying={marks} onSpot={(r) => setSpots((xs) => { const n = xs.slice(); n[k] = r; return n; })} maxHeight={maxHeight} />
+            </div>
+          );
+        })}
+        <svg className="pointer-events-none absolute inset-0 z-30 overflow-visible" width="100%" height="100%">
+          <defs><marker id="wc-row-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb" /></marker></defs>
+          {arrows}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 /** ONE page at the moment: its snapshot or recording, the element spotlit, (optionally) the event card and its requests */
 function PagePane({ traceId, events, state, full, where, item, colour, label, card, requests, compact, title, onSpot, flying = [], maxHeight }: { flying?: Flying[]; traceId: string | null; events: RunEvent[]; state: runLib.RunState; full: runLib.RunState; where: { doc: string; hops: runLib.Hop[]; many?: boolean; take?: number } | null; item: string; colour: string; label: string; card?: React.ReactNode; requests?: boolean; compact?: boolean; title?: string; onSpot?: (r: Rect | null) => void; maxHeight: number }) {
   const docId = where?.doc;
@@ -124,7 +186,7 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
   const many = !!where?.many;
   // the in-flight steps on THIS page: outlined (not spotlit), labelled, until they finish
   const mine = React.useMemo(() => flying.filter((f) => f.doc === docId), [flying, docId]);
-  const flyingHl = React.useMemo(() => (parsed ? mine.flatMap((f) => { const r = runLib.resolveHops(parsed, f.hops); return r.el ? [{ paths: [graphLib.pathOf(r.el)], colour: f.colour, label: f.label }] : []; }) : []), [parsed, mine]);
+  const flyingHl = React.useMemo(() => (parsed ? mine.flatMap((f) => { const r = runLib.resolveHops(parsed, f.hops); const els = f.many ? r.all : r.el ? [r.el] : []; return els.length ? [{ paths: els.slice(0, 200).map(graphLib.pathOf), colour: f.colour, label: f.label }] : []; }) : []), [parsed, mine]);
   const base = React.useMemo(() => {
     if (!found?.el) return [];
     // a select_all itself: every match is what it found -- all outlined alike, the count on the first
@@ -138,7 +200,7 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
   const [tick, setTick] = React.useState(0);
   React.useEffect(() => { const a = setTimeout(() => setTick((x) => x + 1), 150); const b = setTimeout(() => setTick((x) => x + 1), 700); return () => { clearTimeout(a); clearTimeout(b); }; }, [state.n, pDoc]);
   const pFound = React.useMemo(() => (recorded && pDoc && hops ? runLib.resolveHops(pDoc, hops) : null), [recorded, pDoc, hops, tick]); // eslint-disable-line react-hooks/exhaustive-deps
-  const pFlying = React.useMemo(() => (recorded && pDoc ? mine.flatMap((f, k) => { const r = runLib.resolveHops(pDoc, f.hops); return r.el && r.el.isConnected ? [{ selector: "", els: [r.el], colour: f.colour, label: f.label, key: `fly${k}` }] : []; }) : []), [recorded, pDoc, mine, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pFlying = React.useMemo(() => (recorded && pDoc ? mine.flatMap((f, k) => { const r = runLib.resolveHops(pDoc, f.hops); const els = (f.many ? r.all : r.el ? [r.el] : []).filter((x) => x.isConnected); return els.length ? [{ selector: "", els, colour: f.colour, label: f.label, key: `fly${k}` }] : []; }) : []), [recorded, pDoc, mine, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const pBase = React.useMemo(() => {
     if (!pFound?.el || !pFound.el.isConnected) return [];
     if (many) { const take = where?.take ?? 200; const rest = pFound.all.slice(take, 200); return [{ selector: "", els: pFound.all.slice(0, take), colour, label, key: "all" }, ...(rest.length ? [{ selector: "", els: rest, colour: "#94a3b8", dashed: true, key: "rest" }] : [])]; }

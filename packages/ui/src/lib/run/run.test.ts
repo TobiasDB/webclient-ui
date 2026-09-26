@@ -217,3 +217,17 @@ describe("a limit", () => {
     expect(w).toMatchObject({ doc: "doc:1", hops: [{ sel: "li.r", all: true }], many: true, take: 2, op: "limit" });
   });
 });
+
+import { rowSources } from "./locate";
+describe("where a row came from", () => {
+  it("each column on its page, in the order the item reached them, with the links between", () => {
+    const pm = planModel(paged.plan as unknown as Plan); const ps = stateAt(paged.events as unknown as RunEvent[], pm);
+    const src = rowSources(pm, ps, "4");
+    const page2 = [...ps.docs.values()].find((d) => d.url?.endsWith("/p2"))!.id;
+    const detail4 = ps.nodes.get("6/kw:info/4")!.insts.get("4")!.result!.document_id;
+    expect(src.map((p) => p.doc)).toEqual([page2, detail4]);
+    expect(src[0]!.cols).toEqual([{ name: "n", hops: [{ sel: "li.r", index: 1 }, { sel: "b" }] }]);
+    expect(src[0]!.link).toEqual([{ sel: "li.r", index: 1 }, { sel: "a" }]);
+    expect(src[1]!.cols).toEqual([{ name: "info", hops: [{ sel: "tr", all: true }], many: true }]);
+  });
+});
