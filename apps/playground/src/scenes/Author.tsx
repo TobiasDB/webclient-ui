@@ -730,7 +730,8 @@ export function Author() {
     for (const sec of order) { const hit = data[sec]?.find((o) => o.name === n.op!.name); if (hit) return hit.params; }
     return [];
   };
-  const editParams = (id: string) => { select(id); setParamsOpen(true); };
+  // clicking a part of the plan opens the panel that configures it (one at a time)
+  const editParams = (id: string) => { select(id); setPagerOpen(false); setParamsOpen(true); };
   const [manual, setManual] = React.useState<{ a: string; b: string }>({ a: "", b: "" });
   React.useEffect(() => { setManual({ a: String(node?.op?.args[0]?.value ?? ""), b: String(node?.op?.args[1]?.value ?? "") }); }, [node?.id, editing]); // eslint-disable-line react-hooks/exhaustive-deps
   const applyManual = () => { if (!node?.op) return; const args = node.op.name === "attr" ? (manual.b ? [{ value: manual.a }, { value: manual.b }] : [{ value: manual.a }]) : node.op.args.map((x, i) => (i === 0 ? { value: manual.a } : x)); setGraph((g) => updateNode(g, node.id, { op: { ...node.op!, args } })); setEditing(false); setPickEl(null); setBuilding(null); };
@@ -781,7 +782,7 @@ export function Author() {
         {!planOpen ? <button type="button" onClick={() => setPlanOpen(true)} className="flex min-h-0 items-start justify-center rounded border border-line pt-2 text-[10px] text-muted hover:bg-surface-2" title="show the plan"><span style={{ writingMode: "vertical-rl" }}>plan ›</span></button> :
         <section className="flex min-h-0 flex-col rounded border border-line">
           <div className="flex items-center border-b border-line px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">Plan{problemList.length > 0 ? <button type="button" className="ml-1 rounded bg-bad-soft px-1 font-normal normal-case text-bad" title={problemList.map(([id, p]) => `${graph.nodes[id]?.op ? graphLib.describeOp(graph.nodes[id]!) : id}: ${p.message}`).join("\n")} onClick={() => select(problemList[0]![0])}>{problemList.length} to fix</button> : <span className="ml-1 font-normal normal-case text-ok" title="every line matches on the pages checked">✓ checked</span>}<span className="flex-1" /><button type="button" className="font-normal hover:text-ink" onClick={() => setPlanOpen(false)} title="hide the plan">‹</button></div>
-          <GraphView graph={graph} selected={node?.id ?? graph.root} onSelect={(id) => select(id)} onChange={(g) => setGraph(() => g)} samples={samples} live={liveSet} editing={selfMode} onEditArg={editArg} onEditParams={editParams} problems={problems} className="min-h-0 flex-1 overflow-auto px-0.5 py-0.5" />
+          <GraphView graph={graph} selected={node?.id ?? graph.root} onSelect={(id) => select(id)} onEditMod={(id, name) => { select(id); if (name === "paginate") { setParamsOpen(false); setPagerOpen(true); } }} onChange={(g) => setGraph(() => g)} samples={samples} live={liveSet} editing={selfMode} onEditArg={editArg} onEditParams={editParams} problems={problems} className="min-h-0 flex-1 overflow-auto px-0.5 py-0.5" />
           {missing.length > 0 && <div className="border-t border-line px-1.5 py-0.5 text-[10px] text-bad">{missing.length} op(s) still need an argument</div>}
         </section>}
 
@@ -812,7 +813,7 @@ export function Author() {
                   </div>}
                 </div>}
                 {node?.op && paramsOf(node).some((p) => p.name !== "error") && <div className="relative">
-                  <button ref={paramsBtn} type="button" onClick={() => setParamsOpen(!paramsOpen)} className={cn("rounded border border-line px-1.5 py-px text-[10.5px] hover:bg-surface-2", paramsOpen && "bg-accent-soft text-accent")} title="edit this op's parameters">⚙ params</button>
+                  <button ref={paramsBtn} type="button" onClick={() => { setPagerOpen(false); setParamsOpen(!paramsOpen); }} className={cn("rounded border border-line px-1.5 py-px text-[10.5px] hover:bg-surface-2", paramsOpen && "bg-accent-soft text-accent")} title="edit this op's parameters">⚙ params</button>
                   {paramsOpen && <div className="fixed z-50 w-80 rounded-md border border-line bg-surface p-1.5 shadow-lg" style={{ left: Math.max(8, Math.min(paramsAt?.x ?? 300, (typeof window !== "undefined" ? window.innerWidth : 1200) - 336)), top: paramsAt?.y ?? 120 }}>
                     <div className="mb-1 flex items-center text-[10px] font-semibold uppercase tracking-wide text-muted">.{node.op.name}() parameters<span className="flex-1" /><button type="button" className="font-normal hover:text-ink" onClick={() => setParamsOpen(false)}>✕</button></div>
                     <ParamsEditor op={node.op} params={paramsOf(node)} skip={SELECTOR_OPS.includes(node.op.name) || node.op.name === "attr" ? [paramsOf(node).find((p) => p.kind === "positional")?.name ?? ""] : []} onChange={(op) => setGraph((g) => updateNode(g, node.id, { op: { ...node.op!, args: op.args as typeof node.op.args, kwargs: op.kwargs as typeof node.op.kwargs } }))} />
@@ -831,14 +832,17 @@ export function Author() {
                 {isOutput && node && (node.type === "Document" || node.type === "Collection") && !node.alias && <label className="flex items-center gap-1 text-[11px]" title="merge this nested output's keys into the parent row (project(flatten=[…])): detail.description, detail.info…"><input type="checkbox" checked={!!node.flatten} onChange={(e) => setGraph((g) => updateNode(g, node.id, { flatten: e.target.checked || undefined }))} />flatten</label>}
                 {node?.type === "Document" && node.op?.name === "resolve" && (() => {
                   const mod = node.mods?.find((x) => x.name === "paginate"); const cur = mod ? pagerLib.fromKwargs(mod.kwargs) : null;
+                  // the last try's walk: why it stopped (a pager that never left page one is the wrong pager)
+                  const ran = mod ? pagerLib.lastStop(tryRun.events as { topic?: string; phase?: string; detail?: unknown }[]) : null; const note = ran ? pagerLib.stopNote(ran) : null;
                   return <div className="relative">
-                    <button ref={pagerBtn} type="button" onClick={() => setPagerOpen(!pagerOpen)} data-testid="pager-open"
+                    <button ref={pagerBtn} type="button" onClick={() => { setParamsOpen(false); setPagerOpen(!pagerOpen); }} data-testid="pager-open"
                       className={cn("rounded border border-line px-1.5 py-px font-mono text-[10.5px] text-topic-network hover:bg-surface-2", pagerOpen && "bg-accent-soft")} title="how this page's dataset is paged">
-                      pages: {cur ? pagerLib.label(cur) : "one page"} ▾
+                      pages: {cur ? pagerLib.label(cur) : "one page"}{note?.bad ? " ⚠" : ""} ▾
                     </button>
                     {pagerOpen && <div className="fixed z-50 w-[440px] rounded-md border border-line bg-surface p-1.5 shadow-lg" data-testid="pager-panel"
                       style={{ left: Math.max(8, Math.min(pagerAt?.x ?? 300, (typeof window !== "undefined" ? window.innerWidth : 1200) - 456)), top: pagerAt?.y ?? 120 }}>
                       <div className="mb-1 flex items-center text-[10px] font-semibold uppercase tracking-wide text-muted">.paginate() — the pages of this dataset<span className="flex-1" /><button type="button" className="font-normal hover:text-ink" onClick={() => setPagerOpen(false)}>✕</button></div>
+                      {note && <div className={cn("mb-1 rounded px-1 text-[10px]", note.bad ? "bg-bad-soft text-bad" : "text-muted")} data-testid="pager-note">last try: {note.text}</div>}
                       <Pager n={node} hints={pageNode?.id === node.id ? pagerLib.hintOf(views.data?.flags) : null}
                         onChange={(m) => { setGraph((g) => setMod(g, node.id, m, "paginate")); const k = m?.kwargs; if ((k?.click || k?.scroll) && stateNode) void liveAt(stateNode); }} />
                     </div>}

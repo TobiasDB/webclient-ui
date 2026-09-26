@@ -16,4 +16,13 @@ test(".paginate(…) on the page opens the pager editor with the detected option
   await expect(page.getByTestId("pager-open")).toContainText("infinite scroll");
   await page.keyboard.press("Escape");
   await expect(panel).toBeHidden();
+
+  // clicking a part of the plan opens what configures it: the pager -> the pager panel, the op -> its params
+  await page.getByTestId("graph-pager").click();
+  await expect(panel).toBeVisible();
+  await expect(page.getByTestId("pager-open")).toContainText("infinite scroll");
+  await page.getByText(".resolve(", { exact: false }).first().click();
+  await expect(panel).toBeHidden();
+  await expect(page.getByText(".resolve() parameters")).toBeVisible();
 });
+

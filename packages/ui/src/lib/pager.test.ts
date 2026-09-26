@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { code, fromHint, fromKwargs, fromLegacy, hintOf, toKwargs, type Pager } from "./pager";
+import { code, fromHint, lastStop, stopNote, fromKwargs, fromLegacy, hintOf, toKwargs, type Pager } from "./pager";
 
 const round = (p: Pager) => fromKwargs(toKwargs(p));
 
@@ -38,5 +38,12 @@ describe("pager", () => {
     expect(fromHint(h.modes[0]!)).toMatchObject({ mode: "pages", param: "page", start: 3, stop: 9 });
     expect(fromHint(h.modes[1]!)).toMatchObject({ mode: "next", next: "" });
     expect(hintOf([{ name: "pagination", present: false, value: null }])).toBeNull();
+  });
+
+  it("says why a walk stopped, and flags a pager that never left page one", () => {
+    const ev = [{ topic: "plan", phase: "result", detail: { op: "paginate", n: 1, fetched: 1, stop: "repeat" } }];
+    const s = lastStop(ev)!;
+    expect(stopNote(s).bad).toBe(true);
+    expect(stopNote({ n: 3, fetched: 4, stop: "end" })).toEqual({ text: "3 pages of 4 fetched · stopped at the last page", bad: false });
   });
 });

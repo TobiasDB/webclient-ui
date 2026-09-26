@@ -205,3 +205,26 @@ export function hintOf(flags: { name: string; present?: boolean; value?: unknown
   const v = f?.present ? (f.value as PaginationHint | undefined) : undefined;
   return v && Array.isArray(v.modes) ? v : null;
 }
+
+// -- how a walk went -----------------------------------------------------------------------------
+
+/** what a pager's run said about itself: its `paginate` step's result (pages kept, fetched, why it stopped) */
+export type PagerStop = { n: number; fetched: number; stop: string };
+const CAUSE: Record<string, string> = { end: "the last page", empty: "an empty page", repeat: "a page repeated", until: "until held", exhausted: "nothing more loaded", budget: "the page budget" };
+
+/** the last `paginate` result among a run's events, if it ran */
+export function lastStop(events: { topic?: string; phase?: string; detail?: unknown }[] | undefined): PagerStop | null {
+  for (let i = (events?.length ?? 0) - 1; i >= 0; i--) {
+    const e = events![i]!; const d = (e.detail ?? {}) as Record<string, unknown>;
+    if (e.topic === "plan" && e.phase === "result" && d.op === "paginate" && typeof d.stop === "string") return { n: Number(d.n ?? 0), fetched: Number(d.fetched ?? d.n ?? 0), stop: d.stop };
+  }
+  return null;
+}
+
+/** a pager's stop in words; `bad` when it looks like the wrong pager (it never got past page one) */
+export function stopNote(s: PagerStop): { text: string; bad: boolean } {
+  if (s.fetched <= 1 && s.stop === "repeat") return { text: "page 2 was page one again: this pager does not page this site -- try a detected option", bad: true };
+  if (s.fetched <= 1 && s.stop === "empty") return { text: "page 2 came back empty: this pager does not page this site -- try a detected option", bad: true };
+  if (s.fetched <= 1 && s.stop === "end") return { text: "no next page on page one", bad: true };
+  return { text: `${s.n} page${s.n === 1 ? "" : "s"}${s.fetched !== s.n ? ` of ${s.fetched} fetched` : ""} · stopped at ${CAUSE[s.stop] ?? s.stop}`, bad: false };
+}

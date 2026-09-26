@@ -3,6 +3,7 @@
 
 import type { RunEvent } from "../stages";
 import { nodeOf, type PlanModel } from "./plan";
+import { stopNote } from "../pager";
 
 export type Told = { kind: "step" | "result" | "page" | "request" | "action" | "dom" | "error" | "row" | "loop" | "run" | "other"; text: string; detail?: string; bad?: boolean };
 
@@ -31,7 +32,10 @@ export function tell(e: RunEvent, m: PlanModel | null): Told {
         const ms = typeof d.ms === "number" && d.ms >= 1 ? ` · ${Math.round(d.ms)} ms` : "";
         switch (d.kind) {
           case "Document": return { kind: "result", text: `${op === "resolve" || op === "fetch" ? "opened" : "on"} ${path(d.url as string) || "the page"}${ms}` };
-          case "Collection": return { kind: "result", text: `${op === "paginate" ? "paged through" : "found"} ${d.n} ${op === "paginate" ? "pages" : "matches"}${ms}` };
+          case "Collection": {
+            if (op === "paginate" && typeof d.stop === "string") { const s = stopNote({ n: Number(d.n ?? 0), fetched: Number(d.fetched ?? d.n ?? 0), stop: d.stop }); return { kind: "result", text: `paged through ${d.n} pages${ms}`, detail: s.text, bad: s.bad }; }
+            return { kind: "result", text: `${op === "paginate" ? "paged through" : "found"} ${d.n} ${op === "paginate" ? "pages" : "matches"}${ms}` };
+          }
           case "Element": return { kind: "result", text: `found the element${arg ? ` ${q(arg)}` : ""}${ms}` };
           case "Row": return { kind: "row", text: `row: ${q(d.preview)}` };
           case "Reference": return { kind: "result", text: `read the link ${path(d.url as string) || q(d.preview)}${ms}` };
