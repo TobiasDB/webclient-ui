@@ -194,3 +194,31 @@ export function runOf(s: RunState, m: PlanModel, addr: string): NodeRun | undefi
   for (const v of insts.values()) { if (v.state === "done") done++; else if (v.state === "failed") failed++; else running++; }
   return { addr, insts, done, failed, running, firstT: Math.min(...all.map((x) => x.firstT ?? Infinity)), lastT: Math.max(...all.map((x) => x.lastT ?? 0)) };
 }
+
+/** FOLLOW THE MOMENT: the step that just fired (a find, a read, an action, a page opened) and its item -- the screen
+ * shows what the run is doing NOW, whichever item it is doing it for (an item waiting on a page to load does not
+ * hold the screen while the others read) */
+export function momentAt(events: RunEvent[], m: PlanModel | null, t: number): { addr: string; item: ItemKey; i: number } | null {
+  for (let i = Math.min(t, events.length) - 1; i >= 0; i--) {
+    const e = events[i]!;
+    const step = (e as { step?: string }).step;
+    if (!step) continue;
+    if (!((e.topic === "plan" && (e.phase === "step" || e.phase === "result")) || e.topic === "action")) continue;
+    if (m?.planId && (e as { plan_id?: string }).plan_id && (e as { plan_id?: string }).plan_id !== m.planId) continue;
+    const n = m ? nodeOf(m, step) : undefined;
+    return { addr: n?.addr ?? step, item: keyOf(e.item), i };
+  }
+  return null;
+}
+
+/** the steps IN FLIGHT at the moment (started, not finished): each with its item -- a resolve still opening its
+ * page, a wait not yet over; their highlights stay until they are done */
+export function inFlight(s: RunState, m: PlanModel): { addr: string; item: ItemKey }[] {
+  const out: { addr: string; item: ItemKey }[] = [];
+  for (const [addr, nr] of s.nodes) {
+    if (!nr.running) continue;
+    const pn = m.byAddr.get(addr); if (!pn || pn.op === "extract" || pn.op === "project" || pn.op === "merge" || pn.op === "paginate") continue;
+    for (const inst of nr.insts.values()) if (inst.state === "running") out.push({ addr, item: inst.item });
+  }
+  return out;
+}

@@ -12,6 +12,7 @@ import { PageFrame, Player, cn, graphLib, runLib, stagesLib, withAgent, type Run
 import { api } from "../../lib/api";
 
 type Rect = { left: number; top: number; width: number; height: number };
+type Flying = { doc: string; hops: runLib.Hop[]; label: string; colour: string };
 type Props = {
   traceId: string | null;
   events: RunEvent[];
@@ -39,18 +40,26 @@ export function PageStage({ traceId, events, model, state, full, addr, item, max
   const told = ev ? runLib.tell(ev.e, model) : null;
   const node = model && target ? model.byAddr.get(target) : undefined;
   const colour = node ? stagesLib.ACTION_COLOUR[stagesLib.actionOf(node.op)] : "#2457e6";
+  // the steps still IN FLIGHT (a resolve opening its page...): outlined where they are until they are done
+  const flying = React.useMemo(() => {
+    if (!model) return [] as Flying[];
+    return runLib.inFlight(state, model).filter((f) => !(f.addr === target && f.item === item)).slice(0, 40).flatMap((f) => {
+      const w = runLib.locate(model, state, f.addr, f.item); const pn = model.byAddr.get(f.addr);
+      return w && w.hops.length ? [{ doc: w.doc, hops: w.hops, label: `${pn?.op ?? "…"}… · item ${f.item}`, colour: stagesLib.ACTION_COLOUR[stagesLib.actionOf(pn?.op ?? "")] }] : [];
+    });
+  }, [model, state, target, item]);
   const card = told && ev ? <EventCard key={ev.i} told={told} colour={colour} item={runLib.keyOf(ev.e.item)} n={(ev.e as { n?: number }).n} /> : null;
 
   // no plan / nothing located: the page last touched, alone
   if (shown.length <= 1) {
     const where = shown[0] ?? (lastDoc(state) ? { doc: lastDoc(state)!, hops: [], op: "", addr: "", via: "" } : null);
-    return <PagePane traceId={traceId} events={events} state={state} full={full} where={where} item={item} colour={colour} label={node?.label ?? ""} card={card} requests maxHeight={maxHeight} />;
+    return <PagePane traceId={traceId} events={events} state={state} full={full} where={where} item={item} colour={colour} label={node?.label ?? ""} card={card} requests flying={flying} maxHeight={maxHeight} />;
   }
-  return <Chain traceId={traceId} events={events} model={model} state={state} full={full} item={item} shown={shown} folded={folded} colour={colour} label={node?.label ?? ""} card={card} maxHeight={maxHeight} />;
+  return <Chain traceId={traceId} events={events} model={model} state={state} full={full} item={item} shown={shown} folded={folded} colour={colour} label={node?.label ?? ""} card={card} flying={flying} maxHeight={maxHeight} />;
 }
 
 /** two panes, the link on the first drawn to the second */
-function Chain({ traceId, events, model, state, full, item, shown, folded, colour, label, card, maxHeight }: { traceId: string | null; events: RunEvent[]; model: runLib.PlanModel | null; state: runLib.RunState; full: runLib.RunState; item: string; shown: runLib.ChainLink[]; folded: runLib.ChainLink[]; colour: string; label: string; card: React.ReactNode; maxHeight: number }) {
+function Chain({ traceId, events, model, state, full, item, shown, folded, colour, label, card, flying, maxHeight }: { traceId: string | null; events: RunEvent[]; model: runLib.PlanModel | null; state: runLib.RunState; full: runLib.RunState; item: string; shown: runLib.ChainLink[]; folded: runLib.ChainLink[]; colour: string; label: string; card: React.ReactNode; flying: Flying[]; maxHeight: number }) {
   const box = React.useRef<HTMLDivElement>(null); const toPane = React.useRef<HTMLDivElement>(null);
   const [from, setFrom] = React.useState<Rect | null>(null);
   const [, bump] = React.useState(0);
@@ -90,11 +99,11 @@ function Chain({ traceId, events, model, state, full, item, shown, folded, colou
       )}
       {/* the page it came from: smaller, the link it followed spotlit */}
       <div className="flex min-w-0 flex-[1] flex-col overflow-hidden rounded border border-line">
-        <PagePane traceId={traceId} events={events} state={state} full={full} where={a} item={item} colour={linkColour} label={`${via?.label ?? "the link"} → followed`} compact title={`page ${folded.length + 1} · the link it followed`} onSpot={setFrom} maxHeight={maxHeight} />
+        <PagePane traceId={traceId} events={events} state={state} full={full} where={a} item={item} colour={linkColour} label={`${via?.label ?? "the link"} → followed`} compact title={`page ${folded.length + 1} · the link it followed`} onSpot={setFrom} flying={flying} maxHeight={maxHeight} />
       </div>
       {/* the page it opened: the step on screen */}
       <div ref={toPane} className="flex min-w-0 flex-[1.7] flex-col overflow-hidden rounded border-2 border-accent/50">
-        <PagePane traceId={traceId} events={events} state={state} full={full} where={b} item={item} colour={colour} label={label} card={card} requests title={`page ${folded.length + 2}`} maxHeight={maxHeight} />
+        <PagePane traceId={traceId} events={events} state={state} full={full} where={b} item={item} colour={colour} label={label} card={card} requests title={`page ${folded.length + 2}`} flying={flying} maxHeight={maxHeight} />
       </div>
       {arrow}
     </div>
@@ -102,7 +111,7 @@ function Chain({ traceId, events, model, state, full, item, shown, folded, colou
 }
 
 /** ONE page at the moment: its snapshot or recording, the element spotlit, (optionally) the event card and its requests */
-function PagePane({ traceId, events, state, full, where, item, colour, label, card, requests, compact, title, onSpot, maxHeight }: { traceId: string | null; events: RunEvent[]; state: runLib.RunState; full: runLib.RunState; where: { doc: string; hops: runLib.Hop[]; many?: boolean } | null; item: string; colour: string; label: string; card?: React.ReactNode; requests?: boolean; compact?: boolean; title?: string; onSpot?: (r: Rect | null) => void; maxHeight: number }) {
+function PagePane({ traceId, events, state, full, where, item, colour, label, card, requests, compact, title, onSpot, flying = [], maxHeight }: { flying?: Flying[]; traceId: string | null; events: RunEvent[]; state: runLib.RunState; full: runLib.RunState; where: { doc: string; hops: runLib.Hop[]; many?: boolean } | null; item: string; colour: string; label: string; card?: React.ReactNode; requests?: boolean; compact?: boolean; title?: string; onSpot?: (r: Rect | null) => void; maxHeight: number }) {
   const docId = where?.doc;
   const dr = docId ? state.docs.get(docId) : undefined;
   const recorded = !!(docId && full.docs.get(docId)?.rrweb.length);
@@ -113,23 +122,28 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
   const parsed = React.useMemo(() => (page.data?.content ? new DOMParser().parseFromString(withAgent(page.data.content, page.data.final_url ?? page.data.url, true), "text/html") : null), [page.data]);
   const found = React.useMemo(() => (parsed && hops ? runLib.resolveHops(parsed, hops) : null), [parsed, hops]);
   const many = !!where?.many;
-  const highlights = React.useMemo(() => {
+  // the in-flight steps on THIS page: outlined (not spotlit), labelled, until they finish
+  const mine = React.useMemo(() => flying.filter((f) => f.doc === docId), [flying, docId]);
+  const flyingHl = React.useMemo(() => (parsed ? mine.flatMap((f) => { const r = runLib.resolveHops(parsed, f.hops); return r.el ? [{ paths: [graphLib.pathOf(r.el)], colour: f.colour, label: f.label }] : []; }) : []), [parsed, mine]);
+  const base = React.useMemo(() => {
     if (!found?.el) return [];
     // a select_all itself: every match is what it found -- all outlined alike, the count on the first
     if (many) return [{ paths: found.all.slice(0, 200).map(graphLib.pathOf), colour, label }];  // the frame adds the ×N
-    const others = found.all.filter((x) => x !== found.el).slice(0, 60);
-    return [...(others.length ? [{ paths: others.map(graphLib.pathOf), colour, dashed: true }] : []), { paths: [graphLib.pathOf(found.el)], colour, label, spot: true }];
+    // the spotlight first (it dims the page), the list over it (so it stays crisp)
+    return [{ paths: [graphLib.pathOf(found.el)], colour, label, spot: true }, ...fanHl(found.fan, graphLib.pathOf, (paths, c, l, dashed) => ({ paths, colour: c, label: l, dashed }))];
   }, [found, colour, label, many]);
+  const highlights = React.useMemo(() => [...flyingHl, ...base], [flyingHl, base]);
   const [pDoc, setPDoc] = React.useState<Document | null>(null);
   const [tick, setTick] = React.useState(0);
   React.useEffect(() => { const a = setTimeout(() => setTick((x) => x + 1), 150); const b = setTimeout(() => setTick((x) => x + 1), 700); return () => { clearTimeout(a); clearTimeout(b); }; }, [state.n, pDoc]);
   const pFound = React.useMemo(() => (recorded && pDoc && hops ? runLib.resolveHops(pDoc, hops) : null), [recorded, pDoc, hops, tick]); // eslint-disable-line react-hooks/exhaustive-deps
-  const pHighlights = React.useMemo(() => {
+  const pFlying = React.useMemo(() => (recorded && pDoc ? mine.flatMap((f, k) => { const r = runLib.resolveHops(pDoc, f.hops); return r.el && r.el.isConnected ? [{ selector: "", els: [r.el], colour: f.colour, label: f.label, key: `fly${k}` }] : []; }) : []), [recorded, pDoc, mine, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pBase = React.useMemo(() => {
     if (!pFound?.el || !pFound.el.isConnected) return [];
     if (many) return [{ selector: "", els: pFound.all.slice(0, 200), colour, label, key: "all" }];  // the player adds the ×N
-    const others = pFound.all.filter((x) => x !== pFound.el).slice(0, 60);
-    return [...(others.length ? [{ selector: "", els: others, colour, dashed: true, key: "others" }] : []), { selector: "", els: [pFound.el], colour, label, key: "own", spot: true }];
+    return [{ selector: "", els: [pFound.el], colour, label, key: "own", spot: true }, ...fanHl(pFound.fan, (x) => x, (els, c, l, dashed, key) => ({ selector: "", els, colour: c, label: l, dashed, key }))];
   }, [pFound, colour, label, many]);
+  const pHighlights = React.useMemo(() => [...pFlying, ...pBase], [pFlying, pBase]);
   const at = events[Math.max(0, state.n - 1)];
   const reqs = requests && dr ? dr.requests.map((k) => state.requests[k]!).filter(Boolean) : [];
   return (
@@ -182,6 +196,18 @@ function EventCard({ told, colour, item, n }: { told: runLib.Told; colour: strin
       {told.detail && <div className="line-clamp-2 break-words opacity-80 [overflow-wrap:anywhere]">{told.detail}</div>}
     </div>
   );
+}
+
+/** THE LIST the item came from, kept in view while its steps run: every match faint, the item's own match outlined
+ * ("item 12 of 40") -- the loop is seen moving from card to card, and the element read spotlit inside it */
+const FAN = "#7c3aed";
+function fanHl<T, H>(fan: { all: Element[]; own: Element | null; index: number } | undefined, as: (el: Element) => T, mk: (xs: T[], colour: string, label: string | undefined, dashed: boolean, key: string) => H): H[] {
+  if (!fan || fan.all.length < 2) return [];
+  const rest = fan.all.filter((x) => x !== fan.own).slice(0, 200);
+  return [
+    ...(rest.length ? [mk(rest.map(as), FAN, undefined, true, "fan-all")] : []),
+    ...(fan.own ? [mk([as(fan.own)], FAN, `item ${fan.index + 1} of ${fan.all.length}`, false, "fan-own")] : []),
+  ];
 }
 
 const shortPath = (u?: string) => (u ?? "").replace(/^https?:\/\/[^/]+/, "") || u || "";

@@ -28,6 +28,8 @@ export type StepCardProps = {
   rootUrl?: string;
   rowsCount?: number;
   columns?: string[];
+  /** the output columns this step fills: marked on the card */
+  outputs?: string[];
   onSelect?: () => void;
   onPick?: (item: ItemKey) => void;
   style?: React.CSSProperties;
@@ -37,7 +39,7 @@ export type StepCardProps = {
  * Before it runs it is the plan (dashed, faint); running, it pulses; done, it shows what it made for the item
  * on screen -- the page (host/path, status, tier), the element, the N items (cells), the value read -- and how
  * many items it has run for. Failed items turn it red. */
-export function StepCard({ node, run, expected, item, inst, doc, items, itemsExpected, parallel, active, selected, rootUrl, rowsCount, columns, onSelect, onPick, style }: StepCardProps) {
+export function StepCard({ node, run, expected, item, inst, doc, items, itemsExpected, parallel, active, selected, rootUrl, rowsCount, columns, outputs, onSelect, onPick, style }: StepCardProps) {
   const type = node ? node.type : "Reference";
   const colour = node ? ACTION_COLOUR[actionOf(node.op)] : TYPE_COLOUR.Reference!;
   const ran = !node || !!run?.insts.size;
@@ -47,7 +49,7 @@ export function StepCard({ node, run, expected, item, inst, doc, items, itemsExp
   const res = inst?.result;
   return (
     <div role="button" tabIndex={0} onClick={onSelect} onKeyDown={(e) => { if (e.key === "Enter") onSelect?.(); }} style={style}
-      className={cn("wc-step absolute flex flex-col overflow-hidden rounded-md border bg-surface text-[10.5px] leading-tight shadow-sm outline-none transition-[opacity,box-shadow,border-color] duration-200",
+      className={cn("wc-step absolute flex flex-col overflow-visible rounded-md border bg-surface text-[10.5px] leading-tight shadow-sm outline-none transition-[opacity,box-shadow,border-color] duration-200",
         ran ? "opacity-100" : "border-dashed opacity-60",
         failed ? "border-bad" : selected ? "border-accent" : "border-line-2",
         selected && "ring-2 ring-accent/40", active && "wc-step-active")}>
@@ -59,6 +61,11 @@ export function StepCard({ node, run, expected, item, inst, doc, items, itemsExp
         {perItem && total > 0 && <span className="shrink-0 font-mono text-[9.5px] text-muted" title="items run / expected">{(run?.done ?? 0) + failed}/{total}</span>}
         {failed > 0 && <span className="shrink-0 rounded bg-bad px-1 font-mono text-[9px] text-white" title={`${failed} item(s) failed`}>{failed}✕</span>}
       </div>
+      {outputs && outputs.length > 0 && (
+        <div className="absolute -right-1 -top-2 flex max-w-[90%] gap-0.5" title="an OUTPUT of the plan: this step's value fills these columns of every row">
+          {outputs.map((o) => <span key={o} className="truncate rounded-full bg-ink px-1.5 font-mono text-[9px] leading-[15px] text-surface shadow">→ {o}</span>)}
+        </div>
+      )}
       {/* the object it made */}
       <div className="flex min-h-0 flex-1 flex-col gap-1 px-1.5 py-1">
         <div className="flex min-w-0 items-center gap-1">

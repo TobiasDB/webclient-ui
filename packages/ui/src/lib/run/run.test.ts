@@ -91,17 +91,17 @@ describe("where a step ran", () => {
   });
 });
 
-import { layoutOf } from "./layout";
+import { layoutOf, outputsOf } from "./layout";
 describe("the layout", () => {
   it("puts the chain on lane 0, each column on its own lane beside what it runs on, the output at the end", () => {
     const L = layoutOf(m);
     const at = (a: string) => L.pos.get(a)!;
-    expect([at("0").lane, at("2").lane, at("4").lane]).toEqual([0, 0, 0]);
+    expect([at("0").lane, at("2").lane]).toEqual([0, 0]);
     expect(at("4/kw:n/0").lane).toBe(1); expect(at("4/kw:n/2").lane).toBe(1);
     expect(at("4/kw:detail/0").lane).toBe(2); expect(at("4/kw:detail/8").lane).toBe(2);
     expect(at("4/kw:n/0").col).toBe(at("2").col + 1);      // beside the collection it runs on each item of
-    expect(at("6").col).toBeGreaterThan(at("4/kw:detail/8").col); // the output after every column
-    expect(L.outputs.map((o) => o.name)).toEqual(["n", "detail"]);
+    expect(L.pos.has("4")).toBe(false); expect(L.pos.has("6")).toBe(false);   // shaping (extract / project) is not a phase
+    expect(Object.fromEntries(outputsOf(m))).toEqual({ "4/kw:n/2": ["n"], "4/kw:detail/8": ["detail"] });  // outputs marked on their steps
   });
 });
 

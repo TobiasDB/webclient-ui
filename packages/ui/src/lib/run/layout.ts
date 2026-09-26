@@ -5,6 +5,20 @@
 
 import type { PlanModel, PNode } from "./plan";
 
+const SHAPING = new Set(["extract", "project", "merge"]);
+/** the step a node is SHOWN as: itself, the step it is the same as, or -- for a shaping step -- what it shapes */
+export function visible(m: PlanModel, addr: string): string {
+  let a = addr;
+  for (let k = 0; a && k < 50; k++) { const n = m.byAddr.get(a); if (!n) return a; if (n.same) { a = n.same; continue; } if (SHAPING.has(n.op)) { a = n.input; continue; } return a; }
+  return a;
+}
+/** the output columns each shown step fills (a column's last step, or the list its rows are read from) */
+export function outputsOf(m: PlanModel): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const c of m.columns) { const v = visible(m, c.from); if (!v) continue; out.set(v, [...(out.get(v) ?? []), c.name]); }
+  return out;
+}
+
 /** the column a branch leads to (the nearest column below it), for its lane's name */
 function columnOf(m: PlanModel, n: PNode): string | undefined {
   const byInput = (a: string) => m.nodes.filter((x) => x.input === a || (x.input && m.byAddr.get(x.input)?.same === a));
@@ -30,9 +44,10 @@ export function layoutOf(m: PlanModel): Layout {
   const col = new Map<string, number>([["", 0]]), lane = new Map<string, number>([["", 0]]);
   const lanes: Layout["lanes"] = [];
   let nextLane = 1;
-  const output = new Set(m.nodes.filter((n) => (n.op === "project" || n.op === "merge") && n.depth === 0).map((n) => n.addr));
-  const shown = m.nodes.filter((n) => !n.same);
-  const parentOf = (n: PNode) => (n.input ? m.byAddr.get(n.input)?.same ?? n.input : "");
+  const output = new Set<string>();
+  // SHAPING (extract / project / merge) is not a phase: not shown -- its outputs are marked on the steps that make them
+  const shown = m.nodes.filter((n) => !n.same && !SHAPING.has(n.op));
+  const parentOf = (n: PNode) => visible(m, n.input);
   const used = new Set<string>(); // a node whose lane has been continued by a child
   for (const n of shown) {
     if (output.has(n.addr)) continue;
@@ -74,13 +89,7 @@ export function layoutOf(m: PlanModel): Layout {
   for (const [a, c] of col) { const l = lane.get(a) ?? 0; pos.set(a, { col: c, lane: l, x: PAD + c * COL_W, y: PAD + l * LANE_H }); }
   for (const L of lanes) L.y = PAD + L.lane * LANE_H;
   const edges = shown.map((n) => ({ from: parentOf(n), to: n.addr })).filter((e) => pos.has(e.from) && pos.has(e.to));
-  // one arrow per (node -> output), naming every column it fills
-  const outs = new Map<string, { from: string; to: string; name: string }>();
-  for (const o of output) for (const c of m.columns) {
-    const from = m.byAddr.get(c.from)?.same ?? c.from; const k = `${from}>${o}`;
-    const cur = outs.get(k); outs.set(k, cur ? { ...cur, name: `${cur.name}, ${c.name}` } : { from, to: o, name: c.name });
-  }
-  const outputs = [...outs.values()];
+  const outputs: Layout["outputs"] = [];
   const width = PAD * 2 + (Math.max(...[...col.values()]) + 1) * COL_W;
   const height = PAD * 2 + rows * LANE_H;
   return { pos, edges, lanes, width, height, outputs };

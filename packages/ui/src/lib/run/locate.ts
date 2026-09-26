@@ -85,16 +85,19 @@ function itemAt(m: PlanModel, lin: PNode[], fan: PNode, item: ItemKey): ItemKey 
 }
 
 /** find the element: `hops` applied from the document root (null when the page does not have it) */
-export function resolveHops(root: ParentNode, hops: Hop[]): { el: Element | null; all: Element[] } {
+export function resolveHops(root: ParentNode, hops: Hop[]): { el: Element | null; all: Element[]; fan?: { all: Element[]; own: Element | null; index: number } } {
   let cur: ParentNode | null = root; let all: Element[] = [];
+  // the FAN-OUT the item came from (the last indexed hop): its whole list, and the item's own match in it
+  let fan: { all: Element[]; own: Element | null; index: number } | undefined;
   for (const h of hops) {
-    if (!cur) return { el: null, all: [] };
-    let found: Element[] = []; try { found = [...cur.querySelectorAll(h.sel)]; } catch { return { el: null, all: [] }; }
+    if (!cur) return { el: null, all: [], fan };
+    let found: Element[] = []; try { found = [...cur.querySelectorAll(h.sel)]; } catch { return { el: null, all: [], fan }; }
     if (h.all) { all = found; cur = found[0] ?? null; continue; }
     all = h.index != null ? found : found.slice(0, 1);
     cur = found[h.index ?? 0] ?? null;
+    if (h.index != null) fan = { all: found, own: (cur as Element | null) ?? null, index: h.index };
   }
-  return { el: cur && (cur as Element).tagName ? (cur as Element) : null, all };
+  return { el: cur && (cur as Element).tagName ? (cur as Element) : null, all, fan };
 }
 
 export type ChainLink = Where & {

@@ -29,7 +29,7 @@ export function Run() {
   const [playing, setPlaying] = React.useState(false);
   const [speed, setSpeed] = React.useState(0);
   React.useEffect(() => { if (live) setT(events.length); }, [live, events.length]);
-  React.useEffect(() => { setLive(true); setPlaying(false); setSel({ addr: null, item: null }); }, [src.runId, src.traceId]);
+  React.useEffect(() => { setLive(true); setPlaying(false); setSel({ addr: null, item: null }); setChainN(1); }, [src.runId, src.traceId]);
 
   const nowF = React.useRef(new runLib.RunFolder()); const fullF = React.useRef(new runLib.RunFolder());
   const state = React.useMemo(() => nowF.current.at(events, model, t), [events, model, t]);
@@ -38,8 +38,14 @@ export function Run() {
   // what is on screen: a picked item / step, else FOLLOW (the oldest item in flight)
   const [sel, setSel] = React.useState<Sel>({ addr: null, item: null });
   const [chainN, setChainN] = React.useState(1);
-  const item = sel.item ?? (model ? runLib.followItem(state, model) : "");
-  const focusAddr = React.useMemo(() => runLib.latestFor(state, item)?.addr ?? null, [state, item]);
+  // FOLLOW: the moment (the step that just fired, whichever item -- default), or one item at a time (the oldest in flight)
+  const [followMode, setFollowMode] = React.useState<"moment" | "item">(() => { try { return localStorage.getItem("wc.run2.follow") === "item" ? "item" : "moment"; } catch { return "moment"; } });
+  const setFollow = (x: "moment" | "item") => { setFollowMode(x); try { localStorage.setItem("wc.run2.follow", x); } catch { /* fine */ } };
+  const now = React.useMemo(() => (followMode === "moment" ? runLib.momentAt(events, model, t) : null), [followMode, events, model, t]);
+  const item = sel.item ?? (now ? now.item : model ? runLib.followItem(state, model) : "");
+  // the step on screen: picked, else the moment's (following it), else the item's latest
+  const stepOnScreen = sel.addr ?? (sel.item == null && now ? now.addr : null);
+  const focusAddr = React.useMemo(() => stepOnScreen ?? runLib.latestFor(state, item)?.addr ?? null, [stepOnScreen, state, item]);
   const seek = (i: number) => { setLive(false); setPlaying(false); setT(Math.max(0, Math.min(events.length, i))); };
   // step to the previous / next moment (of the item on screen when one is picked)
   const moment = React.useCallback((from: number, dir: 1 | -1) => {
@@ -118,7 +124,10 @@ export function Run() {
           <input type="range" min={0} max={Math.max(1, events.length)} value={Math.min(t, events.length)} onChange={(e) => seek(Number(e.target.value))} className="w-56" aria-label="the moment" />
           <button type="button" className={cn("rounded px-1 text-[10px]", live ? "bg-accent-soft text-accent" : "text-muted hover:text-ink")} onClick={() => { setLive(true); setPlaying(false); }} title="follow the run live / go to the end">{live ? (running ? "● live" : "end") : `${t}/${events.length}`}</button>
         </div>
-        <button type="button" data-act="follow" onClick={() => setSel({ addr: null, item: null })} className={cn("rounded px-1.5 text-[10px]", sel.item != null || sel.addr ? "text-muted hover:text-ink" : "bg-accent-soft text-accent")} title="follow: the screen shows the oldest item still running">{sel.item != null || sel.addr ? `watching ${sel.item ? `item ${sel.item}` : "a step"} · follow` : `● follow${item ? ` · item ${item}` : ""}`}</button>
+        <button type="button" data-act="follow" onClick={() => setSel({ addr: null, item: null })} className={cn("rounded px-1.5 text-[10px]", sel.item != null || sel.addr ? "text-muted hover:text-ink" : "bg-accent-soft text-accent")} title={followMode === "moment" ? "follow: the screen shows the step that just fired, whichever item" : "follow: the screen stays with the oldest item still running"}>{sel.item != null || sel.addr ? `watching ${sel.item ? `item ${sel.item}` : "a step"} · follow` : `● follow${item ? ` · item ${item}` : ""}`}</button>
+        <select className="h-5 rounded border border-line bg-surface text-[10px]" value={followMode} onChange={(e) => setFollow(e.target.value as "moment" | "item")} title="what follow shows: each step as it fires (any item), or one item at a time">
+          <option value="moment">the moment</option><option value="item">one item at a time</option>
+        </select>
         <span className="flex-1" />
         <LoadMenu onLoad={src.load} />
         <TracesMenu onOpen={src.openTrace} current={src.traceId} />
@@ -141,7 +150,7 @@ export function Run() {
             </div>
           </section>
           <section className="flex min-h-0 flex-col overflow-hidden rounded border border-line">
-            <PageStage traceId={src.traceId} events={events} model={model} state={state} full={full} addr={sel.addr} item={item} maxHeight={640} onChain={setChainN} />
+            <PageStage traceId={src.traceId} events={events} model={model} state={state} full={full} addr={stepOnScreen} item={item} maxHeight={640} onChain={(n) => setChainN((c) => Math.max(c, n))} />  {/* a run that has shown a chain keeps the room for it: no widening / narrowing as follow moves */}
           </section>
         </div>
         {/* everything on one time axis */}

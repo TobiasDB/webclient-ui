@@ -1,9 +1,10 @@
 import * as React from "react";
 import { cn } from "../../lib/cn";
-import { CARD_H, CARD_W, layoutOf, type Layout } from "../../lib/run/layout";
+import { CARD_H, CARD_W, layoutOf, outputsOf, type Layout } from "../../lib/run/layout";
 import type { PlanModel } from "../../lib/run/plan";
 import { expectedOf, runOf, type Inst, type ItemKey, type RunState } from "../../lib/run/state";
 import { StepCard } from "./StepCard";
+import { StepDetails } from "./StepDetails";
 
 export type RunGraphProps = {
   model: PlanModel;
@@ -51,7 +52,7 @@ export function RunGraph({ model, state, item, addr, onSelect, onPick, rootUrl, 
     for (let i = parts.length - 1; i >= 0; i--) { const v = nr.insts.get(parts.slice(0, i).join(".")); if (v) return v; }
     return undefined;
   };
-  const columns = model.columns.map((c) => c.name);
+  const outs = React.useMemo(() => outputsOf(model), [model]);
 
   // -- pan / zoom ------------------------------------------------------------------
   const box = React.useRef<HTMLDivElement>(null);
@@ -111,12 +112,18 @@ export function RunGraph({ model, state, item, addr, onSelect, onPick, rootUrl, 
               items={n.type === "Collection" ? itemsOf.get(n.addr) : undefined} itemsExpected={n.type === "Collection" ? fanTotal(n.addr) : undefined}
               parallel={state.parallel.get(n.addr) ?? [...state.parallel.entries()].find(([k]) => model.byAddr.get(k)?.per === n.addr)?.[1]}
               active={(nr?.running ?? 0) > 0} selected={addr === n.addr}
-              rowsCount={n.op === "project" || n.op === "merge" ? state.rows.length : undefined} columns={n.op === "project" || n.op === "merge" ? columns : undefined}
+              outputs={outs.get(n.addr)}
               onSelect={() => onSelect?.(n.addr)} onPick={onPick}
               style={{ left: p.x, top: p.y, width: CARD_W, height: CARD_H }} />
           );
         })}
       </div>
+      {addr && model.byAddr.get(addr) && (() => {
+        const n = model.byAddr.get(addr)!; const inst = instFor(addr); const docId = inst?.result?.document_id ?? undefined;
+        return <StepDetails node={n} run={runOf(state, model, addr)} expected={n.per ? expectedOf(state, model, addr) : undefined} item={item} inst={inst}
+          doc={docId ? state.docs.get(docId) : undefined} outputs={outs.get(addr)} perLabel={n.per ? model.byAddr.get(n.per)?.label : undefined}
+          onPick={onPick} onClose={() => onSelect?.(null)} />;
+      })()}
       <div className="absolute bottom-1.5 right-1.5 flex gap-1 rounded border border-line bg-surface/90 p-0.5 text-[10px] shadow-sm">
         <button type="button" className="rounded px-1.5 hover:bg-surface-2" onClick={() => setView((v) => ({ ...v, k: Math.max(0.2, v.k / 1.2) }))}>−</button>
         <button type="button" className="rounded px-1.5 hover:bg-surface-2" onClick={fit}>fit</button>
