@@ -2,9 +2,18 @@ import * as React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, X } from "lucide-react";
-import { cn } from "@webclient/ui";
+import { cn, FlagChip } from "@webclient/ui";
 import { api, type DocHandle } from "../lib/api";
 import { useSession } from "../lib/session";
+
+/** A loaded document's present flags -- fetched ONCE and cached (no polling), so the "what is
+ * this page" conclusions (with their signal evidence, on click) sit right on its chip. */
+function DocFlags({ sessionId, docId }: { sessionId: string; docId: string }) {
+  const q = useQuery({ queryKey: ["doc-flags", sessionId, docId], queryFn: () => api.docViews(sessionId, docId, ["flags"]), staleTime: Infinity, retry: false });
+  const present = (q.data?.flags ?? []).filter((f) => f.present);
+  if (!present.length) return null;
+  return <>{present.slice(0, 4).map((f) => <FlagChip key={f.name} flag={f} />)}</>;
+}
 
 /** The documents your session holds, along the top of every workspace: what is loaded,
  * whether it is a static capture or a LIVE page (a browser page held open), which tier
@@ -36,6 +45,7 @@ export function DocumentStrip() {
           <span className={cn("inline-block size-1.5 rounded-full", d.live ? "bg-ok animate-pulse" : "bg-muted")} title={d.live ? "live: a browser page held open" : "a static capture"} />
           <button type="button" className="max-w-[220px] truncate text-left hover:text-accent" title={d.url} onClick={() => nav(`/author?doc=${encodeURIComponent(d.id)}`)}>{d.title || d.url}</button>
           <span className="font-mono text-[10px] text-muted">{d.live ? "live" : d.tier ?? "static"}{d.ok === false ? " · !" : ""}</span>
+          {d.ok !== false && sessionId && <DocFlags sessionId={sessionId} docId={d.id} />}
           <button type="button" className="text-muted hover:text-ink" title="reload" onClick={() => reload(d)} disabled={busy === d.id}><RefreshCw size={11} className={busy === d.id ? "animate-spin" : ""} /></button>
           <button type="button" className="text-muted hover:text-bad" title="close" onClick={() => close(d)}><X size={11} /></button>
         </span>
