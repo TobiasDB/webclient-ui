@@ -29,7 +29,7 @@ export function ItemStrip({ insts, expected, selected, onPick, max = 160, classN
   if (count > max) {
     const pct = (n: number) => `${(n / count) * 100}%`;
     const selIndex = selected != null ? all.findIndex((i) => i.item === selected || i.item.startsWith(`${selected}.`)) : -1;
-    return (
+    const bar = (
       <div className={cn("relative h-2 w-full overflow-hidden rounded-sm bg-surface-3", className)} title={`${tally.done} done · ${tally.failed} failed · ${tally.running} running · ${pending} to go`}>
         <div className="absolute inset-y-0 left-0 flex w-full">
           <div className="h-full bg-ok transition-[width] duration-200" style={{ width: pct(tally.done) }} />
@@ -39,6 +39,19 @@ export function ItemStrip({ insts, expected, selected, onPick, max = 160, classN
         {selIndex >= 0 && <div className="absolute inset-y-[-1px] w-[2px] bg-ink" style={{ left: pct(selIndex) }} />}
       </div>
     );
+    // NESTED (a row of each item's table): the bar is all of them; the item on screen's own rows as cells beneath
+    const top = selected ? selected.split(".")[0]! : null;
+    const mine = top != null ? all.filter((i) => i.item.startsWith(`${top}.`)) : [];
+    if (mine.length && mine.length <= max) return (
+      <div className={cn("flex flex-col gap-[3px]", className)}>
+        {bar}
+        <div className="flex flex-wrap items-center gap-[2px]" title={`item ${top}'s own: ${mine.length}`}>
+          <span className="mr-0.5 font-mono text-[8.5px] text-muted">{top}:</span>
+          {mine.map((i) => <Cell key={i.item} inst={i} sel={selected === i.item} onPick={onPick} />)}
+        </div>
+      </div>
+    );
+    return bar;
   }
   // groups: by the parent item (all but the last index) -- one group when the step runs once per top item
   const groups = new Map<string, Inst[]>();

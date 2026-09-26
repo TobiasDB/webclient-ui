@@ -34,7 +34,12 @@ export function PageStage({ traceId, events, model, state, full, addr, item, max
   const latest = React.useMemo(() => runLib.latestFor(state, item), [state, item]);
   const target = addr ?? latest?.addr ?? null;
   const chain = React.useMemo(() => (model && target != null ? runLib.pageChain(model, state, target, item) : []), [model, state, target, item]);
-  const shown = chain.slice(-2); const folded = chain.slice(0, -2);
+  // which pair of the chain is open: the last two (the page it came from, the page on screen), or one picked from the chips
+  const [pairAt, setPairAt] = React.useState<number | null>(null);
+  const chainKey = chain.map((c) => c.doc).join(">");
+  React.useEffect(() => { setPairAt(null); }, [chainKey]);
+  const at = pairAt != null && pairAt < chain.length - 1 ? pairAt : Math.max(0, chain.length - 2);
+  const shown = chain.slice(at, at + 2); const folded = chain.filter((_, i) => i < at || i > at + 1);
   React.useEffect(() => { onChain?.(Math.max(1, shown.length)); }, [shown.length, onChain]);
 
   // the current event for this item: the caption on the main pane
@@ -58,11 +63,13 @@ export function PageStage({ traceId, events, model, state, full, addr, item, max
     const where = shown[0] ?? (lastDoc(state) ? { doc: lastDoc(state)!, hops: [], op: "", addr: "", via: "" } : null);
     return <PagePane traceId={traceId} events={events} state={state} full={full} where={where} item={item} colour={colour} label={node?.label ?? ""} card={card} requests flying={flying} maxHeight={maxHeight} />;
   }
-  return <Chain traceId={traceId} events={events} model={model} state={state} full={full} item={item} shown={shown} folded={folded} colour={colour} label={node?.label ?? ""} card={card} flying={flying} maxHeight={maxHeight} />;
+  return <Chain traceId={traceId} events={events} model={model} state={state} full={full} item={item} chain={chain} at={at} onPair={setPairAt} colour={colour} label={node?.label ?? ""} card={card} flying={flying} maxHeight={maxHeight} />;
 }
 
 /** two panes, the link on the first drawn to the second */
-function Chain({ traceId, events, model, state, full, item, shown, folded, colour, label, card, flying, maxHeight }: { traceId: string | null; events: RunEvent[]; model: runLib.PlanModel | null; state: runLib.RunState; full: runLib.RunState; item: string; shown: runLib.ChainLink[]; folded: runLib.ChainLink[]; colour: string; label: string; card: React.ReactNode; flying: Flying[]; maxHeight: number }) {
+function Chain({ traceId, events, model, state, full, item, chain, at, onPair, colour, label, card, flying, maxHeight }: { traceId: string | null; events: RunEvent[]; model: runLib.PlanModel | null; state: runLib.RunState; full: runLib.RunState; item: string; chain: runLib.ChainLink[]; at: number; onPair: (i: number | null) => void; colour: string; label: string; card: React.ReactNode; flying: Flying[]; maxHeight: number }) {
+  const shown = chain.slice(at, at + 2);
+  const latest = at + 2 >= chain.length;
   const box = React.useRef<HTMLDivElement>(null); const toPane = React.useRef<HTMLDivElement>(null);
   const [from, setFrom] = React.useState<Rect | null>(null);
   const [, bump] = React.useState(0);
@@ -90,23 +97,25 @@ function Chain({ traceId, events, model, state, full, item, shown, folded, colou
   }
   return (
     <div ref={box} className="relative flex h-full min-h-0 gap-2">
-      {folded.length > 0 && (
-        <div className="flex w-[92px] shrink-0 flex-col gap-1 overflow-auto border-r border-line py-1 pr-1" title="the pages before: each opened the next">
-          {folded.map((f, i) => { const d = state.docs.get(f.doc); return (
-            <div key={f.doc} className="rounded border border-line bg-surface-2 px-1 py-0.5 text-[9px] leading-tight">
-              <div className="font-semibold text-muted">page {i + 1}</div>
+      {chain.length > 2 && (
+        <div className="flex w-[92px] shrink-0 flex-col gap-1 overflow-auto border-r border-line py-1 pr-1" title="every page of the chain: each opened the next -- click one to open it beside the page it opened">
+          {chain.map((f, i) => { const d = state.docs.get(f.doc); const open = i === at || i === at + 1; return (
+            <button key={f.doc} type="button" disabled={open} onClick={() => onPair(i < chain.length - 1 ? i : i - 1)}
+              className={cn("rounded border px-1 py-0.5 text-left text-[9px] leading-tight", open ? "border-accent/60 bg-accent-soft" : "border-line bg-surface-2 hover:border-accent")}>
+              <div className="font-semibold text-muted">page {i + 1}{open ? " · open" : ""}</div>
               <div className="truncate font-mono" title={d?.url}>{shortPath(d?.url)}</div>
-              <div className="text-muted">↓ {f.hops.map((h) => h.sel).join(" › ") || "link"}</div>
-            </div>); })}
+              {i < chain.length - 1 && <div className="truncate text-muted">↓ {f.hops.map((h) => h.sel).join(" › ") || "link"}</div>}
+            </button>); })}
+          {!latest && <button type="button" className="rounded px-1 text-[9px] text-accent hover:underline" onClick={() => onPair(null)}>→ the page on screen</button>}
         </div>
       )}
       {/* the page it came from: smaller, the link it followed spotlit */}
       <div className="flex min-w-0 flex-[1] flex-col overflow-hidden rounded border border-line">
-        <PagePane traceId={traceId} events={events} state={state} full={full} where={a} item={item} colour={linkColour} label={`${via?.label ?? "the link"} → followed`} compact title={`page ${folded.length + 1} · the link it followed`} onSpot={setFrom} flying={flying} maxHeight={maxHeight} />
+        <PagePane traceId={traceId} events={events} state={state} full={full} where={a} item={item} colour={linkColour} label={`${via?.label ?? "the link"} → followed`} compact title={`page ${at + 1} · the link it followed`} onSpot={setFrom} flying={flying} maxHeight={maxHeight} />
       </div>
       {/* the page it opened: the step on screen */}
       <div ref={toPane} className="flex min-w-0 flex-[1.7] flex-col overflow-hidden rounded border-2 border-accent/50">
-        <PagePane traceId={traceId} events={events} state={state} full={full} where={b} item={item} colour={colour} label={label} card={card} requests title={`page ${folded.length + 2}`} flying={flying} maxHeight={maxHeight} />
+        <PagePane traceId={traceId} events={events} state={state} full={full} where={b} item={item} colour={latest ? colour : "#2563eb"} label={latest ? label : "the link it followed"} card={latest ? card : null} requests={latest} title={`page ${at + 2}`} flying={flying} maxHeight={maxHeight} />
       </div>
       {arrow}
     </div>
@@ -183,17 +192,18 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
   const hops = where?.hops;
   const parsed = React.useMemo(() => (page.data?.content ? new DOMParser().parseFromString(withAgent(page.data.content, page.data.final_url ?? page.data.url, true), "text/html") : null), [page.data]);
   const found = React.useMemo(() => (parsed && hops ? runLib.resolveHops(parsed, hops) : null), [parsed, hops]);
+  const pathOf = React.useMemo(() => graphLib.pathMemo(), [parsed]);  // the snapshot never changes: paths cached
   const many = !!where?.many;
   // the in-flight steps on THIS page: outlined (not spotlit), labelled, until they finish
   const mine = React.useMemo(() => flying.filter((f) => f.doc === docId), [flying, docId]);
-  const flyingHl = React.useMemo(() => (parsed ? mine.flatMap((f) => { const r = runLib.resolveHops(parsed, f.hops); const els = f.many ? r.all : r.el ? [r.el] : []; return els.length ? [{ paths: els.slice(0, 200).map(graphLib.pathOf), colour: f.colour, label: f.label }] : []; }) : []), [parsed, mine]);
+  const flyingHl = React.useMemo(() => (parsed ? mine.flatMap((f) => { const r = runLib.resolveHops(parsed, f.hops); const els = f.many ? r.all : r.el ? [r.el] : []; return els.length ? [{ paths: els.slice(0, 200).map(pathOf), colour: f.colour, label: f.label }] : []; }) : []), [parsed, mine]);
   const base = React.useMemo(() => {
     if (!found?.el) return [];
     // a select_all itself: every match is what it found -- all outlined alike, the count on the first
     // (a limit: the first n of the selection it limits -- the rest shown faint, not taken)
-    if (many) { const [yes, no] = split(found.all, where?.take, where?.keep); return [{ paths: yes.map(graphLib.pathOf), colour, label }, ...(no.length ? [{ paths: no.map(graphLib.pathOf), colour: "#94a3b8", dashed: true }] : [])]; }
+    if (many) { const [yes, no] = split(found.all, where?.take, where?.keep); return [{ paths: yes.map(pathOf), colour, label }, ...(no.length ? [{ paths: no.map(pathOf), colour: "#94a3b8", dashed: true }] : [])]; }
     // the spotlight first (it dims the page), the list over it (so it stays crisp)
-    return [{ paths: [graphLib.pathOf(found.el)], colour, label, spot: true }, ...fanHl(found.fan, graphLib.pathOf, (paths, c, l, dashed) => ({ paths, colour: c, label: l, dashed }))];
+    return [{ paths: [pathOf(found.el)], colour, label, spot: true }, ...fanHl(found.fan, pathOf, (paths, c, l, dashed) => ({ paths, colour: c, label: l, dashed }))];
   }, [found, colour, label, many, where?.take, where?.keep]);
   const highlights = React.useMemo(() => [...flyingHl, ...base], [flyingHl, base]);
   const [pDoc, setPDoc] = React.useState<Document | null>(null);
@@ -226,7 +236,7 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
         {!docId ? null
           : !traceId ? <div className="p-2 text-muted">this run is not recorded: no pages to show</div>
           : recorded ? (rr.data?.length ? <Player events={rr.data as never} seekTo={at?.ts ? at.ts * 1000 : null} controls={false} pulses={false} glide pace={0} highlights={pHighlights} scrollTo={pFound?.el ?? null} onDocument={setPDoc} onSpot={onSpot} maxHeight={maxHeight} /> : <div className="p-2 text-muted">{rr.isLoading ? "loading the recording…" : "no recording of this page"}</div>)
-          : page.data?.content ? <PageFrame html={page.data.content} base={page.data.final_url ?? page.data.url} stripScripts highlights={highlights} scrollTo={found?.el ? graphLib.pathOf(found.el) : null} onSpot={onSpot} maxHeight={maxHeight} width={compact ? 1100 : 1180} />
+          : page.data?.content ? <PageFrame html={page.data.content} base={page.data.final_url ?? page.data.url} stripScripts highlights={highlights} scrollTo={found?.el ? pathOf(found.el) : null} onSpot={onSpot} maxHeight={maxHeight} width={compact ? 1100 : 1180} />
           : <div className="p-2 text-muted">{page.isLoading ? "loading the page…" : snapN == null ? "the page is being fetched…" : "no snapshot of this page"}</div>}
         {hops && hops.length > 0 && found && !found.el && page.data && <div className="absolute bottom-1 left-1 rounded bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn">this item's element is not on the page as captured</div>}
       </div>

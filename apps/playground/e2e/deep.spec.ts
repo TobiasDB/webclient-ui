@@ -40,3 +40,15 @@ test("a row opens the pages it came from, each value outlined, the links drawn",
   await expect(page.locator(".wc-chain-arrow")).toHaveCount(2);
   await expect.poll(async () => (await layers(page)).flatMap((l) => l.labels)).toEqual(expect.arrayContaining(["→ title", "→ category"]));
 });
+
+test("a folded page is clickable: it opens beside the page it opened, and back", async ({ page }) => {
+  await openTrace(page, ID);
+  const evs = await planEvents(page, ID);
+  let last = -1; evs.forEach((e, i) => { if (e.step === "6/kw:category/12" && e.phase === "result") last = i; });
+  await seek(page, last + 1);
+  await page.getByRole("button", { name: /^page 1/ }).click();
+  await expect(page.getByText(/^page 1 · the link it followed/i)).toBeVisible();
+  await expect(page.getByText(/^page 2$/i)).toBeVisible();
+  await page.getByRole("button", { name: "→ the page on screen" }).click();
+  await expect(page.getByText(/^page 3$/i)).toBeVisible();
+});

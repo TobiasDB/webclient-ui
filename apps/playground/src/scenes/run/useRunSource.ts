@@ -102,7 +102,7 @@ export function useRunSource(active: boolean): RunSource {
   }), [data?.events]);
   const status: RunSource["status"] = data ? (data.status as RunSource["status"]) : runId ? "starting" : "loaded";
   return {
-    plan: spec?.plan ?? tracePlan.data?.plan ?? null, planId: tracePlan.data?.id, stepMap: tracePlan.data?.steps, url: spec?.url, events, samples, status, error: data?.error ?? null, startError, traceId, runId, spec,
+    plan: spec?.plan ?? tracePlan.data?.plan ?? null, planId: tracePlan.data?.id ?? (data as { plan_id?: string } | null)?.plan_id, stepMap: tracePlan.data?.steps, url: spec?.url, events, samples, status, error: data?.error ?? null, startError, traceId, runId, spec,
     start, load: (s) => setParams(() => { const n = new URLSearchParams(); n.set("p", encSpec(s)); return n; }),
     openTrace: (id) => setParams(() => { const n = new URLSearchParams(); n.set("trace", id); return n; }),
     empty: !runId && !spec && !data && !traceParam,

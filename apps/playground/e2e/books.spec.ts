@@ -27,3 +27,14 @@ test("a card clicked opens its details", async ({ page }) => {
   await expect(page.getByText(/once for each item of/)).toBeVisible();
   await expect(page.getByText("40 of 40")).toBeVisible();
 });
+
+test("a nested fan-out's bar shows the item on screen's own rows as cells", async ({ page }) => {
+  await openTrace(page, ID);
+  // the item picked at the end of the run (from its row: the cursor stays where it is)
+  await page.getByRole("button", { name: /▸ rows/ }).click();
+  await page.locator("table tbody tr").nth(4).click();
+  const k = (/watching item (\d+)/.exec(await page.locator("[data-act=follow]").innerText()) ?? [])[1]!;
+  const td = card(page, 'select("td")').first();
+  await expect(td.getByText(`${k}:`, { exact: true })).toBeVisible();
+  await expect(td.locator(`button[title^="item ${k}."]`)).toHaveCount(7);
+});

@@ -280,6 +280,18 @@ export function outputOf(g: Graph, id: string, doc: Document | null, index = 0):
   const els = elementsOf(evalNode(g, id, doc)); return els[Math.min(index, Math.max(0, els.length - 1))] ?? null;
 }
 /** The structural path of an element (child indices from <html>) and back. */
+/** A CACHED `pathOf` for a document that does not change (a snapshot): each parent's children are indexed once --
+ * `pathOf` scans its siblings, which at thousands of matches (a list's every row outlined) is the frame's cost */
+export function pathMemo(): (el: Element) => number[] {
+  const index = new WeakMap<Element, Map<Element, number>>(); const paths = new WeakMap<Element, number[]>();
+  const of = (el: Element): number[] => {
+    const hit = paths.get(el); if (hit) return hit;
+    const parent = el.parentElement; if (!parent) { paths.set(el, []); return []; }
+    let m = index.get(parent); if (!m) { m = new Map(); let i = 0; for (const c of parent.children) m.set(c, i++); index.set(parent, m); }
+    const p = [...of(parent), m.get(el) ?? -1]; paths.set(el, p); return p;
+  };
+  return of;
+}
 export function pathOf(el: Element): number[] { const p: number[] = []; let n: Element | null = el; while (n && n.parentElement) { p.unshift([...n.parentElement.children].indexOf(n)); n = n.parentElement; } return p; }
 export function byPath(doc: Document, p: number[]): Element | null { let el: Element | null = doc.documentElement; for (const i of p) { el = el?.children[i] ?? null; if (!el) return null; } return el; }
 /** Nodes whose required argument is still empty (the plan cannot run yet). */
