@@ -62,6 +62,7 @@ export function typeAfter(parent: NodeType, op: Op, returns: OpReturns = {}): No
   if (n === "attr") return RESOLVABLE.has(String(v(op.args[0]))) ? "Reference" : "Value";
   if (n === "resolve") return "Document";
   if (n === "number" || n === "map" || n === "date" || n === "datetime") return "Value";
+  if (n === "link") return "Reference";  // a URL written as text, made a link (resolvable)
   if (["click", "write", "scroll", "wait_for", "goto", "reload"].includes(n)) return parent === "Element" ? "Element" : "Document";
   const r = returns[n] ?? "Value";
   if (r === "Document") return parent === "Element" ? "Element" : "Document";
@@ -217,6 +218,7 @@ function applyOp(cur: unknown, op: Op): unknown {
   if (op.name === "number") return toNumber(cur, v(op.args[0]) ?? null);
   if (op.name === "date" || op.name === "datetime") return toWhen(cur, { dayfirst: !!v(op.kwargs.dayfirst), time: op.name === "datetime" });
   if (op.name === "map") return mapValue(cur, (a0 ?? {}) as Record<string, unknown>, v(op.args[1]) ?? null);
+  if (op.name === "link") { if (cur == null || cur === "") return null; try { return new URL(String(cur).trim(), typeof a0 === "string" ? a0 : undefined).href; } catch { return String(cur).trim(); } }
   if (cur == null) return null;
   if (op.name === "limit") return Array.isArray(cur) ? cur.slice(0, Number(a0)) : cur;
   if (op.name === "count") return Array.isArray(cur) ? cur.length : isEl(cur) ? cur.children.length : 0;

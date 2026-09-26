@@ -22,7 +22,7 @@ export type Stage = {
 };
 
 const KIND: Record<string, string> = {
-  resolve: "FETCH", paginate: "PAGES", select_all: "EACH", select: "FIND", attr: "READ", number: "CAST", date: "CAST", datetime: "CAST", map: "CAST",
+  resolve: "FETCH", paginate: "PAGES", select_all: "EACH", select: "FIND", attr: "READ", number: "CAST", date: "CAST", datetime: "CAST", map: "CAST", link: "CAST",
   extract: "COLUMNS", project: "EMIT", merge: "MERGE", limit: "LIMIT", filter: "FILTER", click: "ACT", write: "ACT", scroll: "ACT", wait_for: "ACT", download: "READ",
 };
 const argOf = (c: { args: { value?: unknown; plan?: Plan }[]; kwargs: Record<string, { value?: unknown }> }): string | undefined => {
@@ -88,7 +88,7 @@ export type Action = "network" | "fanout" | "find" | "read" | "interact" | "shap
 const ACTION: Record<string, Action> = {
   resolve: "network", paginate: "network", download: "network", goto: "network",
   select_all: "fanout", links: "fanout", select: "find",
-  attr: "read", text_content: "read", number: "read", date: "read", datetime: "read", map: "read",
+  attr: "read", text_content: "read", number: "read", date: "read", datetime: "read", map: "read", link: "read",
   click: "interact", write: "interact", scroll: "interact", wait_for: "interact", hover: "interact", press: "interact",
   extract: "shape", project: "shape", merge: "shape", limit: "shape", filter: "shape",
 };

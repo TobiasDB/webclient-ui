@@ -399,8 +399,15 @@ export function Author() {
   const hls: HL[] = [];
   const outs = graph ? outputs(graph) : [];
   if (graph && node && doc) {
-    outs.forEach((o, i) => { if (pageOf(graph, o.id)?.id !== pageKey) return; const v = values[o.id]; let els = elementsOf(v); if (!els.length && o.parent) els = elementsOf(values[o.parent]); els = els.filter(inRoots); if (els.length) hls.push({ els, colour: fieldColour(i), label: o.output ?? "name from page" }); });
-    if (node.op && !needsArg(node) && node.type !== "Document") { let els = elementsOf(values[node.id]); if (!els.length && node.parent) els = elementsOf(values[node.parent]); els = selfMode ? els : els.filter(inRoots); if (els.length) hls.push({ els, colour: "#2563eb", label: node.op.name }); }
+    // a value's elements are those it was READ from: up the chain to the nearest node holding elements
+    // (select → attr → number: the select's) -- never past the page
+    const elsUp = (id: string): Element[] => {
+      let n: graphLib.GNode | undefined = graph.nodes[id];
+      for (let k = 0; n && k < 12; k++) { const els = elementsOf(values[n.id]); if (els.length) return els; if (!n.parent || n.type === "Document") break; n = graph.nodes[n.parent]; if (n?.type === "Document") break; }
+      return [];
+    };
+    outs.forEach((o, i) => { if (pageOf(graph, o.id)?.id !== pageKey) return; const els = elsUp(o.id).filter(inRoots); if (els.length) hls.push({ els, colour: fieldColour(i), label: o.output ?? "name from page" }); });
+    if (node.op && !needsArg(node) && node.type !== "Document") { let els = elsUp(node.id); els = selfMode ? els : els.filter(inRoots); if (els.length) hls.push({ els, colour: "#2563eb", label: node.op.name }); }
     if (building) { try { const els = (roots.length ? roots : [doc]).flatMap((r) => [...r.querySelectorAll(building)]); hls.push({ els, colour: "#f59e0b", label: "match", dashed: true }); } catch { /* bad selector */ } }
   }
   const [showGroups, setShowGroups] = React.useState(false);

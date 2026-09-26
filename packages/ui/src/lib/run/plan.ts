@@ -77,6 +77,7 @@ export function typeAfter(t: ObjType, op: string, args: Arg[]): ObjType {
   if (op === "select") return "Element";
   if (FANS.has(op)) return "Collection";
   if (op === "attr") return RESOLVABLE.has(String(args[0]?.value)) ? "Reference" : "Value";
+  if (op === "link") return "Reference";
   if (ACTIONS.has(op)) return t === "Element" ? "Element" : "Document";
   if (op === "extract") return t === "Collection" ? "Collection" : "Row";
   if (op === "project") return "Rows";

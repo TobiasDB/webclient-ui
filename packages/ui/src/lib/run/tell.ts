@@ -10,7 +10,7 @@ const VERB: Record<string, string> = {
   resolve: "open", fetch: "open", select: "find", select_all: "find all", attr: "read", text_content: "read the text of",
   extract: "extract", project: "project the rows", merge: "merge", paginate: "page through", links: "collect the links",
   click: "click", write: "type into", scroll: "scroll", wait_for: "wait for", goto: "go to", filter: "filter", limit: "keep the first",
-  number: "read a number from", date: "read a date from", split: "split", step: "then",
+  number: "read a number from", date: "read a date from", split: "split", step: "then", link: "make a link of",
 };
 const q = (v: unknown) => (typeof v === "string" ? `"${v.length > 70 ? `${v.slice(0, 67)}…` : v}"` : JSON.stringify(v)?.slice(0, 80) ?? "");
 const path = (u?: string) => (u ?? "").replace(/^https?:\/\/[^/]+/, "") || u || "";
