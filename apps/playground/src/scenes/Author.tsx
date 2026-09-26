@@ -76,6 +76,11 @@ export function Author() {
   const [paramsOpen, setParamsOpenRaw] = React.useState(false);
   const paramsBtn = React.useRef<HTMLButtonElement>(null);
   const [paramsAt, setParamsAt] = React.useState<{ x: number; y: number } | null>(null);
+  // the page's pager editor: a popover off its toolbar button (several rows: it does not fit the one-line bar)
+  const [pagerOpen, setPagerOpen] = React.useState(false);
+  const pagerBtn = React.useRef<HTMLButtonElement>(null);
+  const [pagerAt, setPagerAt] = React.useState<{ x: number; y: number } | null>(null);
+  React.useLayoutEffect(() => { if (pagerOpen) { const r = pagerBtn.current?.getBoundingClientRect(); setPagerAt(r ? { x: r.left, y: r.bottom + 2 } : null); } }, [pagerOpen, selected]); // eslint-disable-line react-hooks/exhaustive-deps
   // the popover floats over the page (the action bar clips what overflows it), under its button
   const setParamsOpen = (v: boolean) => { setParamsOpenRaw(v); const r = paramsBtn.current?.getBoundingClientRect(); setParamsAt(r ? { x: r.left, y: r.bottom + 2 } : null); };
   React.useLayoutEffect(() => { if (paramsOpen) { const r = paramsBtn.current?.getBoundingClientRect(); if (r) setParamsAt({ x: r.left, y: r.bottom + 2 }); } }, [paramsOpen, selected]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -568,7 +573,7 @@ export function Author() {
         // the page's own hint says how it pages (its best mode); else follow rel=next
         const best = pagerLib.hintOf(views.data?.flags)?.modes[0];
         const p = best ? pagerLib.fromHint(best) : { mode: "next" as const, next: "", max_pages: pagerLib.DEFAULT_MAX };
-        edges.push({ label: ".paginate(…)", tone: "io", hint: best ? `walk the pages: ${best.code} (${best.evidence})` : "walk the pages (rel=next)", onAdd: () => setGraph((g) => setMod(g, node.id, { name: "paginate", args: [], kwargs: pagerLib.toKwargs(p) })) });
+        edges.push({ label: ".paginate(…)", tone: "io", hint: best ? `walk the pages: ${best.code} (${best.evidence})` : "walk the pages (rel=next)", onAdd: () => { setGraph((g) => setMod(g, node.id, { name: "paginate", args: [], kwargs: pagerLib.toKwargs(p) })); setPagerOpen(true); } });
       }
       for (const n of ["title", "text", "markdown", "html", "links"]) if (returns[n]) edges.push({ label: `.${n}()`, hint: `the page's ${n}`, onAdd: () => addEdge(n, [], {}, { output: n }) });
       edges.push({ label: ".download()", hint: "the raw bytes as a file (a PDF, an image): url, filename, content type, size, base64", onAdd: () => addEdge("download", [], {}, { output: "file" }) });
@@ -605,10 +610,10 @@ export function Author() {
     }
     setGraph((g) => updateNode(g, node.id, { op: { ...node.op!, args: node.op!.args.map((a, i) => (i === 0 ? { value } : a)) } })); setEditing(false); setBuilding(null); if (node.op.name === "click" || node.op.name === "write" || node.op.name === "wait_for") { const args = node.op.name === "write" ? [value, String(node.op.args[1]?.value ?? "")] : [value]; runAction(node.op.name, args, false); } };
   React.useEffect(() => {  // Esc: the inspector, then the edit, then up to the parent
-    const h = (e: KeyboardEvent) => { if (!active || e.target instanceof HTMLInputElement) return; if ((e.metaKey || e.ctrlKey) && e.key === "z") { e.preventDefault(); undo(); } else if (e.key === "Escape") { if (paramsOpen) setParamsOpen(false); else if (pickEl) { setPickEl(null); setBuilding(null); } else if (node && needsArg(node)) cancelPick(); else if (editing) setEditing(false); else if (node?.parent) select(node.parent); } };
+    const h = (e: KeyboardEvent) => { if (!active || e.target instanceof HTMLInputElement) return; if ((e.metaKey || e.ctrlKey) && e.key === "z") { e.preventDefault(); undo(); } else if (e.key === "Escape") { if (paramsOpen) setParamsOpen(false); else if (pagerOpen) setPagerOpen(false); else if (pickEl) { setPickEl(null); setBuilding(null); } else if (node && needsArg(node)) cancelPick(); else if (editing) setEditing(false); else if (node?.parent) select(node.parent); } };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, pickEl, editing, node?.parent, node?.id, paramsOpen]);
+  }, [active, pickEl, editing, node?.parent, node?.id, paramsOpen, pagerOpen]);
 
   // -- the plan: compile, preview, run, save / export / import ---------------------------------------
   const plan = React.useMemo<Plan | null>(() => (graph ? compile(graph) : null), [graph]);
@@ -824,8 +829,21 @@ export function Author() {
                   {namedBy === "page" && <input className="h-6 w-24 rounded border border-line bg-surface px-1 font-mono text-[10px]" defaultValue={String(node.alias?.[1]?.args?.[0]?.value ?? "")} onBlur={(e) => e.target.value.trim() && setNaming("page", e.target.value.trim())} title="a selector (relative to the record) whose text names the column" />}
                 </>}
                 {isOutput && node && (node.type === "Document" || node.type === "Collection") && !node.alias && <label className="flex items-center gap-1 text-[11px]" title="merge this nested output's keys into the parent row (project(flatten=[…])): detail.description, detail.info…"><input type="checkbox" checked={!!node.flatten} onChange={(e) => setGraph((g) => updateNode(g, node.id, { flatten: e.target.checked || undefined }))} />flatten</label>}
-                {node?.type === "Document" && node.op?.name === "resolve" && <Pager n={node} hints={pageNode?.id === node.id ? pagerLib.hintOf(views.data?.flags) : null}
-                  onChange={(mod) => { setGraph((g) => setMod(g, node.id, mod, "paginate")); const k = mod?.kwargs; if ((k?.click || k?.scroll) && stateNode) void liveAt(stateNode); }} />}
+                {node?.type === "Document" && node.op?.name === "resolve" && (() => {
+                  const mod = node.mods?.find((x) => x.name === "paginate"); const cur = mod ? pagerLib.fromKwargs(mod.kwargs) : null;
+                  return <div className="relative">
+                    <button ref={pagerBtn} type="button" onClick={() => setPagerOpen(!pagerOpen)} data-testid="pager-open"
+                      className={cn("rounded border border-line px-1.5 py-px font-mono text-[10.5px] text-topic-network hover:bg-surface-2", pagerOpen && "bg-accent-soft")} title="how this page's dataset is paged">
+                      pages: {cur ? pagerLib.label(cur) : "one page"} ▾
+                    </button>
+                    {pagerOpen && <div className="fixed z-50 w-[440px] rounded-md border border-line bg-surface p-1.5 shadow-lg" data-testid="pager-panel"
+                      style={{ left: Math.max(8, Math.min(pagerAt?.x ?? 300, (typeof window !== "undefined" ? window.innerWidth : 1200) - 456)), top: pagerAt?.y ?? 120 }}>
+                      <div className="mb-1 flex items-center text-[10px] font-semibold uppercase tracking-wide text-muted">.paginate() — the pages of this dataset<span className="flex-1" /><button type="button" className="font-normal hover:text-ink" onClick={() => setPagerOpen(false)}>✕</button></div>
+                      <Pager n={node} hints={pageNode?.id === node.id ? pagerLib.hintOf(views.data?.flags) : null}
+                        onChange={(m) => { setGraph((g) => setMod(g, node.id, m, "paginate")); const k = m?.kwargs; if ((k?.click || k?.scroll) && stateNode) void liveAt(stateNode); }} />
+                    </div>}
+                  </div>;
+                })()}
               </>}
             </div>
           </section>
@@ -928,5 +946,5 @@ export function Author() {
 function Pager({ n, hints, onChange }: { n: graphLib.GNode; hints: pagerLib.PaginationHint | null; onChange: (m: graphLib.Mod | null) => void }) {
   const m = n.mods?.find((x) => x.name === "paginate");
   const p = m ? pagerLib.fromKwargs(m.kwargs) : null;
-  return <PagerEditor className="mt-1" value={p} hints={hints} onChange={(np) => onChange(np ? { name: "paginate", args: [], kwargs: pagerLib.toKwargs(np) } : null)} />;
+  return <PagerEditor value={p} hints={hints} onChange={(np) => onChange(np ? { name: "paginate", args: [], kwargs: pagerLib.toKwargs(np) } : null)} />;
 }
