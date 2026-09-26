@@ -16,8 +16,12 @@ type Sel = { addr: string | null; item: runLib.ItemKey | null };
 export function Run() {
   const active = useActive("/run");
   const src = useRunSource(active);
-  const { events, plan, planId, stepMap } = src;
-  const model = React.useMemo(() => (plan ? runLib.planModel(plan, planId, stepMap) : null), [plan, planId, stepMap]);
+  const { plan, planId, stepMap } = src;
+  // strict: the stream says which events are this plan's (a trace where the plan ran among other things) -- then the
+  // run IS those events: the cursor, the timeline and play go through them only
+  const strict = React.useMemo(() => !!planId && src.events.some((e) => (e as { plan_id?: string }).plan_id === planId), [planId, src.events]);
+  const events = React.useMemo(() => (strict ? src.events.filter((e) => (e as { plan_id?: string }).plan_id === planId) : src.events), [strict, src.events, planId]);
+  const model = React.useMemo(() => (plan ? runLib.planModel(plan, planId, stepMap, strict) : null), [plan, planId, stepMap, strict]);
 
   // the cursor: live follows the end; playing advances it; scrubbing sets it
   const [t, setT] = React.useState(0);

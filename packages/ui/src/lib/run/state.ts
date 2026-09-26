@@ -67,6 +67,7 @@ export function reduce(s: RunState, e: RunEvent, i: number, m: PlanModel | null)
   // another plan's run in the same stream (a trace can hold several): not this plan's
   const pid = (e as { plan_id?: string | null }).plan_id;
   if (m?.planId && pid && pid !== m.planId) return;
+  if (m?.strict && pid !== m.planId) return;  // not stamped as this plan's: something else the script did
   const d = docOf(e); const item = keyOf(e.item);
   const topic = e.topic ?? "";
   // the node an event belongs to: its own step, or the nearest step the model knows

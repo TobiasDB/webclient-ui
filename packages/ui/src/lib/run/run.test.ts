@@ -175,3 +175,24 @@ describe("the same step is one node", () => {
     expect(L.pos.get("4/kw:link/2")!.lane).not.toBe(L.pos.get("4/kw:title/2")!.lane);
   });
 });
+
+describe("a run among other things", () => {
+  it("strict: only events stamped with the plan's id are its run", () => {
+    const pm = planModel(fixture.plan as unknown as Plan, "p1", undefined, true);
+    const evs = [
+      { topic: "plan", phase: "result", step: "0", plan_id: "p1", detail: { op: "resolve", kind: "Document", document_id: "doc:1" }, document_id: "doc:1" },
+      { topic: "snapshot", phase: "fetch", document_id: "doc:9", url: "http://elsewhere/" },  // the script did this too
+    ] as unknown as RunEvent[];
+    const st = stateAt(evs, pm);
+    expect(st.nodes.get("0")!.done).toBe(1);
+    expect(st.docs.has("doc:9")).toBe(false);
+  });
+});
+
+describe("a select_all step itself", () => {
+  it("found every match: all of them, not the first", () => {
+    const w = locate(m, stateAt(events, m), "2", "")!;
+    expect(w.many).toBe(true);
+    expect(w.hops).toEqual([{ sel: "li.r", all: true }]);
+  });
+});

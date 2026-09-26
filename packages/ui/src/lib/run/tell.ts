@@ -34,6 +34,7 @@ export function tell(e: RunEvent, m: PlanModel | null): Told {
           case "Collection": return { kind: "result", text: `${op === "paginate" ? "paged through" : "found"} ${d.n} ${op === "paginate" ? "pages" : "matches"}${ms}` };
           case "Element": return { kind: "result", text: `found the element${arg ? ` ${q(arg)}` : ""}${ms}` };
           case "Row": return { kind: "row", text: `row: ${q(d.preview)}` };
+          case "Reference": return { kind: "result", text: `read the link ${path(d.url as string) || q(d.preview)}${ms}` };
           default: return { kind: "result", text: `${op === "attr" || op === "text_content" ? "read" : `${op} →`} ${q(d.preview)}${ms}` };
         }
       }

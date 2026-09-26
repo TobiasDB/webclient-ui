@@ -98,6 +98,7 @@ function ObjectLine({ type, node, res, doc, rootUrl, rowsCount, ran }: { type: s
     </span>;
   }
   if (type === "Collection") { const m = memberOf(node, res).toLowerCase(); return <span className={muted}>{res?.n != null ? `${res.n.toLocaleString()} ${m}${res.n === 1 ? "" : "s"}` : "…"}</span>; }
+  if (type === "Reference" && res?.url) return <span className="min-w-0 truncate rounded bg-surface-2 px-1 font-mono text-ink" title={res.url}>{res.url.replace(/^https?:\/\/[^/]+/, "") || res.url}</span>;
   if (type === "Value" || type === "Reference") return <span className="min-w-0 truncate rounded bg-ok-soft px-1 font-mono text-ink" title={String(res?.preview ?? "")}>{res?.preview !== undefined ? fmt(res.preview) : "…"}</span>;
   if (type === "Element") return <span className={muted}>{res ? "the element" : "…"}</span>;
   if (type === "Rows" || type === "Row") return <span className={muted}>{rowsCount != null ? `${rowsCount.toLocaleString()} row${rowsCount === 1 ? "" : "s"}` : ""}</span>;

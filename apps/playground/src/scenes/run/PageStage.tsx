@@ -102,7 +102,7 @@ function Chain({ traceId, events, model, state, full, item, shown, folded, colou
 }
 
 /** ONE page at the moment: its snapshot or recording, the element spotlit, (optionally) the event card and its requests */
-function PagePane({ traceId, events, state, full, where, item, colour, label, card, requests, compact, title, onSpot, maxHeight }: { traceId: string | null; events: RunEvent[]; state: runLib.RunState; full: runLib.RunState; where: { doc: string; hops: runLib.Hop[] } | null; item: string; colour: string; label: string; card?: React.ReactNode; requests?: boolean; compact?: boolean; title?: string; onSpot?: (r: Rect | null) => void; maxHeight: number }) {
+function PagePane({ traceId, events, state, full, where, item, colour, label, card, requests, compact, title, onSpot, maxHeight }: { traceId: string | null; events: RunEvent[]; state: runLib.RunState; full: runLib.RunState; where: { doc: string; hops: runLib.Hop[]; many?: boolean } | null; item: string; colour: string; label: string; card?: React.ReactNode; requests?: boolean; compact?: boolean; title?: string; onSpot?: (r: Rect | null) => void; maxHeight: number }) {
   const docId = where?.doc;
   const dr = docId ? state.docs.get(docId) : undefined;
   const recorded = !!(docId && full.docs.get(docId)?.rrweb.length);
@@ -112,20 +112,24 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
   const hops = where?.hops;
   const parsed = React.useMemo(() => (page.data?.content ? new DOMParser().parseFromString(withAgent(page.data.content, page.data.final_url ?? page.data.url, true), "text/html") : null), [page.data]);
   const found = React.useMemo(() => (parsed && hops ? runLib.resolveHops(parsed, hops) : null), [parsed, hops]);
+  const many = !!where?.many;
   const highlights = React.useMemo(() => {
     if (!found?.el) return [];
+    // a select_all itself: every match is what it found -- all outlined alike, the count on the first
+    if (many) return [{ paths: found.all.slice(0, 200).map(graphLib.pathOf), colour, label }];  // the frame adds the ×N
     const others = found.all.filter((x) => x !== found.el).slice(0, 60);
     return [...(others.length ? [{ paths: others.map(graphLib.pathOf), colour, dashed: true }] : []), { paths: [graphLib.pathOf(found.el)], colour, label, spot: true }];
-  }, [found, colour, label]);
+  }, [found, colour, label, many]);
   const [pDoc, setPDoc] = React.useState<Document | null>(null);
   const [tick, setTick] = React.useState(0);
   React.useEffect(() => { const a = setTimeout(() => setTick((x) => x + 1), 150); const b = setTimeout(() => setTick((x) => x + 1), 700); return () => { clearTimeout(a); clearTimeout(b); }; }, [state.n, pDoc]);
   const pFound = React.useMemo(() => (recorded && pDoc && hops ? runLib.resolveHops(pDoc, hops) : null), [recorded, pDoc, hops, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const pHighlights = React.useMemo(() => {
     if (!pFound?.el || !pFound.el.isConnected) return [];
+    if (many) return [{ selector: "", els: pFound.all.slice(0, 200), colour, label, key: "all" }];  // the player adds the ×N
     const others = pFound.all.filter((x) => x !== pFound.el).slice(0, 60);
     return [...(others.length ? [{ selector: "", els: others, colour, dashed: true, key: "others" }] : []), { selector: "", els: [pFound.el], colour, label, key: "own", spot: true }];
-  }, [pFound, colour, label]);
+  }, [pFound, colour, label, many]);
   const at = events[Math.max(0, state.n - 1)];
   const reqs = requests && dr ? dr.requests.map((k) => state.requests[k]!).filter(Boolean) : [];
   return (

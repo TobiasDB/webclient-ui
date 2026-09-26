@@ -8,7 +8,7 @@ import type { ItemKey, RunState } from "./state";
 import { lineage, type PlanModel, type PNode } from "./plan";
 
 export type Hop = { sel: string; index?: number; all?: boolean };
-export type Where = { doc: string; hops: Hop[]; op: string; addr: string };
+export type Where = { doc: string; hops: Hop[]; op: string; addr: string; /** the step found MANY (a select_all itself): all of them are its result */ many?: boolean };
 
 const PAGE_OPS = new Set(["resolve", "fetch", "paginate", "click", "write", "scroll", "wait_for", "goto", "reload", "step"]);
 const isDoc = (d: unknown): d is string => typeof d === "string" && d.startsWith("doc:");
@@ -65,7 +65,10 @@ export function locate(m: PlanModel, s: RunState, addr: string, item: ItemKey): 
     }
   }
   if (acting) hops.push({ sel: acting.arg! });
-  return { doc, hops, op: target.op, addr: target.addr };
+  // the fan-out step ITSELF (not one of its items): what it found is every match
+  const many = (target.op === "select_all" || target.op === "links") && !lin.some((x) => x.per === target.addr && x !== target && item !== "");
+  if (many) { const last = hops[hops.length - 1]; if (last && last.sel === target.arg) hops[hops.length - 1] = { sel: last.sel, all: true }; }
+  return { doc, hops, op: target.op, addr: target.addr, ...(many ? { many } : {}) };
 }
 
 const ACTION_OPS = new Set(["click", "write", "scroll", "wait_for", "hover", "press"]);

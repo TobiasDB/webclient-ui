@@ -47,6 +47,9 @@ export type PNode = {
 export type PlanModel = {
   /** the plan's id (the package's `Plan.id`), when known: events stamped with ANOTHER plan's id are not this run's */
   planId?: string;
+  /** only this plan's events are its run: the stream carries its id (a trace of a script that ran the plan among
+   * other things -- the other things are not the plan's run) */
+  strict?: boolean;
   /** a recording's recorded steps (an event's `step`: "@n3") and where they are in this plan ("4/kw:title/2") */
   stepMap?: Record<string, string>;
   rootType: ObjType;
@@ -85,7 +88,7 @@ export function typeAfter(t: ObjType, op: string, args: Arg[]): ObjType {
 
 const short = (x: unknown) => { const s = typeof x === "string" ? JSON.stringify(x) : String(x); return s.length > 40 ? `${s.slice(0, 37)}…"` : s; };
 
-export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, string>): PlanModel {
+export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, string>, strict = false): PlanModel {
   const nodes: PNode[] = [];
   const columns: { name: string; from: string }[] = [];
   const rootType: ObjType = plan.root === "Reference" ? "Reference" : "Document";
@@ -157,7 +160,7 @@ export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, 
     if (first) { n.same = first; members.get(first)!.push(n.addr); members.delete(n.addr); }
     else key.set(k, n.addr);
   }
-  return { planId, stepMap, rootType, nodes, byAddr: new Map(nodes.map((n) => [n.addr, n])), columns, members };
+  return { planId, strict, stepMap, rootType, nodes, byAddr: new Map(nodes.map((n) => [n.addr, n])), columns, members };
 }
 
 /** a node's chain of ancestors by input (root first), itself last */
