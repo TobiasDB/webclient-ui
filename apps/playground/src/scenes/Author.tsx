@@ -2,12 +2,13 @@ import * as React from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, ParamsEditor, PipelineGraph, Player, Select, SkeletonPane, checkPlan, stagesLib,
+  AsCode, Button, Chip, CodeBlock, DataFrame, ElementInspector, EmptyState, FlagRow, GraphView, Input, MediaBar, PageFrame, ParamsEditor, Player, RunGraph, runLib, Select, SkeletonPane, checkPlan, stagesLib,
   TabPanel, Tabs, Toolbar, ToolbarSpacer, cn, describe, fieldColour, graphLib, needsArg, outputName, planLib, selectors, toolAsCode, usePlayerController,
   type Edge, type FrameAction, type OpParam, type FrameHighlight, type Graph, type Highlight, type InspectAdd, type InspectRead, type Pick, type Plan, type RREvent,
 } from "@webclient/ui";
 import { API_URL, api, ApiError } from "../lib/api";
 import { call as callBody, plan as planBody, useActive, useSession } from "../lib/session";
+import { useTryRun } from "./run/useTryRun";
 import { encSpec } from "./Run";
 
 const { addNode, updateNode, setMod, opOf, emptyGraph, children, pageOf, stateOf, stepsOfPage, evalAt, ACTIONS, evalNode, elementsOf, sample, hrefOf, compile, decompile, outputs, inputOf, pathOf, byPath, incomplete, isEl } = graphLib;
@@ -639,7 +640,13 @@ export function Author() {
   /** Run ▶: the plan goes to the Run workspace, which executes it live (stages, streamed rows, trace) */
   // the plan as a pipeline graph, in a popup (the Run workspace's graph, with nothing run)
   const [graphOpen, setGraphOpen] = React.useState(false);
-  const planStages = React.useMemo(() => (graphOpen && plan ? stagesLib.stagesOf(plan) : []), [graphOpen, plan]);
+  // the plan as Run shows it -- the same model, the same graph -- and TRIED here: run in the background, its
+  // events folded into the graph (each step's items, values, pages), without leaving the page
+  const tryRun = useTryRun(plan ?? null, graph?.url, sessionId ?? null);
+  const tryModel = React.useMemo(() => (graphOpen && plan ? runLib.planModel(plan, tryRun.planId) : null), [graphOpen, plan, tryRun.planId]);
+  const tryFolder = React.useRef(new runLib.RunFolder());
+  const tryState = React.useMemo(() => tryFolder.current.at(tryRun.events, tryModel, tryRun.events.length), [tryRun.events, tryModel]);
+  const [tryItem, setTryItem] = React.useState<string | null>(null);
   React.useEffect(() => {
     if (!graphOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopImmediatePropagation(); e.preventDefault(); setGraphOpen(false); } };
@@ -650,10 +657,12 @@ export function Author() {
       <div className="flex h-full w-full max-w-[1500px] flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="the plan as a graph">
         <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line px-2 text-[11px]">
           <span className="font-semibold">Plan graph</span><span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted" title={planLib.describe(plan)}>{planLib.describe(plan)}</span>
+          {tryRun.status !== "idle" && <span className={cn("text-[10px]", tryRun.status === "error" ? "text-bad" : "text-muted")} title={tryRun.error ?? undefined}>{tryRun.status === "running" ? "running…" : tryRun.status === "error" ? `failed${tryRun.error ? `: ${tryRun.error}` : ""}` : "done"} · {tryRun.rows} rows · {tryState.docs.size} pages</span>}
+          <button type="button" data-act="try" disabled={!outs.length || missing.length > 0 || tryRun.status === "running"} onClick={() => { setTryItem(null); tryRun.start(); }} className="rounded border border-accent px-1.5 text-[10px] leading-4 text-accent hover:bg-accent-soft disabled:opacity-40" title="run the plan here, in the background: the graph fills in with what each step made">{tryRun.status === "idle" ? "Try ▶" : "Try again ▶"}</button>
           <button type="button" disabled={!outs.length || missing.length > 0} onClick={() => { setGraphOpen(false); openRun(); }} className="rounded bg-accent px-1.5 text-[10px] leading-4 text-white disabled:opacity-40">Open in Run ▸</button>
           <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => setGraphOpen(false)} title="close (Esc)">✕</button>
         </div>
-        <div className="min-h-0 flex-1"><PipelineGraph stages={planStages} stats={{}} at={0} running={false} live={false} /></div>
+        <div className="min-h-0 flex-1">{tryModel && <RunGraph model={tryModel} state={tryState} item={tryItem ?? runLib.followItem(tryState, tryModel)} rootUrl={graph?.url} onPick={(k) => setTryItem(k)} />}</div>
       </div>
     </div>
   ) : null;
