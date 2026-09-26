@@ -62,7 +62,7 @@ export function StepCard({ node, run, expected, item, inst, doc, items, itemsExp
       {/* the object it made */}
       <div className="flex min-h-0 flex-1 flex-col gap-1 px-1.5 py-1">
         <div className="flex min-w-0 items-center gap-1">
-          <span className="shrink-0 rounded px-1 text-[9px] font-semibold uppercase tracking-wide text-white" style={{ background: TYPE_COLOUR[type] ?? "#64748b" }}>{type === "Rows" ? "Table" : type}</span>
+          <span className="shrink-0 rounded px-1 text-[9px] font-semibold tracking-wide text-white" style={{ background: TYPE_COLOUR[type] ?? "#64748b" }} title={type === "Collection" ? `a list of ${memberOf(node, res)}s` : undefined}>{type === "Rows" ? "TABLE" : type === "Collection" ? `${memberOf(node, res).toUpperCase()}[]` : type.toUpperCase()}</span>
           <ObjectLine type={type} node={node} res={res} doc={doc} rootUrl={rootUrl} rowsCount={rowsCount} ran={ran} />
         </div>
         {type === "Collection" && items != null && (
@@ -73,6 +73,12 @@ export function StepCard({ node, run, expected, item, inst, doc, items, itemsExp
         {type !== "Collection" && perItem && run && <ItemStrip insts={run.insts} expected={expected} selected={item || null} onPick={onPick} max={84} />}
         {type === "Collection" && parallel && parallel.limit > 1 && <span className="font-mono text-[9px] text-muted" title={`up to ${parallel.limit} run at once (bound by the ${parallel.bound} pool)`}>×{parallel.limit} at once · {parallel.bound}</span>}
         {(type === "Rows" || type === "Row") && columns && <div className="flex flex-wrap gap-1">{columns.map((c) => <span key={c} className="rounded bg-surface-2 px-1 font-mono text-[9.5px]">{c}</span>)}</div>}
+        {type === "Document" && doc && doc.actions.length > 0 && (
+          <div className="flex min-w-0 flex-wrap gap-1" title="what was done on this page">
+            {doc.actions.slice(-3).map((a) => <span key={a.i} className="max-w-full truncate rounded bg-[#fff1e6] px-1 font-mono text-[9px] text-[#c2410c]">{a.action}{a.selector ? ` ${a.selector}` : ""}</span>)}
+            {doc.actions.length > 3 && <span className="text-[9px] text-muted">+{doc.actions.length - 3}</span>}
+          </div>
+        )}
         {res && res.ok === false && <span className="truncate font-mono text-[9.5px] text-bad" title={res.message ?? res.error}>✕ {res.error}{res.message ? ` · ${res.message}` : ""}</span>}
       </div>
     </div>
@@ -91,14 +97,21 @@ function ObjectLine({ type, node, res, doc, rootUrl, rowsCount, ran }: { type: s
       {doc?.tier && <span className="shrink-0 rounded bg-surface-2 px-1 text-[9px] text-muted">{doc.tier}</span>}
     </span>;
   }
-  if (type === "Collection") return <span className={muted}>{res?.n != null ? `${res.n.toLocaleString()} item${res.n === 1 ? "" : "s"}` : "…"}</span>;
+  if (type === "Collection") { const m = memberOf(node, res).toLowerCase(); return <span className={muted}>{res?.n != null ? `${res.n.toLocaleString()} ${m}${res.n === 1 ? "" : "s"}` : "…"}</span>; }
   if (type === "Value" || type === "Reference") return <span className="min-w-0 truncate rounded bg-ok-soft px-1 font-mono text-ink" title={String(res?.preview ?? "")}>{res?.preview !== undefined ? fmt(res.preview) : "…"}</span>;
   if (type === "Element") return <span className={muted}>{res ? "the element" : "…"}</span>;
   if (type === "Rows" || type === "Row") return <span className={muted}>{rowsCount != null ? `${rowsCount.toLocaleString()} row${rowsCount === 1 ? "" : "s"}` : ""}</span>;
   return null;
 }
 
+/** what a collection holds: what the step says (the package's result), else what the op gives (select_all:
+ * elements -- parts of the page; paginate: pages; links: links) */
+function memberOf(node: PNode | null, res?: Inst["result"]): string {
+  if (res?.of) return res.of;
+  return node?.op === "paginate" ? "Document" : node?.op === "links" ? "Reference" : node?.op === "extract" ? "Row" : "Element";
+}
+
 const EXPECT_EACH: Record<string, string> = { Document: "its page", Element: "its element", Value: "its value", Reference: "its link", Collection: "its matches" };
-const EXPECT: Record<string, string> = { Document: "a page", Collection: "its matches", Element: "an element", Value: "a value", Reference: "a link", Rows: "rows", Row: "a row" };
+const EXPECT: Record<string, string> = { Document: "a page", Collection: "a list of its matches", Element: "an element", Value: "a value", Reference: "a link", Rows: "rows", Row: "a row" };
 const shortUrl = (u?: string) => (u ?? "").replace(/^https?:\/\//, "").replace(/\/$/, "") || "—";
 const fmt = (v: unknown) => { const s = typeof v === "string" ? JSON.stringify(v) : JSON.stringify(v); return s && s.length > 48 ? `${s.slice(0, 45)}…` : s; };

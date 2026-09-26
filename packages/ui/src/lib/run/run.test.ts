@@ -114,3 +114,21 @@ describe("a page step still running", () => {
     expect(w.hops).toEqual([{ sel: "li.r", index: 2 }, { sel: "a" }]);
   });
 });
+
+// an IMPERATIVE script, recorded (wc.record): a loop over the cards reading each, following each card's link --
+// the trace carries the plan it compiled to and where each recorded read (@n3) landed in it
+import recorded from "./fixtures/recorded-loop.json";
+describe("a recorded script plays as its plan", () => {
+  const rm = planModel(recorded.plan as unknown as Plan, undefined, recorded.steps as Record<string, string>);
+  const rs = stateAt(recorded.events as unknown as RunEvent[], rm);
+  it("places every recorded read on its step, per item", () => {
+    expect(rs.nodes.get("4/kw:b_text/2")!.insts.get("1")!.result!.preview).toBe("1");
+    expect(rs.nodes.get("4/kw:p_desc_text/4")!.done).toBe(3);
+    expect(rs.nodes.get("2")!.insts.get("")!.result).toMatchObject({ kind: "Collection", n: 3 });
+    expect([...rs.docs.values()].filter((d) => d.step === "4/kw:p_desc_text/4").map((d) => d.item).sort()).toEqual(["0", "1", "2"]);
+  });
+  it("finds the item's element on the page", () => {
+    const w = locate(rm, rs, "4/kw:b_text/2", "1")!;
+    expect(w.hops).toEqual([{ sel: "li.r", index: 1 }, { sel: "b" }]);
+  });
+});

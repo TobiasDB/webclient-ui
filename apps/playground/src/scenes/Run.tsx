@@ -16,8 +16,8 @@ type Sel = { addr: string | null; item: runLib.ItemKey | null };
 export function Run() {
   const active = useActive("/run");
   const src = useRunSource(active);
-  const { events, plan, planId } = src;
-  const model = React.useMemo(() => (plan ? runLib.planModel(plan, planId) : null), [plan, planId]);
+  const { events, plan, planId, stepMap } = src;
+  const model = React.useMemo(() => (plan ? runLib.planModel(plan, planId, stepMap) : null), [plan, planId, stepMap]);
 
   // the cursor: live follows the end; playing advances it; scrubbing sets it
   const [t, setT] = React.useState(0);
@@ -77,6 +77,9 @@ export function Run() {
   if (src.empty) return <div className="flex h-full flex-col items-center justify-start gap-3 overflow-auto p-6"><EmptyState title="Nothing loaded" hint="Open a plan from Author (Open in Run), paste one below, or replay a recorded run. A plan loads as its graph; Run ▶ executes it and records it." /><PlanLoader onLoad={src.load} /><TraceList onOpen={src.openTrace} /></div>;
 
   const running = src.status === "running" || src.status === "starting";
+  // the resources at the moment on screen (the last sample up to it)
+  const sample = (() => { let b: (typeof src.samples)[number] | undefined; for (const x of src.samples) { if (x.ts <= (state.t || Infinity)) b = x; else break; } return b; })();
+  const maxMem = Math.max(0, ...src.samples.map((x) => x.mem_mb ?? 0)), maxCpu = Math.max(0, ...src.samples.map((x) => x.cpu_pct ?? 0));
   const errors = state.errors.filter((e) => e.raised);
   const secs = state.t && state.t0 ? (state.t - state.t0).toFixed(1) : "0.0";
   const rootUrl = src.url ?? (full.docs.values().next().value as runLib.DocRun | undefined)?.url;
@@ -87,6 +90,7 @@ export function Run() {
         {src.spec && <button type="button" data-act="run" className="rounded bg-accent px-2 py-px font-medium text-white hover:brightness-110 disabled:opacity-40" onClick={src.start} disabled={running} title="execute the plan (recorded as a trace)">{src.runId ? "Run again ▶" : "Run ▶"}</button>}
         <Chip tone={src.status === "error" ? "bad" : running ? "accent" : src.status === "done" ? "ok" : "neutral"} dot>{src.startError ? "failed to start" : src.status === "loaded" ? "the plan · not run" : src.status}</Chip>
         <span className="whitespace-nowrap text-muted">{secs}s · {state.rows.length} rows · {state.docs.size} pages · {state.requests.length} requests{errors.length ? <b className="text-bad"> · {errors.length} error{errors.length > 1 ? "s" : ""}</b> : null}</span>
+        {sample && <span className="whitespace-nowrap font-mono text-[10px] text-muted" title={`at this moment (max over the run: ${Math.round(maxMem)} MB, ${Math.round(maxCpu)}% CPU)`}>{sample.mem_mb != null ? `${Math.round(sample.mem_mb)} MB` : ""}{sample.cpu_pct != null ? ` · ${Math.round(sample.cpu_pct)}% cpu` : ""}{sample.pages_total ? ` · ${sample.pages_total - (sample.pages_free ?? 0)}/${sample.pages_total} pages` : ""}</span>}
         <div className="flex items-center gap-0.5">
           <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => seek(0)} title="the start (the plan, nothing run)">⏮</button>
           <button type="button" className="px-1 text-muted hover:text-ink" onClick={() => seek(moment(t, -1))} title="the previous moment (←)">◀</button>
@@ -123,7 +127,7 @@ export function Run() {
         </div>
         {/* everything on one time axis */}
         <Fold title="timeline" hint={timeOpen ? "click or drag to go to a moment" : `${full.requests.length} requests · ${full.docs.size} pages · ${full.actions.length} actions`} open={timeOpen} onToggle={() => setTimeOpen(!timeOpen)} className={timeOpen ? "max-h-[180px]" : ""}>
-          {events.length ? <RunTimeline className="min-h-0 flex-1 p-1" events={events} model={model} full={full} at={t} onSeek={seek} addr={sel.addr} onLane={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a }))} /> : <div className="p-2 text-muted">nothing has run yet</div>}
+          {events.length ? <RunTimeline className="min-h-0 flex-1 p-1" events={events} model={model} full={full} at={t} onSeek={seek} samples={src.samples} addr={sel.addr} onLane={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a }))} /> : <div className="p-2 text-muted">nothing has run yet</div>}
         </Fold>
         <div className={cn("grid min-h-0 grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] items-start gap-1", (rowsOpen || evOpen) && "h-[30%] items-stretch")}>
           <Fold title="rows" hint={`${state.rows.length} projected${!live ? " so far" : ""} · click one to see where it came from`} open={rowsOpen} onToggle={() => setRowsOpen(!rowsOpen)}>

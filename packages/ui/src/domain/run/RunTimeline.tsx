@@ -14,6 +14,8 @@ export type RunTimelineProps = {
   /** a step selected: its lane is outlined */
   addr?: string | null;
   onLane?: (addr: string) => void;
+  /** resource samples (memory MB, CPU %) while it ran: drawn as lanes */
+  samples?: { ts: number; mem_mb?: number; cpu_pct?: number }[];
   className?: string;
 };
 
@@ -26,7 +28,7 @@ type MarkLane = { id: string; label: string; colour: string; items: M[]; tall?: 
  * ran then -- a fan-out is a band as tall as its parallelism, red where items failed), then the pages opened,
  * every network request (navigations blue, background requests orange, assets grey, failures red), the actions,
  * the DOM changes and the errors. A cursor at the moment on screen; click or drag to go there. */
-export function RunTimeline({ events, model, full, at, onSeek, addr, onLane, className }: RunTimelineProps) {
+export function RunTimeline({ events, model, full, at, onSeek, addr, onLane, samples = [], className }: RunTimelineProps) {
   const box = React.useRef<HTMLDivElement>(null);
   const [w, setW] = React.useState(700);
   React.useLayoutEffect(() => { const el = box.current; if (!el) return; const f = () => setW(Math.max(200, el.clientWidth - LABEL - 10)); f(); const ro = new ResizeObserver(f); ro.observe(el); return () => ro.disconnect(); }, []);
@@ -64,7 +66,13 @@ export function RunTimeline({ events, model, full, at, onSeek, addr, onLane, cla
     return lanes.filter((l) => l.items.length);
   }, [full, events]);
 
-  const H = (steps.length + marks.length) * (LANE + GAP) + 14;
+  // resources: a lane each, the value as an area (scaled to its max over the run)
+  const gauges = React.useMemo(() => ([["mem_mb", "memory", "#0ea5e9", "MB"], ["cpu_pct", "CPU", "#f59e0b", "%"]] as const).map(([k, label, colour, unit]) => {
+    const pts = samples.filter((x) => typeof x[k] === "number").map((x) => ({ t: x.ts, v: x[k] as number }));
+    const max = Math.max(1, ...pts.map((p) => p.v));
+    return { k, label, colour, unit, pts, max };
+  }).filter((g) => g.pts.length > 1), [samples]);
+  const H = (steps.length + marks.length + gauges.length) * (LANE + GAP) + 14;
   const cursor = at > 0 ? X(ts[Math.min(at, ts.length) - 1] ?? t0) : 0;
   const seekX = (x: number) => {
     if (!ts.length) return; const t = t0 + (Math.max(0, Math.min(w, x)) / w) * (t1 - t0);
@@ -83,6 +91,11 @@ export function RunTimeline({ events, model, full, at, onSeek, addr, onLane, cla
               className={cn("flex w-full items-center gap-1 truncate pr-1 text-left leading-none", addr === s.n.addr ? "text-accent" : "text-muted hover:text-ink")} style={{ height: LANE, marginBottom: GAP, paddingLeft: 2 + s.n.depth * 6 }}>
               <span className="size-1.5 shrink-0 rounded-full" style={{ background: s.colour }} /><span className="truncate">{s.n.label}</span>
             </button>
+          ))}
+          {gauges.map((g) => (
+            <div key={g.k} className="flex items-center gap-1 truncate pr-1 font-sans font-medium uppercase leading-none tracking-wide text-muted" style={{ height: LANE, marginBottom: GAP }} title={`max ${Math.round(g.max)} ${g.unit}`}>
+              <span className="size-1.5 shrink-0 rounded-sm" style={{ background: g.colour }} />{g.label} <span className="font-mono normal-case text-muted/70">≤{Math.round(g.max)}{g.unit}</span>
+            </div>
           ))}
           {marks.map((l) => (
             <div key={l.id} className="flex items-center gap-1 truncate pr-1 font-sans font-medium uppercase leading-none tracking-wide text-muted" style={{ height: LANE, marginBottom: GAP }}>
@@ -104,8 +117,16 @@ export function RunTimeline({ events, model, full, at, onSeek, addr, onLane, cla
             }
             return <g key={s.n.addr}>{addr === s.n.addr && <rect x={0} y={y0 - 1} width={w} height={LANE + 2} fill="#2457e6" opacity={0.08} />}<line x1={0} x2={w} y1={y0 + LANE} y2={y0 + LANE} stroke="#e2e8f0" />{cols}</g>;
           })}
+          {gauges.map((g, gi) => {
+            const y0 = (steps.length + gi) * (LANE + GAP);
+            const d = g.pts.map((p, i) => `${i ? "L" : "M"}${X(p.t).toFixed(1)},${(y0 + LANE - (p.v / g.max) * LANE).toFixed(1)}`).join(" ");
+            const last = g.pts[g.pts.length - 1]!, first = g.pts[0]!;
+            return <g key={g.k}><line x1={0} x2={w} y1={y0 + LANE} y2={y0 + LANE} stroke="#e2e8f0" />
+              <path d={`${d} L${X(last.t).toFixed(1)},${y0 + LANE} L${X(first.t).toFixed(1)},${y0 + LANE} Z`} fill={g.colour} opacity={0.25} />
+              <path d={d} fill="none" stroke={g.colour} strokeWidth={1} /></g>;
+          })}
           {marks.map((l, mi) => {
-            const y0 = (steps.length + mi) * (LANE + GAP);
+            const y0 = (steps.length + gauges.length + mi) * (LANE + GAP);
             return <g key={l.id}><line x1={0} x2={w} y1={y0 + LANE} y2={y0 + LANE} stroke="#e2e8f0" />
               {l.items.slice(0, 5000).map((m, i) => {
                 const x1 = X(m.t); const x2 = m.t2 != null ? Math.max(x1 + 1.5, X(m.t2)) : x1 + 1.5;

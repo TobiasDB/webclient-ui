@@ -14,7 +14,7 @@ export const keyOf = (item: number[] | null | undefined): ItemKey => (item ?? []
 
 export type Result = {
   op?: string; kind?: string; document_id?: string | null; parent?: string | null; url?: string;
-  n?: number; preview?: unknown; ms?: number; ok?: boolean; error?: string; message?: string;
+  n?: number; of?: string; preview?: unknown; ms?: number; ok?: boolean; error?: string; message?: string;
 };
 /** one run of a step for one item */
 export type Inst = { item: ItemKey; state: "running" | "done" | "failed"; first: number; last: number; t0: number; t1?: number; result?: Result };
@@ -24,7 +24,7 @@ export type Request = { i: number; t: number; doc?: string; step?: string; item:
 export type DocRun = {
   id: string; url?: string; status?: number; tier?: string; step?: string; item: ItemKey;
   /** event indexes: its snapshots (with their phase), rrweb chunks, requests, actions, errors */
-  snaps: { i: number; phase?: string }[]; rrweb: number[]; requests: number[]; actions: number[]; errors: number[];
+  snaps: { i: number; phase?: string }[]; rrweb: number[]; requests: number[]; actions: { i: number; action: string; selector?: string; text?: string }[]; errors: number[];
   first: number; last: number;
 };
 export type Row = { i: number; item: ItemKey; row: unknown };
@@ -55,9 +55,9 @@ const stepOf = (e: RunEvent) => (e as { step?: string | null }).step ?? undefine
 function node(s: RunState, addr: string): NodeRun {
   let n = s.nodes.get(addr); if (!n) { n = { addr, insts: new Map(), done: 0, failed: 0, running: 0 }; s.nodes.set(addr, n); } return n;
 }
-function doc(s: RunState, id: string, i: number, e: RunEvent): DocRun {
+function doc(s: RunState, id: string, i: number, e: RunEvent, addr?: string): DocRun {
   let d = s.docs.get(id);
-  if (!d) { d = { id, step: stepOf(e), item: keyOf(e.item), snaps: [], rrweb: [], requests: [], actions: [], errors: [], first: i, last: i }; s.docs.set(id, d); }
+  if (!d) { d = { id, step: addr ?? stepOf(e), item: keyOf(e.item), snaps: [], rrweb: [], requests: [], actions: [], errors: [], first: i, last: i }; s.docs.set(id, d); }
   d.last = i; return d;
 }
 
@@ -99,22 +99,23 @@ export function reduce(s: RunState, e: RunEvent, i: number, m: PlanModel | null)
       case "row": if (!m || !m.nodes.some((x) => x.op === "project")) s.rows.push({ i, item: keyOf((det as { item?: number[] }).item), row: (det as { row?: unknown }).row }); break;
     }
   } else if (topic === "snapshot") {
-    if (d) { const dr = doc(s, d, i, e); dr.snaps.push({ i, phase: e.phase }); const x = e as { final_url?: string; url?: string; status_code?: number; tiers?: string[] }; dr.url = x.final_url ?? x.url ?? dr.url; dr.status = x.status_code ?? dr.status; if (x.tiers?.length) dr.tier = x.tiers[x.tiers.length - 1]; }
+    if (d) { const dr = doc(s, d, i, e, addr); dr.snaps.push({ i, phase: e.phase }); const x = e as { final_url?: string; url?: string; status_code?: number; tiers?: string[] }; dr.url = x.final_url ?? x.url ?? dr.url; dr.status = x.status_code ?? dr.status; if (x.tiers?.length) dr.tier = x.tiers[x.tiers.length - 1]; }
   } else if (topic === "rrweb") {
-    if (d) { const dr = doc(s, d, i, e); dr.rrweb.push(i); dr.tier = "browser"; }
+    if (d) { const dr = doc(s, d, i, e, addr); dr.rrweb.push(i); dr.tier = "browser"; }
   } else if (topic.startsWith("network")) {
     const x = e as { url?: string; method?: string; status_code?: number; elapsed?: number; resource_type?: string; request?: { url?: string } };
     const url = x.url ?? x.request?.url ?? "";
     const kind: Request["kind"] = topic === "network.navigation" || x.resource_type === "document" ? "navigation" : x.resource_type && ["xhr", "fetch", "eventsource", "websocket"].includes(x.resource_type) ? "request" : x.resource_type ? "asset" : "request";
     const r: Request = { i, t, doc: d, step: addr, item, url, method: String(x.method ?? "GET").toUpperCase(), status: x.status_code, kind, ms: x.elapsed != null ? x.elapsed * 1000 : undefined, failed: (x.status_code ?? 200) >= 400 };
     s.requests.push(r);
-    if (d) { const dr = doc(s, d, i, e); dr.requests.push(s.requests.length - 1); if (kind === "navigation") { dr.url ??= url; dr.status ??= x.status_code; } }
+    if (d) { const dr = doc(s, d, i, e, addr); dr.requests.push(s.requests.length - 1); if (kind === "navigation") { dr.url ??= url; dr.status ??= x.status_code; } }
   } else if (topic === "action") {
-    s.actions.push(i); if (d) doc(s, d, i, e).actions.push(i);
+    s.actions.push(i);
+    if (d) { const x = e as { action?: string; args?: { selector?: string; text?: string } }; doc(s, d, i, e, addr).actions.push({ i, action: String(x.action ?? "action"), selector: x.args?.selector, text: x.args?.text }); }
   } else if (topic === "error") {
     const x = e as { error?: { code?: string; type?: string; message?: string }; raised?: boolean };
     s.errors.push({ i, t, step: addr, item, doc: d, code: String(x.error?.code ?? x.error?.type ?? "error"), message: String(x.error?.message ?? ""), raised: x.raised !== false });
-    if (d) doc(s, d, i, e).errors.push(i);
+    if (d) doc(s, d, i, e, addr).errors.push(i);
   }
 }
 

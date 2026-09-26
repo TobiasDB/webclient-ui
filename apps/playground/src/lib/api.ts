@@ -100,7 +100,7 @@ export const api = {
   runStart: (body: Record<string, unknown>) => call<{ id: string; trace: string | null; plan_id?: string }>("/runs", { method: "POST", body: JSON.stringify(body) }),
   run: (id: string, rows = 0, events = 0) => call<RunState>(`/runs/${encodeURIComponent(id)}?rows=${rows}&events=${events}`),
   runs: () => call<{ id: string; status: string; rows: number; events: number; started: number; finished: number | null; describe: string; trace: string | null }[]>("/runs"),
-  tracePlan: (id: string) => call<{ blob: string; describe: string; plan_id?: string }>(`/traces/${encodeURIComponent(id)}/plan`),
+  tracePlan: (id: string) => call<{ blob: string; describe: string; plan_id?: string; steps?: Record<string, string> }>(`/traces/${encodeURIComponent(id)}/plan`),
   /** the documents the session holds (the strip at the top): static captures and live pages */
   docs: (sid: string) => call<DocHandle[]>(`/sessions/${encodeURIComponent(sid)}/documents`),
   docOpen: (sid: string, body: { url: string; browser?: unknown; live?: boolean; interactive?: boolean }) => call<DocHandle>(`/sessions/${encodeURIComponent(sid)}/documents`, { method: "POST", body: JSON.stringify(body) }),

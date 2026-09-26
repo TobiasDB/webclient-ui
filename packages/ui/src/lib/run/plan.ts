@@ -42,6 +42,8 @@ export type PNode = {
 export type PlanModel = {
   /** the plan's id (the package's `Plan.id`), when known: events stamped with ANOTHER plan's id are not this run's */
   planId?: string;
+  /** a recording's recorded steps (an event's `step`: "@n3") and where they are in this plan ("4/kw:title/2") */
+  stepMap?: Record<string, string>;
   rootType: ObjType;
   nodes: PNode[];
   byAddr: Map<string, PNode>;
@@ -73,7 +75,7 @@ export function typeAfter(t: ObjType, op: string, args: Arg[]): ObjType {
 
 const short = (x: unknown) => { const s = typeof x === "string" ? JSON.stringify(x) : String(x); return s.length > 40 ? `${s.slice(0, 37)}…"` : s; };
 
-export function planModel(plan: Plan, planId?: string): PlanModel {
+export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, string>): PlanModel {
   const nodes: PNode[] = [];
   const columns: { name: string; from: string }[] = [];
   const rootType: ObjType = plan.root === "Reference" ? "Reference" : "Document";
@@ -128,7 +130,7 @@ export function planModel(plan: Plan, planId?: string): PlanModel {
   };
 
   walk(plan, [], "", rootType, null, 0);
-  return { planId, rootType, nodes, byAddr: new Map(nodes.map((n) => [n.addr, n])), columns };
+  return { planId, stepMap, rootType, nodes, byAddr: new Map(nodes.map((n) => [n.addr, n])), columns };
 }
 
 /** a node's chain of ancestors by input (root first), itself last */
@@ -142,7 +144,7 @@ export function lineage(m: PlanModel, addr: string): PNode[] {
  * sub-plan the model does not break down -- `sub` -- belongs to its host) */
 export function nodeOf(m: PlanModel, step: string | null | undefined): PNode | undefined {
   if (!step) return undefined;
-  let s = step;
+  let s = m.stepMap?.[step] ?? step;
   for (;;) {
     const n = m.byAddr.get(s); if (n) return n;
     const i = s.lastIndexOf("/"); if (i < 0) return undefined;

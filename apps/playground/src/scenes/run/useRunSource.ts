@@ -9,12 +9,18 @@ import { api, type RunState as RunData } from "../../lib/api";
 import { useSession } from "../../lib/session";
 import { decSpec, encSpec, recall, remember, type Spec } from "./sources";
 
+export type Sample = { ts: number; mem_mb?: number; cpu_pct?: number; pages_total?: number; pages_free?: number; http_free?: number; waiting?: number };
+
 export type RunSource = {
   plan: Plan | null;
   /** the plan's id: a recording's events of other plans are left out */
   planId?: string;
+  /** a recording's recorded steps -> their place in the plan */
+  stepMap?: Record<string, string>;
   url?: string;
   events: RunEvent[];
+  /** the service's resource samples while the run ran (memory, CPU, the pool): beside the events, not in them */
+  samples: Sample[];
   status: "loaded" | "starting" | "running" | "done" | "error";
   error: RunData["error"] | null;
   startError: string | null;
@@ -85,11 +91,18 @@ export function useRunSource(active: boolean): RunSource {
   }, [runId, traceParam]);
 
   const traceId = traceParam ?? data?.trace ?? null;
-  const tracePlan = useQuery({ queryKey: ["run-plan", traceId], queryFn: async () => { const p = await api.tracePlan(traceId!); const ir = await api.plan({ blob: p.blob }); return { plan: ir.plan as Plan, id: p.plan_id }; }, enabled: !!traceId && data?.status !== "running", retry: 0, staleTime: Infinity });
+  const tracePlan = useQuery({ queryKey: ["run-plan", traceId], queryFn: async () => { const p = await api.tracePlan(traceId!); const ir = await api.plan({ blob: p.blob }); return { plan: ir.plan as Plan, id: p.plan_id, steps: p.steps }; }, enabled: !!traceId && data?.status !== "running", retry: 0, staleTime: Infinity });
   const events = React.useMemo(() => ((data?.events ?? []) as RunEvent[]).filter((e) => e.topic !== "resources"), [data?.events]);
+  // resource samples: the sampler's (topic "resource", what "sample") -- live and in a trace alike
+  const samples = React.useMemo(() => ((data?.events ?? []) as Record<string, unknown>[]).flatMap((e) => {
+    const d = e.detail as Record<string, unknown> | undefined;
+    if (e.topic === "resource" && d?.what === "sample" && e.ts) return [{ ts: Number(e.ts), ...d } as unknown as Sample];
+    if (e.topic === "resources" && e.ts) return [e as unknown as Sample];
+    return [];
+  }), [data?.events]);
   const status: RunSource["status"] = data ? (data.status as RunSource["status"]) : runId ? "starting" : "loaded";
   return {
-    plan: spec?.plan ?? tracePlan.data?.plan ?? null, planId: tracePlan.data?.id, url: spec?.url, events, status, error: data?.error ?? null, startError, traceId, runId, spec,
+    plan: spec?.plan ?? tracePlan.data?.plan ?? null, planId: tracePlan.data?.id, stepMap: tracePlan.data?.steps, url: spec?.url, events, samples, status, error: data?.error ?? null, startError, traceId, runId, spec,
     start, load: (s) => setParams(() => { const n = new URLSearchParams(); n.set("p", encSpec(s)); return n; }),
     openTrace: (id) => setParams(() => { const n = new URLSearchParams(); n.set("trace", id); return n; }),
     empty: !runId && !spec && !data && !traceParam,

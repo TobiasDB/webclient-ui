@@ -30,7 +30,7 @@ export function layoutOf(m: PlanModel): Layout {
       // a sub-plan: its own lane, starting beside the node it runs on
       const l = nextLane++; lane.set(n.addr, l); col.set(n.addr, inCol + 1);
       const hostOp = m.byAddr.get(n.host)?.op;
-      const label = n.seg?.startsWith("kw:") ? n.seg.slice(3) : hostOp === "step" ? "then" : !hostOp ? "the column's name, read from the page" : hostOp === "filter" ? "keep when" : n.seg ?? "";
+      const label = n.seg?.startsWith("kw:") ? n.seg.slice(3) : hostOp === "step" ? "then" : !hostOp ? "the column's name, read from the page" : hostOp === "filter" ? "keep when" : hostOp === "extract" && n.seg?.startsWith("arg:") ? "a column named from the page" : n.seg ?? "";
       lanes.push({ lane: l, label, host: n.host, first: n.addr, y: 0 });
     } else {
       // the same lane as its input, one column on (a sub-plan's later steps follow its first, on its lane)
@@ -39,6 +39,22 @@ export function layoutOf(m: PlanModel): Layout {
   }
   const maxCol = Math.max(0, ...[...col.values()]);
   for (const a of output) { col.set(a, maxCol + 1); lane.set(a, 0); }
+  // COMPACT: each lane moves up to the first row below its host's where nothing else sits in its columns
+  // (a column's nested sub-columns sit to the right: the next column's lane can share their rows' left side)
+  const span = new Map<number, [number, number]>();
+  for (const [a, l] of lane) { if (a === "") continue; const c = col.get(a)!; const sp = span.get(l); span.set(l, sp ? [Math.min(sp[0], c), Math.max(sp[1], c)] : [c, c]); }
+  const rowOf = new Map<number, number>([[0, 0]]); const taken: [number, number, number][] = []; // [row, from, to]
+  for (const [a, l] of lane) if (l === 0 && a !== "") { const c = col.get(a)!; taken.push([0, c, c]); }
+  for (const L of lanes) {
+    const [from, to] = span.get(L.lane) ?? [0, 0];
+    const hostRow = rowOf.get(lane.get(L.host) ?? 0) ?? 0;
+    let r = hostRow + 1;
+    while (taken.some(([tr, f, t]) => tr === r && !(to < f || from > t))) r++;
+    rowOf.set(L.lane, r); taken.push([r, from, to]);
+  }
+  for (const [a, l] of lane) lane.set(a, rowOf.get(l) ?? l);
+  for (const L of lanes) L.lane = rowOf.get(L.lane) ?? L.lane;
+  const rows = Math.max(0, ...[...rowOf.values()]) + 1;
   // lanes in order of creation; compact y
   const pos = new Map<string, Pos>();
   for (const [a, c] of col) { const l = lane.get(a) ?? 0; pos.set(a, { col: c, lane: l, x: PAD + c * COL_W, y: PAD + l * LANE_H }); }
@@ -46,6 +62,6 @@ export function layoutOf(m: PlanModel): Layout {
   const edges = m.nodes.map((n) => ({ from: n.input, to: n.addr })).filter((e) => pos.has(e.from) && pos.has(e.to));
   const outputs = [...output].flatMap((o) => m.columns.map((c) => ({ from: c.from, to: o, name: c.name })));
   const width = PAD * 2 + (Math.max(...[...col.values()]) + 1) * COL_W;
-  const height = PAD * 2 + nextLane * LANE_H;
+  const height = PAD * 2 + rows * LANE_H;
   return { pos, edges, lanes, width, height, outputs };
 }
