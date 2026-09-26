@@ -1,7 +1,7 @@
 import * as React from "react";
 import { reconnect, useSessionState } from "./lib/session";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { Chip, RunBar, cn, type Event } from "@webclient/ui";
+import { Brand, Chip, RunBar, cn, type Event } from "@webclient/ui";
 import { subscribe } from "./lib/api";
 import { Home } from "./scenes/Home";
 import { Author } from "./scenes/Author";
@@ -46,7 +46,7 @@ export function App() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-11 shrink-0 items-center gap-4 border-b border-line bg-surface px-3">
-        <span className="text-[14px] font-semibold tracking-tight">WebClient <span className="font-normal text-muted">Playground</span></span>
+        <Brand tag="playground" />
         <nav className="flex items-center gap-1">
           {WORKSPACES.map(([to, label]) => (
             <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) => cn("rounded-md px-2.5 py-1 text-[13px] text-ink-2 hover:bg-surface-2", isActive && "bg-surface-3 text-ink")}>

@@ -10,6 +10,7 @@ export { KeyValue } from "./primitives/KeyValue";
 export { Toolbar, ToolbarGroup, ToolbarSpacer } from "./primitives/Toolbar";
 export { Input, Select } from "./primitives/Input";
 export { FlagChip, FlagRow } from "./domain/FlagChip";
+export { Brand, BrandMark } from "./domain/Brand";
 export { TierLadder } from "./domain/TierLadder";
 export { TopicChip, topicColorVar } from "./domain/TopicChip";
 export { ErrorCard } from "./domain/ErrorCard";

@@ -5,7 +5,8 @@ import type { Flag } from "../types";
 
 const TONE: Record<string, "bad" | "warn" | "accent" | "neutral" | "ok"> = {
   anti_bot_triggered: "bad", login_required: "bad", spa: "warn", anti_bot_present: "warn",
-  login_present: "warn", pagination: "accent", tabbed: "accent", large_document: "neutral",
+  login_present: "warn", cookie_banner: "warn", pagination: "accent", tabbed: "accent",
+  ordered: "accent", filtered: "accent", live: "warn", large_document: "neutral",
   shadow_dom: "accent", iframe: "accent", forms: "neutral", buttons: "neutral",
 };
 

@@ -23,7 +23,14 @@ const path = Astro.url.pathname;
     {!bare && (
       <header class="border-b border-line">
         <div class={`mx-auto flex h-14 items-center gap-6 px-5 ${wide ? "max-w-[1400px]" : "max-w-[1100px]"}`}>
-          <a href="/" class="text-[15px] font-semibold tracking-tight">WebClient</a>
+          <a href="/" class="inline-flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true" class="shrink-0 text-accent">
+              <path d="M7.4 8.2 14.6 11 M7.4 15.8 14.6 13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+              <circle cx="6" cy="7" r="2.5" fill="currentColor"/>
+              <circle cx="6" cy="17" r="2.3" stroke="currentColor" stroke-width="1.7"/>
+              <circle cx="17" cy="12" r="2.3" stroke="currentColor" stroke-width="1.7"/>
+            </svg>webclient
+          </a>
           <nav class="flex gap-4 text-[14px]">
             {SITE.nav.map(([href, label]) => (
               <a href={href} class={`rounded px-1.5 py-1 hover:text-ink ${path.startsWith(href) ? "text-ink font-medium" : "text-muted"}`}>{label}</a>
@@ -36,7 +43,14 @@ const path = Astro.url.pathname;
     {!bare && (
       <footer class="mt-20 border-t border-line">
         <div class={`mx-auto flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-8 text-[13px] text-muted ${wide ? "max-w-[1400px]" : "max-w-[1100px]"}`}>
-          <span class="font-medium text-ink">WebClient</span>
+          <span class="inline-flex items-center gap-2 font-medium text-ink">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" class="shrink-0 text-accent">
+              <path d="M7.4 8.2 14.6 11 M7.4 15.8 14.6 13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+              <circle cx="6" cy="7" r="2.5" fill="currentColor"/>
+              <circle cx="6" cy="17" r="2.3" stroke="currentColor" stroke-width="1.7"/>
+              <circle cx="17" cy="12" r="2.3" stroke="currentColor" stroke-width="1.7"/>
+            </svg>webclient
+          </span>
           <span>self-hosted · your data never leaves · no per-page fee</span>
           <span class="flex-1"></span>
           {SITE.footer.map(([href, label]) => <a href={href} class="hover:text-ink">{label}</a>)}

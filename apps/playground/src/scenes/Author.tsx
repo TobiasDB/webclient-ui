@@ -267,6 +267,30 @@ export function Author() {
     try { const from = liveUrl ?? undefined; const h = await api.executeDoc({ plan: planBody("Document", [callBody("click", [sel])], sessionId), document_id: liveDocId }); pullNow.current(); setLiveUrl(h.url ?? from ?? null); setPending((ps) => [...ps, { op: "click", args: [sel], from, to: h.url ?? from }]); }
     catch (e) { setActError(e as ApiError); } finally { setBusy(null); }
   };
+  /** a plain click on a LINK: record it as a page RESOLVED FROM the link, not a click. It adds
+   *  select(sel).attr("href").resolve() -- a new page the plan reaches by the link's href -- and
+   *  takes the live page there (goto). So later selects run on the new page with NO source-page
+   *  click baked in. (Shift-click still records an explicit .click(); a non-link plain click, e.g.
+   *  a JS button that only mutates the page, stays a clickThrough.) */
+  const followLink = async (sel: string, href: string) => {
+    if (!sessionId || !graph || !pageNode || !stateNode) return; setActError(null);
+    try {
+      const docId = await liveAt(stateNode); if (!docId) return;
+      setBusy("following the link");
+      const h = await api.executeDoc({ plan: planBody("Document", [callBody("goto", [href])], sessionId), document_id: docId });
+      pullNow.current();
+      // fork any existing branch off this step, and fold in unrecorded clicks (same as act)
+      let g = graph; for (const c of children(g, stateNode.id)) if (c.op && ACTIONS.has(c.op.name) && !c.off) g = updateNode(g, c.id, { off: true });
+      let at = stateNode.id; if (atHead && pending.length) { for (const a of pending) { const x = addNode(g, at, opOf(a.op, a.args), returns); g = x.graph; at = x.id; } setPending([]); }
+      const s1 = addNode(g, at, opOf("select", [sel]), returns); g = s1.graph;
+      const hn = addNode(g, s1.id, opOf("attr", ["href"]), returns); g = hn.graph;
+      const r = addNode(g, hn.id, opOf("resolve", [], browserKw(tier)), returns); g = needBrowser(r.graph);
+      const url = h.url ?? absolute(href);
+      setPages((ps) => { const out: typeof ps = {}; for (const [k, pg] of Object.entries(ps)) out[k] = pg.live ? { ...pg, live: false } : pg; out[r.id] = { docId, live: true, url }; return out; });
+      await snap(sessionId, docId, r.id);
+      setGraph(() => g); setHead({ page: r.id, at: r.id, docId }); select(r.id); setLiveUrl(url);
+    } catch (e) { setActError(e as ApiError); } finally { setBusy(null); }
+  };
   // the mirror IS the head's document while nothing is pending; once the live page moved on (actions not in
   // the plan), the head keeps its own document (its static capture / snapshot) -- the preview and every line's
   // value stay computed on the page they belong to
@@ -773,6 +797,11 @@ export function Author() {
   const namedBy = node?.alias ? (graphLib.aliasField(node.alias) ? "column" : "page") : "name";
   const setNaming = (mode: string, value: string) => { if (!node) return; setGraph((g) => updateNode(g, node.id, mode === "name" ? { output: value || outputName(node), alias: undefined } : mode === "column" ? { alias: graphLib.fieldAlias(value), output: undefined } : { alias: [{ kind: "get", name: "select" }, { kind: "call", name: "select", args: [{ value }], kwargs: {} }, { kind: "get", name: "attr" }, { kind: "call", name: "attr", args: [{ value: "text" }], kwargs: {} }], output: undefined })); };
 
+  // the current page's SIGNALS: the present flags (each chip opens its evidence) + the tier that
+  // produced it -- what the page IS, first-class but on one line.
+  const pageFlags = (views.data?.flags ?? []).filter((f) => f.present);
+  const pageTier = views.data?.card?.final_tier;
+
   return (
     <div className="flex h-full min-h-0 flex-col text-[11px]">
       {graphPopup}
@@ -788,7 +817,14 @@ export function Author() {
         <Button size="sm" variant="ghost" onClick={importPlan}>Import</Button>
         {saved.data && saved.data.length > 0 && <Select value="" onChange={(e) => { if (e.target.value) load(e.target.value); }} className="h-7 text-[12px]"><option value="">saved…</option>{saved.data.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}</Select>}
       </Toolbar>
-      {!state || !graph ? <EmptyState title="Start from a URL" hint="The plan starts with its Reference. Open it; then choose an op above the page (select_all, select, attr…) and click the page, or a suggestion. Clicking something the plan already has jumps to it; shift-click records a link, a click or typing." /> :
+      {state && graph && (pageFlags.length > 0 || pageTier) && (
+        <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-line bg-surface-2/50 px-2 py-1" data-testid="page-signals">
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted" title="what this page IS — click a flag for its evidence (the signals, their stage and confidence)">signals</span>
+          {pageTier && <span className="shrink-0 rounded px-1 text-[10px] font-medium capitalize" style={{ color: `var(--color-tier-${pageTier})` }} title="the transport tier that produced this page">{pageTier}</span>}
+          {pageFlags.length ? <FlagRow flags={pageFlags} /> : <span className="text-[10px] text-muted">nothing notable</span>}
+        </div>
+      )}
+      {!state || !graph ? <EmptyState title="Start from a URL" hint="The plan starts with its Reference. Open it; then choose an op above the page (select_all, select, attr…) and click the page, or a suggestion. Clicking a link follows it as a resolve (a new page reached by its href); shift-click records a raw .click() instead. Clicking something the plan already has jumps to it." /> :
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-1 overflow-hidden p-1" style={{ gridTemplateColumns: `${planOpen ? "270px" : "16px"} minmax(0,1fr)${sideShown ? " 300px" : ""}` }}>
         {/* the plan */}
         {!planOpen ? <button type="button" onClick={() => setPlanOpen(true)} className="flex min-h-0 items-start justify-center rounded border border-line pt-2 text-[10px] text-muted hover:bg-surface-2" title="show the plan"><span style={{ writingMode: "vertical-rl" }}>plan ›</span></button> :
@@ -901,7 +937,7 @@ export function Author() {
           ) : atHead && !liveDocId ? (
             <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "opening the live page…"}</div>
           ) : liveDocId ? (
-            <>            {livePictured ? <Player key={liveStart} events={liveStream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={shownRoots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const sel = p.el ? selFor(p.el) : null; if (!sel) return; if (m.shift) { void act("click", [sel]); return; } void clickThrough(sel); }} onDocument={(d) => setMirrorDoc(d)} controls={false} controller={controller} maxHeight={pageH} /> : <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "waiting for the live page to send its picture (it is loading or navigating)…"}</div>}</>
+            <>            {livePictured ? <Player key={liveStart} events={liveStream} live highlights={playerHls} pickable shiftPick={!selfMode} focus={shownRoots} onPick={(p) => { if (p.el) setPickEl(p.el); }} onClickThrough={(p, m) => { const sel = p.el ? selFor(p.el) : null; if (!sel) return; if (m.shift) { void act("click", [sel]); return; } if (p.href) { void followLink(sel, p.href); return; } void clickThrough(sel); }} onDocument={(d) => setMirrorDoc(d)} controls={false} controller={controller} maxHeight={pageH} /> : <div className="flex h-full items-center justify-center rounded border border-dashed border-line text-[11px] text-muted">{busy ? `${busy}…` : "waiting for the live page to send its picture (it is loading or navigating)…"}</div>}</>
           ) : card && card.kind === "binary" ? (
             <EmptyState title="A file" hint="Not a page to render: add .download() above to return its bytes (url, filename, content type, size, base64)." action={<Button onClick={() => node && addEdge("download", [], {}, { output: "file" })}>.download()</Button>} />
           ) : stateKey !== pageKey ? (snaps[stateKey] ? (
