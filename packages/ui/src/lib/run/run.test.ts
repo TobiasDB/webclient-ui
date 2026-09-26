@@ -132,3 +132,31 @@ describe("a recorded script plays as its plan", () => {
     expect(w.hops).toEqual([{ sel: "li.r", index: 1 }, { sel: "b" }]);
   });
 });
+
+import { pageChain } from "./locate";
+describe("the pages an item went through", () => {
+  it("a nested crawl: the listing (the link followed), then the detail page (the row read)", () => {
+    const pm = planModel(paged.plan as unknown as Plan); const ps = stateAt(paged.events as unknown as RunEvent[], pm);
+    const addr = pm.nodes.find((n) => n.addr.startsWith("6/kw:info/8/kw:v/") && n.op === "select")!.addr;
+    const chain = pageChain(pm, ps, addr, "4.1");
+    const page2 = [...ps.docs.values()].find((d) => d.url?.endsWith("/p2"))!.id;
+    expect(chain.map((c) => c.doc)).toEqual([page2, ps.nodes.get("6/kw:info/4")!.insts.get("4")!.result!.document_id]);
+    expect(chain[0]!.hops).toEqual([{ sel: "li.r", index: 1 }, { sel: "a" }]);   // the link record 4 followed
+    expect(chain[0]!.opens).toBe("6/kw:info/4");
+    expect(chain[1]!.hops).toEqual([{ sel: "tr", index: 1 }, { sel: "td" }]);    // row 1 on its detail page
+  });
+  it("one page when the step is on the page the plan started on", () => {
+    const pm = planModel(paged.plan as unknown as Plan); const ps = stateAt(paged.events as unknown as RunEvent[], pm);
+    expect(pageChain(pm, ps, "6/kw:n/2", "4")).toHaveLength(1);
+  });
+});
+
+describe("a limit keeps its items", () => {
+  it("steps after select_all(...).limit(n) run per item of the select_all (the item's match is its index there)", () => {
+    const c = (name: string, ...args: unknown[]) => [{ kind: "get" as const, name }, { kind: "call" as const, name, args: args.map((v) => ({ value: v })), kwargs: {} }];
+    const p: Plan = { root: "Reference", steps: [...c("resolve"), ...c("select_all", "li"), ...c("limit", 6), { kind: "get", name: "extract" }, { kind: "call", name: "extract", args: [], kwargs: { t: { plan: { root: "Document", steps: [...c("select", "a"), ...c("attr", "href")] } } } }] };
+    const pm = planModel(p);
+    expect(pm.byAddr.get("6/kw:t/0")!.per).toBe("2");
+    expect(pm.byAddr.get("6/kw:t/0")!.cap).toBe(6);
+  });
+});

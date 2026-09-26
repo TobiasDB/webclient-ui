@@ -33,6 +33,7 @@ export function Run() {
 
   // what is on screen: a picked item / step, else FOLLOW (the oldest item in flight)
   const [sel, setSel] = React.useState<Sel>({ addr: null, item: null });
+  const [chainN, setChainN] = React.useState(1);
   const item = sel.item ?? (model ? runLib.followItem(state, model) : "");
   const focusAddr = React.useMemo(() => runLib.latestFor(state, item)?.addr ?? null, [state, item]);
   const seek = (i: number) => { setLive(false); setPlaying(false); setT(Math.max(0, Math.min(events.length, i))); };
@@ -109,7 +110,8 @@ export function Run() {
       {src.error && <div className="border-b border-bad/40 bg-bad-soft/40 px-2 py-0.5"><b className="text-bad">{src.error.code}</b> {src.error.message}{src.error.hint ? <span className="text-muted"> — {src.error.hint}</span> : null}</div>}
       <div className="flex min-h-0 flex-1 flex-col gap-1 p-1">
         {/* the graph | the page */}
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-1">
+        {/* a chain of pages (a nested crawl) gets the room for two panes */}
+        <div className="grid min-h-0 flex-1 gap-1 transition-[grid-template-columns] duration-300" style={{ gridTemplateColumns: chainN > 1 ? "minmax(0,0.9fr) minmax(0,1.6fr)" : "minmax(0,1.35fr) minmax(0,1fr)" }}>
           <section className="flex min-h-0 flex-col overflow-hidden rounded border border-line">
             <div className="flex min-w-0 items-center gap-1.5 border-b border-line px-1.5 py-0.5 text-[10px]">
               <span className="shrink-0 font-semibold uppercase tracking-wide text-muted">plan</span>
@@ -122,7 +124,7 @@ export function Run() {
             </div>
           </section>
           <section className="flex min-h-0 flex-col overflow-hidden rounded border border-line">
-            <PageStage traceId={src.traceId} events={events} model={model} state={state} full={full} addr={sel.addr} item={item} maxHeight={640} />
+            <PageStage traceId={src.traceId} events={events} model={model} state={state} full={full} addr={sel.addr} item={item} maxHeight={640} onChain={setChainN} />
           </section>
         </div>
         {/* everything on one time axis */}

@@ -28,6 +28,8 @@ export type PNode = {
   per: string | null;
   /** yields many: its items are what `per` of later steps refers to */
   fans: boolean;
+  /** at most this many items (a limit(n) between the fan-out and this step) */
+  cap?: number;
   /** this step's output fills an output column */
   column?: string;
   /** the step whose arg this sub-plan sits in, and which arg (`kw:title`) */
@@ -80,9 +82,12 @@ export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, 
   const columns: { name: string; from: string }[] = [];
   const rootType: ObjType = plan.root === "Reference" ? "Reference" : "Document";
 
+  const capOf = (a: string): number | undefined => { const n = nodes.find((x) => x.addr === a); return n?.op === "limit" && typeof n.args[0] === "number" ? (n.args[0] as number) : undefined; };
+  let inheritCap: number | undefined;
+  const fanBase = (a: string): string => { let n = nodes.find((x) => x.addr === a); while (n && n.op === "limit" && n.input) { const up = nodes.find((x) => x.addr === n!.input); if (!up) break; n = up; } return n?.addr ?? a; };
   /** walk a (sub-)plan: `prefix` its address, applied to `input` (of `type`, run per `per`) */
   const walk = (p: Plan, prefix: string[], input: string, type: ObjType, per: string | null, depth: number, host?: string, seg?: string, column?: string): { last: string; type: ObjType } => {
-    let cur = input, t = type, each = per;
+    let cur = input, t = type, each = per; let cap = per ? inheritCap : undefined;
     let first = true; let lastNode: PNode | null = null;
     for (const c of calls(p)) {
       const addr = [...prefix, String(c.index)].join("/");
@@ -94,14 +99,15 @@ export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, 
         continue;
       }
       // after a Collection, an element op runs once per item: the executor fans the chain out
-      if (t === "Collection" && !COLL_OPS.has(c.name)) each = cur;
+      // (through a limit: it keeps the items' positions, so its items ARE its input fan-out's first n)
+      if (t === "Collection" && !COLL_OPS.has(c.name)) { each = fanBase(cur); cap = capOf(cur); }
       const nt = typeAfter(t, c.name, c.args);
       const lits = c.args.filter((a) => !a.plan).map((a) => a.value);
       const kw = Object.fromEntries(Object.entries(c.kwargs).filter(([, a]) => !a.plan).map(([k, a]) => [k, a.value]));
       const argStr = lits.map(short).concat(Object.entries(kw).map(([k, x]) => `${k}=${short(x)}`)).join(", ");
       const node: PNode = {
         addr, op: c.name, arg: typeof lits[0] === "string" ? (lits[0] as string) : undefined, args: lits, kwargs: kw,
-        input: cur, type: nt, per: each, fans: FANS.has(c.name), depth,
+        input: cur, type: nt, per: each, fans: FANS.has(c.name), depth, ...(each && cap != null ? { cap } : {}),
         label: `${c.name}(${argStr}${Object.values(c.kwargs).some((a) => a.plan) || c.args.some((a) => a.plan) ? `${argStr ? ", " : ""}…` : ""})`,
         ...(first && host ? { host, seg } : {}),
       };
@@ -109,7 +115,8 @@ export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, 
       // sub-plans: extract / filter columns run on EACH element of a collection (or on the one page);
       // step(action) on the held page; any other arg against the plan's context
       const elementInput = t === "Collection" ? cur : cur;
-      const elementPer = t === "Collection" ? cur : each;
+      const elementPer = t === "Collection" ? fanBase(cur) : each;
+      inheritCap = t === "Collection" ? capOf(cur) : cap;
       c.args.forEach((a, n) => { if (a.plan) walk(a.plan, [...prefix, String(c.index), `arg:${n}`], c.name === "extract" || c.name === "filter" || c.name === "step" ? elementInput : "", c.name === "extract" || c.name === "filter" ? (t === "Collection" ? "Element" : t) : c.name === "step" ? t : rootType, c.name === "extract" || c.name === "filter" ? elementPer : each, depth + 1, addr, `arg:${n}`); });
       for (const [k, a] of Object.entries(c.kwargs)) {
         if (!a.plan) continue;

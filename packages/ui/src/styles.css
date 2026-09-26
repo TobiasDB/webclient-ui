@@ -116,3 +116,9 @@ html, body { background: var(--color-surface); color: var(--color-ink); font-fam
 @keyframes wc-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @keyframes wc-flow { to { stroke-dashoffset: -16; } }
 @media (prefers-reduced-motion: reduce) { .wc-cell-run, .wc-edge-flow { animation: none; } }
+
+/* the arrow from a followed link to the page it opened: it draws itself in */
+.wc-chain-arrow { stroke-dashoffset: 0; animation: wc-chain-draw 0.45s ease-out; }
+.wc-chain-label { animation: wc-fade-in 0.45s ease-out; }
+@keyframes wc-chain-draw { from { stroke-dasharray: 600; stroke-dashoffset: 600; } to { stroke-dasharray: 600; stroke-dashoffset: 0; } }
+@keyframes wc-fade-in { from { opacity: 0; } to { opacity: 1; } }

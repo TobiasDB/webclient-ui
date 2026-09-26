@@ -30,6 +30,8 @@ export type PageFrameProps = {
    * page), anything else keeps the page (the workspace jumped to / recorded it). */
   onAction?: (a: FrameAction) => "browse" | void;
   onCounts?: (counts: number[]) => void;
+  /** where the SPOTLIT element is on screen (window px), as it moves (scroll, load); null when there is none */
+  onSpot?: (rect: { left: number; top: number; width: number; height: number } | null) => void;
   width?: number;
   maxHeight?: number;
   className?: string;
@@ -40,7 +42,7 @@ export type PageFrameProps = {
  * runs first: hover outlines, the pick (in pick mode), the person's actions reported (in
  * interact mode), highlights drawn inside the page, focus isolation. Frame and workspace talk by
  * postMessage; elements travel as structural paths. */
-export function PageFrame({ html, base, stripScripts, focusPaths = null, highlights = [], scrollTo = null, picking = false, onPick, onHover, onAction, onCounts, width = 1280, maxHeight = 760, className }: PageFrameProps) {
+export function PageFrame({ html, base, stripScripts, focusPaths = null, highlights = [], scrollTo = null, picking = false, onPick, onHover, onAction, onCounts, onSpot, width = 1280, maxHeight = 760, className }: PageFrameProps) {
   const frame = React.useRef<HTMLIFrameElement>(null);
   const box = React.useRef<HTMLDivElement>(null);
   const [scale, setScale] = React.useState(1);
@@ -48,7 +50,7 @@ export function PageFrame({ html, base, stripScripts, focusPaths = null, highlig
   const [away, setAway] = React.useState(false);  // browsed away (shift-followed link): not the plan's page
   const [key, setKey] = React.useState(0);
   const readyAt = React.useRef(0);
-  const cbs = React.useRef({ onPick, onHover, onAction, onCounts }); cbs.current = { onPick, onHover, onAction, onCounts };
+  const cbs = React.useRef({ onPick, onHover, onAction, onCounts, onSpot }); cbs.current = { onPick, onHover, onAction, onCounts, onSpot };
   const srcDoc = React.useMemo(() => withAgent(html, base, !!stripScripts), [html, base, stripScripts]);
   React.useEffect(() => { setReady(false); setAway(false); }, [srcDoc, key]);
   // the page renders at least `width` wide (scaled down to fit), and at the full width it is given when wider
@@ -64,6 +66,11 @@ export function PageFrame({ html, base, stripScripts, focusPaths = null, highlig
       else if (m.type === "hover") cbs.current.onHover?.((m.pick as FramePick) ?? null);
       else if (m.type === "action") { const a = m.action as FrameAction; if (cbs.current.onAction?.(a) === "browse" && a.op === "navigate" && a.href) post({ type: "go", href: a.href }); }
       else if (m.type === "counts") cbs.current.onCounts?.(m.counts as number[]);
+      else if (m.type === "spot" && cbs.current.onSpot) {
+        const r = m.rect as { x: number; y: number; w: number; h: number } | null; const f = frame.current;
+        if (!r || !f) cbs.current.onSpot(null);
+        else { const b = f.getBoundingClientRect(); const k = b.width / (f.clientWidth || b.width); cbs.current.onSpot({ left: b.left + r.x * k, top: b.top + r.y * k, width: r.w * k, height: r.h * k }); }
+      }
     };
     window.addEventListener("message", h); return () => window.removeEventListener("message", h);
   }, []);
@@ -107,7 +114,8 @@ var inRoots=function(el){if(!roots.length)return true;for(var i=0;i<roots.length
 function ensure(){if(layer&&layer.isConnected)return;layer=document.createElement("div");layer.setAttribute("data-wc-layer","");layer.style.cssText="position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147483647";document.documentElement.appendChild(layer);var st=document.createElement("style");st.setAttribute("data-wc-layer","");st.textContent="[data-wc-hide]{display:none!important}@keyframes wcspot{0%{box-shadow:0 0 0 0 rgba(37,99,235,.6)}100%{box-shadow:0 0 0 14px rgba(37,99,235,0)}}";document.documentElement.appendChild(st)}
 function spot(r,c,label){var W=Math.max(document.documentElement.scrollWidth,innerWidth),H=Math.max(document.documentElement.scrollHeight,innerHeight),x=r.left+scrollX-6,y=r.top+scrollY-6,w=r.width+12,h=r.height+12;var dim="position:absolute;background:rgba(15,23,42,.38);";[[0,0,W,Math.max(0,y)],[0,y+h,W,Math.max(0,H-y-h)],[0,y,Math.max(0,x),h],[x+w,y,Math.max(0,W-x-w),h]].forEach(function(q){var d=document.createElement("div");d.style.cssText=dim+"left:"+q[0]+"px;top:"+q[1]+"px;width:"+q[2]+"px;height:"+q[3]+"px";layer.appendChild(d)});var b=document.createElement("div");b.style.cssText="position:absolute;box-sizing:border-box;left:"+x+"px;top:"+y+"px;width:"+w+"px;height:"+h+"px;border:3px solid "+c+";border-radius:6px;background:"+c+"1f;box-shadow:0 0 0 4px "+c+"44;animation:wcspot 1s ease-out 2";layer.appendChild(b);if(label){var t=document.createElement("div");t.textContent=label;t.style.cssText="position:absolute;left:"+x+"px;top:"+Math.max(0,y-20)+"px;font:600 11px/18px system-ui;color:#fff;background:"+c+";padding:0 6px;border-radius:4px;white-space:nowrap";layer.appendChild(t)}}
 function mark(r,c,label,dashed,fill){var d=document.createElement("div");d.style.cssText="position:absolute;box-sizing:border-box;left:"+(r.left+scrollX)+"px;top:"+(r.top+scrollY)+"px;width:"+r.width+"px;height:"+r.height+"px;border:2px "+(dashed?"dashed ":"solid ")+c+";border-radius:3px;"+(fill?"background:"+c+"22;":"");layer.appendChild(d);if(label){var t=document.createElement("div");t.textContent=label;t.style.cssText="position:absolute;left:"+(r.left+scrollX)+"px;top:"+Math.max(0,r.top+scrollY-15)+"px;font:600 10px/14px system-ui;color:#fff;background:"+c+";padding:0 4px;border-radius:3px;white-space:nowrap";layer.appendChild(t)}}
-function draw(){raf=0;ensure();layer.innerHTML="";var counts=[];for(var k=0;k<items.length;k++){var h=items[k],r0=h.rootPath?byPath(h.rootPath):document,els=[];try{els=h.paths?h.paths.map(byPath).filter(Boolean):h.selector===":scope"?(r0&&r0!==document?[r0]:[]):Array.prototype.slice.call((r0||document).querySelectorAll(h.selector))}catch(e){}counts.push(els.length);if(h.spot&&els[0]){spot(els[0].getBoundingClientRect(),h.colour,h.label)}else for(var i=0;i<els.length&&i<400;i++){mark(els[i].getBoundingClientRect(),h.colour,i===0&&h.label?h.label+(els.length>1?" ×"+els.length:""):null,h.dashed,false)}}if(hover)mark(hover.getBoundingClientRect(),picking?"#d97706":"#94a3b8",picking?hover.tagName.toLowerCase()+(hover.id?"#"+hover.id:"")+(hover.classList.length?"."+Array.prototype.slice.call(hover.classList,0,3).join("."):""):null,true,picking);post({type:"counts",counts:counts})}
+var spotEl=null;function postSpot(){var r=spotEl&&spotEl.isConnected?spotEl.getBoundingClientRect():null;post({type:"spot",rect:r?{x:r.left,y:r.top,w:r.width,h:r.height}:null})}addEventListener("scroll",function(){requestAnimationFrame(postSpot)},{passive:true});
+function draw(){raf=0;ensure();layer.innerHTML="";spotEl=null;var counts=[];for(var k=0;k<items.length;k++){var h=items[k],r0=h.rootPath?byPath(h.rootPath):document,els=[];try{els=h.paths?h.paths.map(byPath).filter(Boolean):h.selector===":scope"?(r0&&r0!==document?[r0]:[]):Array.prototype.slice.call((r0||document).querySelectorAll(h.selector))}catch(e){}counts.push(els.length);if(h.spot&&els[0]){spotEl=els[0];spot(els[0].getBoundingClientRect(),h.colour,h.label)}else for(var i=0;i<els.length&&i<400;i++){mark(els[i].getBoundingClientRect(),h.colour,i===0&&h.label?h.label+(els.length>1?" ×"+els.length:""):null,h.dashed,false)}}if(hover)mark(hover.getBoundingClientRect(),picking?"#d97706":"#94a3b8",picking?hover.tagName.toLowerCase()+(hover.id?"#"+hover.id:"")+(hover.classList.length?"."+Array.prototype.slice.call(hover.classList,0,3).join("."):""):null,true,picking);post({type:"counts",counts:counts});postSpot()}
 var shields=null;
 function shield(){if(!shields||!shields.isConnected){shields=document.createElement("div");shields.setAttribute("data-wc-layer","");shields.style.cssText="position:absolute;left:0;top:0;width:0;height:0;overflow:visible;z-index:2147483646";document.documentElement.appendChild(shields)}shields.innerHTML="";if(!picking)return;var fs=document.querySelectorAll("iframe,object,embed");for(var i=0;i<fs.length;i++){var f=fs[i];if(!inRoots(f))continue;var r=f.getBoundingClientRect();if(!r.width||!r.height)continue;var d=document.createElement("div");d.setAttribute("data-wc-layer","");d.style.cssText="position:absolute;cursor:crosshair;left:"+(r.left+scrollX)+"px;top:"+(r.top+scrollY)+"px;width:"+r.width+"px;height:"+r.height+"px;background:rgba(217,119,6,.06)";(function(f){d.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();post({type:"pick",pick:info(f)})});d.addEventListener("mousemove",function(){if(hover!==f){hover=f;post({type:"hover",pick:info(f)});later()}})})(f);shields.appendChild(d)}}
 function later(){if(!raf)raf=requestAnimationFrame(function(){draw();shield()})}

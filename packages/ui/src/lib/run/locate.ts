@@ -87,3 +87,32 @@ export function resolveHops(root: ParentNode, hops: Hop[]): { el: Element | null
   }
   return { el: cur && (cur as Element).tagName ? (cur as Element) : null, all };
 }
+
+export type ChainLink = Where & {
+  /** the step that led off this page to the next (the link read: `attr("href")`), or the step on screen (last) */
+  via: string;
+  /** the page step that opened the NEXT page (its resolve), when there is one */
+  opens?: string;
+};
+
+/** THE PAGES an item went through to reach a step -- a nested crawl: the listing, the detail page its link
+ * opened, the page a link on THAT opened... -- each with the way down to the element that led on (the link it
+ * followed), the last with the step on screen. One entry when the step is on the page the plan started on. */
+export function pageChain(m: PlanModel, s: RunState, addr: string, item: ItemKey): ChainLink[] {
+  const lin = lineage(m, addr); if (!lin.length) return [];
+  const out: ChainLink[] = [];
+  // the page steps along the way: every resolve after the first page (a link read, then opened)
+  const opens = lin.map((n, j) => ({ n, j })).filter(({ n, j }) => j > 0 && (n.op === "resolve" || n.op === "fetch") && n.type === "Document");
+  for (const { n, j } of opens) {
+    const exit = lin[j - 1]!; // what the page gave that was opened (the link)
+    const w = locate(m, s, exit.addr, item);
+    if (w && !out.some((o) => o.doc === w.doc)) out.push({ ...w, via: exit.addr, opens: n.addr });
+  }
+  const last = locate(m, s, addr, item);
+  if (last) {
+    const prev = out[out.length - 1];
+    if (prev && prev.doc === last.doc) out[out.length - 1] = { ...last, via: addr };  // still on it (the next page not yet open)
+    else out.push({ ...last, via: addr });
+  }
+  return out;
+}

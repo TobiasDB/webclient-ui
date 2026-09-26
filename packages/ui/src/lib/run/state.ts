@@ -154,7 +154,7 @@ export function expectedOf(s: RunState, m: PlanModel, addr: string): number | un
   const pn = m.byAddr.get(addr); if (!pn?.per) return 1;
   let total = 0, any = false;
   for (const [k, n] of s.fanN) { if (k.startsWith(`${pn.per}|`)) { total += n; any = true; } }
-  return any ? total : undefined;
+  return any ? (pn.cap != null ? Math.min(total, pn.cap) : total) : undefined;
 }
 
 /** FOLLOW: the item to show -- the oldest item still in flight (items run in parallel; following the latest

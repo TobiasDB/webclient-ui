@@ -57,6 +57,8 @@ export type PlayerProps = {
   pulses?: boolean;
   /** keep this element (in the rebuilt page) in view -- scrolled within the replay, never the page around it */
   scrollTo?: Element | null;
+  /** where the SPOTLIT element is on screen (window px); null when there is none */
+  onSpot?: (rect: { left: number; top: number; width: number; height: number } | null) => void;
 };
 
 export const FIELD_COLOURS = ["#2457e6", "#15803d", "#b45309", "#7c3aed", "#0f766e", "#be185d"];
@@ -84,7 +86,7 @@ function scrollWithin(el: Element, block: "start" | "center"): void {
   w.scrollTo({ top: Math.max(0, top), left: w.scrollX });
 }
 
-export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, shiftPick = false, onClickThrough, focus = null, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, pulses: showPulses = true, scrollTo = null, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
+export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLIGHTS, pickable = false, onPick, onHover, shiftPick = false, onClickThrough, focus = null, seekTo, onTime, onEvent, onDocument, controls = true, controller, autoPlay = false, pulses: showPulses = true, scrollTo = null, onSpot, className, maxHeight = 720, pace: paceProp = 900 }: PlayerProps) {
   const ownCtl = React.useMemo(() => new PlayerController(), []);
   const ctl = controller ?? ownCtl;
   const [pace, setPace] = React.useState(paceProp);
@@ -230,6 +232,15 @@ export function Player({ events: rawEvents, live = false, highlights = NO_HIGHLI
     setBoxes((prev) => (prev.length === out.length && prev.every((b, i) => b.left === out[i]!.left && b.top === out[i]!.top && b.width === out[i]!.width && b.height === out[i]!.height && b.label === out[i]!.label)) ? prev : out);
   }, [highlights]);
   refreshRef.current = refreshBoxes;
+  // report the spotlight's place on screen (for an arrow drawn from it outside the player)
+  const onSpotRef = React.useRef(onSpot); onSpotRef.current = onSpot;
+  React.useEffect(() => {
+    const cb = onSpotRef.current; if (!cb) return;
+    const b = boxes.find((x) => x.spot); const ifr = rep.current?.iframe as HTMLIFrameElement | undefined;
+    if (!b || !ifr) { cb(null); return; }
+    const r = ifr.getBoundingClientRect(); const k = r.width / (ifr.clientWidth || r.width);
+    cb({ left: r.left + b.left * k, top: r.top + b.top * k, width: b.width * k, height: b.height * k });
+  }, [boxes, scale]);
   React.useEffect(() => { refreshBoxes(); }, [refreshBoxes, scale, ready]);
   React.useEffect(() => { const d = doc(); if (!d) return; const h = () => { refreshBoxes(); const w = d.defaultView; if (w) setScrollXY([w.scrollX, w.scrollY]); }; h(); d.addEventListener("scroll", h, true); return () => d.removeEventListener("scroll", h, true); }, [refreshBoxes, ready]);
   const flashSelector = (sel: string, colour = "#b45309", label = "action") => { const d = doc(); if (!d) return; let els: Element[] = []; try { els = [...d.querySelectorAll(sel)].slice(0, 12); } catch { return; } const fb = els.map((el, i) => boxFor(el, colour, i === 0 ? label : undefined)); setFlash(fb); setTimeout(() => setFlash([]), 1100); };
