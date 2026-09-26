@@ -95,7 +95,9 @@ export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, 
 
   const capOf = (a: string): number | undefined => { const n = nodes.find((x) => x.addr === a); return n?.op === "limit" && typeof n.args[0] === "number" ? (n.args[0] as number) : undefined; };
   let inheritCap: number | undefined;
-  const fanBase = (a: string): string => { let n = nodes.find((x) => x.addr === a); while (n && n.op === "limit" && n.input) { const up = nodes.find((x) => x.addr === n!.input); if (!up) break; n = up; } return n?.addr ?? a; };
+  // the fan-out a collection's items are the items of: through a limit (the first n) and the shaping of them
+  // (extract / project / merge keep one row per item)
+  const fanBase = (a: string): string => { let n = nodes.find((x) => x.addr === a); while (n && (n.op === "limit" || n.op === "extract" || n.op === "project" || n.op === "merge") && n.input) { const up = nodes.find((x) => x.addr === n!.input); if (!up) break; n = up; } return n?.addr ?? a; };
   /** walk a (sub-)plan: `prefix` its address, applied to `input` (of `type`, run per `per`) */
   const walk = (p: Plan, prefix: string[], input: string, type: ObjType, per: string | null, depth: number, host?: string, seg?: string, column?: string): { last: string; type: ObjType } => {
     let cur = input, t = type, each = per; let cap = per ? inheritCap : undefined;
@@ -111,7 +113,8 @@ export function planModel(plan: Plan, planId?: string, stepMap?: Record<string, 
       }
       // after a Collection, an element op runs once per item: the executor fans the chain out
       // (through a limit: it keeps the items' positions, so its items ARE its input fan-out's first n)
-      if (t === "Collection" && !COLL_OPS.has(c.name)) { each = fanBase(cur); cap = capOf(cur); }
+      // (a whole-collection op -- extract / limit / project over it -- still runs per item of it: its rows ARE its items)
+      if (t === "Collection") { each = fanBase(cur); cap = capOf(cur); }
       const nt = typeAfter(t, c.name, c.args);
       const lits = c.args.filter((a) => !a.plan).map((a) => a.value);
       const kw = Object.fromEntries(Object.entries(c.kwargs).filter(([, a]) => !a.plan).map(([k, a]) => [k, a.value]));

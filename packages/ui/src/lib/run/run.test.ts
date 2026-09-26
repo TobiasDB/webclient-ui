@@ -196,3 +196,24 @@ describe("a select_all step itself", () => {
     expect(w.hops).toEqual([{ sel: "li.r", all: true }]);
   });
 });
+
+describe("what a step runs per", () => {
+  it("a whole-collection op runs per item of the collection it shapes, not of the fan-out before it", () => {
+    const pm = planModel(paged.plan as unknown as Plan);
+    expect(pm.byAddr.get("4")!.per).toBe("2");    // select_all per page
+    expect(pm.byAddr.get("6")!.per).toBe("4");    // extract per record
+    expect(pm.byAddr.get("8")!.per).toBe("4");    // project per record
+  });
+});
+
+describe("a limit", () => {
+  it("shows the selection it limits: the select_all's matches, the first n taken", () => {
+    const c = (name: string, ...args: unknown[]) => [{ kind: "get" as const, name }, { kind: "call" as const, name, args: args.map((v) => ({ value: v })), kwargs: {} }];
+    const p: Plan = { root: "Reference", steps: [...c("resolve"), ...c("select_all", "li.r"), ...c("limit", 2)] };
+    const pm = planModel(p);
+    const evs = [{ topic: "plan", phase: "result", step: "0", detail: { op: "resolve", kind: "Document", document_id: "doc:1" }, document_id: "doc:1" },
+      { topic: "plan", phase: "result", step: "2", detail: { op: "select_all", kind: "Collection", n: 5, parent: "doc:1" } }] as unknown as RunEvent[];
+    const w = locate(pm, stateAt(evs, pm), "4", "")!;
+    expect(w).toMatchObject({ doc: "doc:1", hops: [{ sel: "li.r", all: true }], many: true, take: 2, op: "limit" });
+  });
+});

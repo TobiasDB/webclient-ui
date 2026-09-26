@@ -8,7 +8,7 @@ import type { ItemKey, RunState } from "./state";
 import { lineage, type PlanModel, type PNode } from "./plan";
 
 export type Hop = { sel: string; index?: number; all?: boolean };
-export type Where = { doc: string; hops: Hop[]; op: string; addr: string; /** the step found MANY (a select_all itself): all of them are its result */ many?: boolean };
+export type Where = { doc: string; hops: Hop[]; op: string; addr: string; /** the step found MANY (a select_all itself): all of them are its result */ many?: boolean; /** of those, the first n (a limit) */ take?: number };
 
 const PAGE_OPS = new Set(["resolve", "fetch", "paginate", "click", "write", "scroll", "wait_for", "goto", "reload", "step"]);
 const isDoc = (d: unknown): d is string => typeof d === "string" && d.startsWith("doc:");
@@ -36,6 +36,12 @@ const docOfResult = (r?: { document_id?: string | null; parent?: string | null }
 export function locate(m: PlanModel, s: RunState, addr: string, item: ItemKey): Where | null {
   const lin = lineage(m, addr); if (!lin.length) return null;
   const target = lin[lin.length - 1]!;
+  // a LIMIT: the selection it limits (the select_all's matches), the first n of them
+  if (target.op === "limit" && target.input) {
+    const w = locate(m, s, target.input, item);
+    const n = typeof target.args[0] === "number" ? (target.args[0] as number) : undefined;
+    if (w) { const hops = w.hops.slice(); const last = hops[hops.length - 1]; if (last) hops[hops.length - 1] = { sel: last.sel, all: true }; return { ...w, hops, many: true, take: n, op: "limit", addr: target.addr }; }
+  }
   // the page: the nearest step back along the lineage whose result (for this item or an enclosing one) names one
   let doc: string | undefined; let pageAt = -1;
   for (let j = lin.length - 1; j >= 0 && !doc; j--) {

@@ -14,6 +14,8 @@ export type RunGraphProps = {
   addr?: string | null;
   onSelect?: (addr: string | null) => void;
   onPick?: (item: ItemKey) => void;
+  /** a cell clicked: this step, for this item, at the moment it ran (its last event) */
+  onPickRun?: (addr: string, item: ItemKey, event: number) => void;
   rootUrl?: string;
   /** the step on screen: the view glides to keep it in sight */
   focus?: string | null;
@@ -24,7 +26,7 @@ export type RunGraphProps = {
  * made (`StepCard`). At t=0 it is the plan (dashed, "a page", "its matches"); as the run goes, cards fill with
  * what each step made for the item on screen, fan-outs fill with their items' cells, the edges into running
  * steps flow, and the columns flow into the table. Pan by dragging, zoom with the wheel. */
-export function RunGraph({ model, state, item, addr, onSelect, onPick, rootUrl, focus, className }: RunGraphProps) {
+export function RunGraph({ model, state, item, addr, onSelect, onPick, onPickRun, rootUrl, focus, className }: RunGraphProps) {
   const L = React.useMemo(() => layoutOf(model), [model]);
   // a Collection's cells are ITS items: each item's state across the steps that run per item of it
   const itemsOf = React.useMemo(() => {
@@ -38,7 +40,7 @@ export function RunGraph({ model, state, item, addr, onSelect, onPick, rootUrl, 
         const cur = m.get(k);
         // an item is running while any of its steps is, failed once any failed, else done
         const st = !cur ? inst.state : cur.state === "failed" || inst.state === "failed" ? "failed" : cur.state === "running" || inst.state === "running" ? "running" : "done";
-        m.set(k, { ...(cur ?? inst), item: k, state: st, last: Math.max(cur?.last ?? 0, inst.last) });
+        m.set(k, { ...(cur ?? inst), item: k, state: st, first: Math.min(cur?.first ?? Infinity, inst.first), last: Math.max(cur?.last ?? 0, inst.last) });
       }
     }
     return out;
@@ -113,7 +115,14 @@ export function RunGraph({ model, state, item, addr, onSelect, onPick, rootUrl, 
               parallel={state.parallel.get(n.addr) ?? [...state.parallel.entries()].find(([k]) => model.byAddr.get(k)?.per === n.addr)?.[1]}
               active={(nr?.running ?? 0) > 0} selected={addr === n.addr}
               outputs={outs.get(n.addr)}
-              onSelect={() => onSelect?.(n.addr)} onPick={onPick}
+              onSelect={() => onSelect?.(n.addr)}
+              onPick={(k) => {
+                // a cell: this step for that item (a Collection's cell: the item's own first step, where its run began)
+                const own = nr?.insts.get(k);
+                if (own && n.type !== "Collection") return onPickRun ? onPickRun(n.addr, k, own.last) : onPick?.(k);
+                const it = itemsOf.get(n.addr)?.get(k);
+                return onPickRun && it ? onPickRun(n.addr, k, it.first) : onPick?.(k);
+              }}
               style={{ left: p.x, top: p.y, width: CARD_W, height: CARD_H }} />
           );
         })}

@@ -145,7 +145,8 @@ export function Run() {
             </div>
             <div className="min-h-0 flex-1">
               {model ? <RunGraph model={model} state={state} item={item} addr={sel.addr} rootUrl={rootUrl} focus={model ? runLib.shownAs(model, sel.addr ?? focusAddr ?? "") : null}
-                onSelect={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a }))} onPick={(k) => setSel((s) => ({ ...s, item: k }))} />
+                onSelect={(a) => setSel((s) => ({ ...s, addr: a === s.addr ? null : a }))} onPick={(k) => setSel((s) => ({ ...s, item: k }))}
+                onPickRun={(a, k, i) => { setSel({ addr: a, item: k }); seek(i + 1); }} />
                 : <div className="p-3 text-muted">{src.traceId ? "this recording carries no plan: its pages and requests are on the timeline and the page" : "…"}</div>}
             </div>
           </section>

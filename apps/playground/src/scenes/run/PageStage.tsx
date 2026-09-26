@@ -111,7 +111,7 @@ function Chain({ traceId, events, model, state, full, item, shown, folded, colou
 }
 
 /** ONE page at the moment: its snapshot or recording, the element spotlit, (optionally) the event card and its requests */
-function PagePane({ traceId, events, state, full, where, item, colour, label, card, requests, compact, title, onSpot, flying = [], maxHeight }: { flying?: Flying[]; traceId: string | null; events: RunEvent[]; state: runLib.RunState; full: runLib.RunState; where: { doc: string; hops: runLib.Hop[]; many?: boolean } | null; item: string; colour: string; label: string; card?: React.ReactNode; requests?: boolean; compact?: boolean; title?: string; onSpot?: (r: Rect | null) => void; maxHeight: number }) {
+function PagePane({ traceId, events, state, full, where, item, colour, label, card, requests, compact, title, onSpot, flying = [], maxHeight }: { flying?: Flying[]; traceId: string | null; events: RunEvent[]; state: runLib.RunState; full: runLib.RunState; where: { doc: string; hops: runLib.Hop[]; many?: boolean; take?: number } | null; item: string; colour: string; label: string; card?: React.ReactNode; requests?: boolean; compact?: boolean; title?: string; onSpot?: (r: Rect | null) => void; maxHeight: number }) {
   const docId = where?.doc;
   const dr = docId ? state.docs.get(docId) : undefined;
   const recorded = !!(docId && full.docs.get(docId)?.rrweb.length);
@@ -128,10 +128,11 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
   const base = React.useMemo(() => {
     if (!found?.el) return [];
     // a select_all itself: every match is what it found -- all outlined alike, the count on the first
-    if (many) return [{ paths: found.all.slice(0, 200).map(graphLib.pathOf), colour, label }];  // the frame adds the ×N
+    // (a limit: the first n of the selection it limits -- the rest shown faint, not taken)
+    if (many) { const take = where?.take ?? 200; const rest = found.all.slice(take, 200); return [{ paths: found.all.slice(0, take).map(graphLib.pathOf), colour, label }, ...(rest.length ? [{ paths: rest.map(graphLib.pathOf), colour: "#94a3b8", dashed: true }] : [])]; }
     // the spotlight first (it dims the page), the list over it (so it stays crisp)
     return [{ paths: [graphLib.pathOf(found.el)], colour, label, spot: true }, ...fanHl(found.fan, graphLib.pathOf, (paths, c, l, dashed) => ({ paths, colour: c, label: l, dashed }))];
-  }, [found, colour, label, many]);
+  }, [found, colour, label, many, where?.take]);
   const highlights = React.useMemo(() => [...flyingHl, ...base], [flyingHl, base]);
   const [pDoc, setPDoc] = React.useState<Document | null>(null);
   const [tick, setTick] = React.useState(0);
@@ -140,9 +141,9 @@ function PagePane({ traceId, events, state, full, where, item, colour, label, ca
   const pFlying = React.useMemo(() => (recorded && pDoc ? mine.flatMap((f, k) => { const r = runLib.resolveHops(pDoc, f.hops); return r.el && r.el.isConnected ? [{ selector: "", els: [r.el], colour: f.colour, label: f.label, key: `fly${k}` }] : []; }) : []), [recorded, pDoc, mine, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const pBase = React.useMemo(() => {
     if (!pFound?.el || !pFound.el.isConnected) return [];
-    if (many) return [{ selector: "", els: pFound.all.slice(0, 200), colour, label, key: "all" }];  // the player adds the ×N
+    if (many) { const take = where?.take ?? 200; const rest = pFound.all.slice(take, 200); return [{ selector: "", els: pFound.all.slice(0, take), colour, label, key: "all" }, ...(rest.length ? [{ selector: "", els: rest, colour: "#94a3b8", dashed: true, key: "rest" }] : [])]; }
     return [{ selector: "", els: [pFound.el], colour, label, key: "own", spot: true }, ...fanHl(pFound.fan, (x) => x, (els, c, l, dashed, key) => ({ selector: "", els, colour: c, label: l, dashed, key }))];
-  }, [pFound, colour, label, many]);
+  }, [pFound, colour, label, many, where?.take]);
   const pHighlights = React.useMemo(() => [...pFlying, ...pBase], [pFlying, pBase]);
   const at = events[Math.max(0, state.n - 1)];
   const reqs = requests && dr ? dr.requests.map((k) => state.requests[k]!).filter(Boolean) : [];
