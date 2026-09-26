@@ -8,8 +8,10 @@ import { ItemStrip } from "./ItemStrip";
 export const TYPE_COLOUR: Record<string, string> = { Reference: "#64748b", Document: "#2563eb", Element: "#0891b2", Collection: "#7c3aed", Value: "#16a34a", Rows: "#0f172a", Row: "#0f172a" };
 
 export type StepCardProps = {
-  /** the step (null: the plan's root object, the Reference it starts from) */
+  /** the step (null: the plan's root object, the Reference / Document it starts from) */
   node: PNode | null;
+  /** the root object's type (a plan starts from a Reference, or from a Document it is given) */
+  rootType?: string;
   run?: NodeRun;
   expected?: number;
   /** the item on screen: its run of this step is what the card shows */
@@ -39,8 +41,8 @@ export type StepCardProps = {
  * Before it runs it is the plan (dashed, faint); running, it pulses; done, it shows what it made for the item
  * on screen -- the page (host/path, status, tier), the element, the N items (cells), the value read -- and how
  * many items it has run for. Failed items turn it red. */
-export function StepCard({ node, run, expected, item, inst, doc, items, itemsExpected, parallel, active, selected, rootUrl, rowsCount, columns, outputs, onSelect, onPick, style }: StepCardProps) {
-  const type = node ? node.type : "Reference";
+export function StepCard({ node, rootType, run, expected, item, inst, doc, items, itemsExpected, parallel, active, selected, rootUrl, rowsCount, columns, outputs, onSelect, onPick, style }: StepCardProps) {
+  const type = node ? node.type : rootType ?? "Reference";
   const colour = node ? ACTION_COLOUR[actionOf(node.op)] : TYPE_COLOUR.Reference!;
   const ran = !node || !!run?.insts.size;
   const failed = run?.failed ?? 0;
@@ -56,7 +58,7 @@ export function StepCard({ node, run, expected, item, inst, doc, items, itemsExp
       {/* the op */}
       <div className="flex min-w-0 items-center gap-1 border-b border-line px-1.5 py-[3px]" style={{ background: `color-mix(in srgb, ${colour} 10%, transparent)` }}>
         <span className="size-1.5 shrink-0 rounded-full" style={{ background: colour }} />
-        <span className="min-w-0 truncate font-mono font-medium text-ink" title={node?.label ?? rootUrl}>{node ? node.label : "Reference"}</span>
+        <span className="min-w-0 truncate font-mono font-medium text-ink" title={node?.label ?? rootUrl}>{node ? node.label : type === "Document" ? "the page" : "Reference"}</span>
         <span className="flex-1" />
         {perItem && total > 0 && <span className="shrink-0 font-mono text-[9.5px] text-muted" title="items run / expected">{(run?.done ?? 0) + failed}/{total}</span>}
         {failed > 0 && <span className="shrink-0 rounded bg-bad px-1 font-mono text-[9px] text-white" title={`${failed} item(s) failed`}>{failed}✕</span>}

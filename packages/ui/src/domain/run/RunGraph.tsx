@@ -36,6 +36,7 @@ export function RunGraph({ model, state, item, addr, onSelect, onPick, onPickRun
       const nr = state.nodes.get(n.addr); if (!nr) continue;
       let m = out.get(n.per); if (!m) { m = new Map(); out.set(n.per, m); }
       for (const inst of nr.insts.values()) {
+        if (inst.item === "") continue;  // a run of the whole (a project's summary): not one of its items
         const k = inst.item;  // a step run per item of this collection is keyed by its items
         const cur = m.get(k);
         // an item is running while any of its steps is, failed once any failed, else done
@@ -102,7 +103,7 @@ export function RunGraph({ model, state, item, addr, onSelect, onPick, onPickRun
       <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})`, width: L.width, height: L.height, transition: glide ? "transform 300ms ease-out" : undefined }}>
         <Edges L={L} model={model} state={state} />
         {L.lanes.map((l) => { const p = L.pos.get(l.first); return p ? <div key={l.first} className="absolute font-mono text-[10px] font-medium text-muted" style={{ left: p.x, top: p.y - 13 }}>{l.label}</div> : null; })}
-        <StepCard node={null} item={item} active={false} selected={addr === ""} rootUrl={rootUrl} onSelect={() => onSelect?.("")}
+        <StepCard node={null} rootType={model.rootType} item={item} active={false} selected={addr === ""} rootUrl={rootUrl} onSelect={() => onSelect?.("")}
           style={{ left: L.pos.get("")!.x, top: L.pos.get("")!.y, width: CARD_W, height: CARD_H }} />
         {model.nodes.filter((n) => !n.same).map((n) => {
           const p = L.pos.get(n.addr); if (!p) return null;
