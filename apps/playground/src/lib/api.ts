@@ -119,8 +119,23 @@ export const api = {
   resume: (id: string, answer: unknown) => call<Record<string, unknown>>(`/loops/${encodeURIComponent(id)}/resume`, { method: "POST", body: JSON.stringify({ answer }) }),
   /** worked onboarding EXAMPLES, one per dataset shape (built by the pipeline against the lab; no model) */
   examples: () => call<OnboardingExample[]>("/examples"),
+  /** the packaged reusable BRIEFS (the source of truth for onboarding), each parsed to its full frontmatter */
+  briefs: () => call<Brief[]>("/briefs"),
   /** run the pipeline live for a company + brief (needs a model configured on the API, else 400) */
   onboard: (body: Record<string, unknown>) => call<OnboardingResult>("/onboard", { method: "POST", body: JSON.stringify(body) }),
+};
+
+/** one node of a brief's target schema (nested): a field name, what it is, whether it may be absent. */
+export type SchemaField = { name: string; description: string; optional: boolean; children: SchemaField[] };
+/** a reusable onboarding BRIEF, as GET /briefs returns it -- every frontmatter field the pipeline reads.
+ * Briefs are the SOURCE OF TRUTH: the UI represents/edits this and POSTs it back to /onboard. */
+export type Brief = {
+  name: string; title: string; description: string;
+  fields: string[]; descriptions: Record<string, string>; optional: string[]; schema_tree: SchemaField[];
+  search: string; start_url: string;
+  look: string[]; ignore: string[];
+  exit_when: string; hints: string;
+  crawl: Record<string, unknown>;
 };
 
 /** one authored query as the UI shows it: the plan (openable in Author), the blob (runnable in Run), and its assessments */

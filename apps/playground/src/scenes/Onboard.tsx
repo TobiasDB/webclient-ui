@@ -2,7 +2,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Button, Chip, EmptyState, StageRail, cn, stagesLib, type Event, type Plan, type StageStatus } from "@webclient/ui";
-import { api, ApiError, type CrawlPage, type Evaluation, type OnboardingExample, type OnboardingResult, type QueryView } from "../lib/api";
+import { api, ApiError, type Brief, type CrawlPage, type Evaluation, type OnboardingExample, type OnboardingResult, type QueryView } from "../lib/api";
 import { encSpec } from "./Run";
 
 /** a readable message from an API error: the problem detail + its hint when the API sent them. */
@@ -66,11 +66,15 @@ const BROWSER: Record<string, { label: string; opts: () => Record<string, unknow
   cdp: { label: "real Chrome (CDP)", opts: () => undefined, note: "attach to your own running Chrome/Edge (start it with --remote-debugging-port=9222) — your real profile, session and fingerprint. The strongest anti-bot path." },
 };
 
+/** an empty brief -- the starting point before a template is picked or fields are typed. */
+function emptyBrief(): Brief {
+  return { name: "", title: "", description: "", fields: [], descriptions: {}, optional: [], schema_tree: [],
+    search: "", start_url: "", look: [], ignore: [], exit_when: "", hints: "", crawl: {} };
+}
+
 function LiveOnboard({ events, onOpenAuthor, onOpenRun }: { events: Event[] } & CardHandlers) {
   const [company, setCompany] = React.useState("");
-  const [description, setDescription] = React.useState("");
-  const [fields, setFields] = React.useState("");
-  const [url, setUrl] = React.useState("");
+  const [brief, setBrief] = React.useState<Brief>(emptyBrief);
   const [model, setModel] = React.useState("shim");
   const [browser, setBrowser] = React.useState("default");
   const [cdp, setCdp] = React.useState("http://localhost:9222");
@@ -101,8 +105,8 @@ function LiveOnboard({ events, onOpenAuthor, onOpenRun }: { events: Event[] } & 
     const bopts = browser === "cdp" ? { cdp_endpoint: cdp } : BROWSER[browser]?.opts();
     try {
       setRes(await api.onboard({
-        company, url: url || undefined, model, ...(bopts ? { browser: bopts } : {}),
-        brief: { description, fields: fields.split(",").map((s) => s.trim()).filter(Boolean) },
+        company, model, ...(bopts ? { browser: bopts } : {}),
+        brief: briefToBody(brief),  // the FULL brief (schema, look/ignore, start_url, crawl, …)
       }));
     } catch (e) {
       setError(errMsg(e));
@@ -110,35 +114,174 @@ function LiveOnboard({ events, onOpenAuthor, onOpenRun }: { events: Event[] } & 
       setBusy(false);
     }
   };
+  const canRun = !!company && !!(brief.description || brief.fields.length);
 
   return (
     <div className="flex flex-col gap-2">
       <div className="rounded-lg border border-line bg-surface-2 p-3">
-        <div className="grid gap-2 md:grid-cols-4">
-          <input className="rounded border border-line bg-surface px-2 py-1 text-[13px]" placeholder="company" value={company} onChange={(e) => setCompany(e.target.value)} />
-          <input className="rounded border border-line bg-surface px-2 py-1 text-[13px] md:col-span-2" placeholder="what data do you want? (the brief)" value={description} onChange={(e) => setDescription(e.target.value)} />
-          <input className="rounded border border-line bg-surface px-2 py-1 text-[13px]" placeholder="fields (comma-separated)" value={fields} onChange={(e) => setFields(e.target.value)} />
-          <input className="rounded border border-line bg-surface px-2 py-1 font-mono text-[12px] md:col-span-2" placeholder="a seed URL (optional — skips web search)" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <input className="w-40 rounded border border-line bg-surface px-2 py-1 text-[13px]" placeholder="company" value={company} onChange={(e) => setCompany(e.target.value)} />
           <select className="rounded border border-line bg-surface px-2 py-1 text-[13px]" value={model} onChange={(e) => setModel(e.target.value)} title="shim = the local claude CLI (no API key, slower); api = a model configured on the API (ANTHROPIC_API_KEY)">
             <option value="shim">model: shim (local claude)</option>
             <option value="">model: API key</option>
           </select>
-          <Button variant="primary" size="sm" disabled={busy || !company || !description} onClick={run}>{busy ? "onboarding…" : "Onboard ▶"}</Button>
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
-          <span className="text-[11px] text-muted">browser:</span>
           <select className="rounded border border-line bg-surface px-2 py-1 text-[12px]" value={browser} onChange={(e) => setBrowser(e.target.value)} title={BROWSER[browser]?.note}>
-            {Object.entries(BROWSER).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            {Object.entries(BROWSER).map(([k, v]) => <option key={k} value={k}>browser: {v.label}</option>)}
           </select>
           {browser === "cdp" && <input className="rounded border border-line bg-surface px-2 py-1 font-mono text-[11px]" style={{ minWidth: 220 }} placeholder="http://localhost:9222" value={cdp} onChange={(e) => setCdp(e.target.value)} />}
-          <span className="text-[11px] text-muted">{BROWSER[browser]?.note}</span>
+          <span className="flex-1" />
+          <Button variant="primary" size="sm" disabled={busy || !canRun} onClick={run}>{busy ? "onboarding…" : "Onboard ▶"}</Button>
         </div>
-        <p className="mt-1 text-[11px] text-muted">The <b>shim</b> routes through your local <code className="font-mono">claude</code> CLI — no API key, runs out of the box (~30–60s).</p>
+        <BriefEditor brief={brief} onChange={setBrief} />
+        <p className="mt-2 text-[11px] text-muted">The brief is the <b>source of truth</b>. The <b>shim</b> routes through your local <code className="font-mono">claude</code> CLI — no API key, runs out of the box (~30–60s).</p>
       </div>
 
       {/* the pipeline itself -- the main content: every stage, with what it produced, LIVE */}
       <PipelineView detail={detail} res={res} stages={stages} busy={busy} error={error} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} />
     </div>
+  );
+}
+
+/** the brief as the /onboard body wants it: frontmatter-shaped, so the API's Brief.from_front rebuilds
+ * it exactly. Drops empties so a sparse brief stays sparse. */
+function briefToBody(b: Brief): Record<string, unknown> {
+  const out: Record<string, unknown> = { description: b.description };
+  // schema as {path: description} items (dotted paths nest; a trailing "?" marks optional)
+  if (b.fields.length) out.schema = b.fields.map((f) => {
+    const path = b.optional.includes(f) ? `${f}?` : f;
+    return b.descriptions[f] ? { [path]: b.descriptions[f] } : path;
+  });
+  for (const k of ["name", "title", "search", "start_url", "exit_when", "hints"] as const) if (b[k]) out[k] = b[k];
+  if (b.look.length) out.look = b.look;
+  if (b.ignore.length) out.ignore = b.ignore;
+  if (Object.keys(b.crawl).length) out.crawl = b.crawl;
+  return out;
+}
+
+/** one editable row of the target schema: a dotted path (nests), what the field is, and whether it
+ * may be absent (optional=True, so the query author doesn't force it). */
+type FieldRow = { path: string; description: string; optional: boolean };
+
+/** The BRIEF editor -- a full representation of every frontmatter field the pipeline reads, so a brief
+ * can be built from scratch or from a packaged template and edited before a run. Schema generation
+ * (add/remove/describe fields, dotted paths for nesting, an optional toggle), source (web search OR a
+ * start URL), look/ignore guides, a stop condition, structural hints, and the crawl config. */
+function BriefEditor({ brief, onChange }: { brief: Brief; onChange: (b: Brief) => void }) {
+  const templates = useQuery({ queryKey: ["briefs"], queryFn: api.briefs, staleTime: Infinity, retry: false });
+  const set = (patch: Partial<Brief>) => onChange({ ...brief, ...patch });
+  const rows: FieldRow[] = brief.fields.map((f) => ({ path: f, description: brief.descriptions[f] ?? "", optional: brief.optional.includes(f) }));
+  const setRows = (next: FieldRow[]) => {
+    const fields = next.map((r) => r.path.trim()).filter(Boolean);
+    const descriptions: Record<string, string> = {};
+    const optional: string[] = [];
+    for (const r of next) { const p = r.path.trim(); if (!p) continue; if (r.description.trim()) descriptions[p] = r.description.trim(); if (r.optional) optional.push(p); }
+    set({ fields, descriptions, optional });
+  };
+  const useStartUrl = !!brief.start_url;
+  const lines = (v: string[]) => v.join("\n");
+  const parseLines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
+  const crawl = brief.crawl as { max_pages?: number; depth?: number; rounds?: number; browser?: string };
+  const setCrawl = (patch: Record<string, unknown>) => {
+    const next = { ...brief.crawl, ...patch };
+    for (const k of Object.keys(next)) if (next[k] === "" || next[k] == null) delete next[k];
+    set({ crawl: next });
+  };
+
+  return (
+    <div className="grid gap-2.5 rounded-md border border-line bg-surface p-2.5 md:grid-cols-2">
+      {/* template + identity */}
+      <label className="flex items-center gap-2 text-[11px] text-muted md:col-span-2">
+        start from
+        <select className="rounded border border-line bg-surface px-2 py-1 text-[12px] text-ink" value={brief.name}
+          onChange={(e) => { const t = templates.data?.find((b) => b.name === e.target.value); if (t) onChange(t); else set({ name: e.target.value }); }}>
+          <option value="">— a blank brief —</option>
+          {(templates.data ?? []).map((t) => <option key={t.name} value={t.name}>{t.title || t.name}</option>)}
+        </select>
+        {templates.isError && <span className="text-bad">briefs unavailable</span>}
+        <span className="flex-1" />
+        <input className="w-36 rounded border border-line bg-surface px-2 py-1 text-[12px] text-ink" placeholder="title" value={brief.title} onChange={(e) => set({ title: e.target.value })} />
+      </label>
+
+      <label className="flex flex-col gap-1 text-[11px] text-muted md:col-span-2">
+        description <span className="font-normal">— the dataset you want, in plain words</span>
+        <textarea className="min-h-[3rem] rounded border border-line bg-surface px-2 py-1 text-[12px] text-ink" placeholder="every product with its name and price" value={brief.description} onChange={(e) => set({ description: e.target.value })} />
+      </label>
+
+      {/* schema generation */}
+      <div className="md:col-span-2">
+        <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+          schema <span className="font-normal normal-case">— the fields each record carries (dotted paths nest: <code className="font-mono">price.value</code>)</span>
+        </div>
+        <div className="space-y-1">
+          {rows.map((r, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <input className="w-40 rounded border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink" placeholder="field.path" value={r.path} onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, path: e.target.value } : x))} />
+              <input className="flex-1 rounded border border-line bg-surface px-2 py-1 text-[11px] text-ink" placeholder="what it is / how to fill it (optional)" value={r.description} onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} />
+              <label className="flex items-center gap-1 text-[10px] text-muted" title="may be absent on some pages — the query author won't force it (optional=True)">
+                <input type="checkbox" checked={r.optional} onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, optional: e.target.checked } : x))} /> opt
+              </label>
+              <button type="button" className="rounded px-1.5 text-[13px] text-muted hover:text-bad" title="remove field" onClick={() => setRows(rows.filter((_, j) => j !== i))}>×</button>
+            </div>
+          ))}
+          <button type="button" className="text-[11px] text-accent hover:underline" onClick={() => setRows([...rows, { path: "", description: "", optional: false }])}>+ add field</button>
+        </div>
+      </div>
+
+      {/* source: web search OR a start URL */}
+      <div>
+        <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+          source
+          <label className="flex items-center gap-1 font-normal normal-case"><input type="radio" checked={!useStartUrl} onChange={() => set({ start_url: "" })} /> web search</label>
+          <label className="flex items-center gap-1 font-normal normal-case"><input type="radio" checked={useStartUrl} onChange={() => set({ start_url: brief.start_url || "https://" })} /> start URL</label>
+        </div>
+        {useStartUrl
+          ? <input className="w-full rounded border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink" placeholder="https://example.com/{company}/data" value={brief.start_url} onChange={(e) => set({ start_url: e.target.value })} />
+          : <input className="w-full rounded border border-line bg-surface px-2 py-1 text-[12px] text-ink" placeholder='search qualifier, e.g. "investor relations news" (after the company)' value={brief.search} onChange={(e) => set({ search: e.target.value })} />}
+      </div>
+
+      {/* stop condition */}
+      <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        stop when <span className="font-normal normal-case">— a clean exit before authoring (optional)</span>
+        <input className="rounded border border-line bg-surface px-2 py-1 text-[12px] font-normal text-ink" placeholder="the upcoming-events section is empty" value={brief.exit_when} onChange={(e) => set({ exit_when: e.target.value })} />
+      </label>
+
+      {/* look / ignore */}
+      <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        look for <span className="font-normal normal-case">— kinds of pages to head for (one per line)</span>
+        <textarea className="min-h-[3rem] rounded border border-line bg-surface px-2 py-1 text-[11px] font-normal text-ink" placeholder="the pricing / plans page" value={lines(brief.look)} onChange={(e) => set({ look: parseLines(e.target.value) })} />
+      </label>
+      <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        ignore <span className="font-normal normal-case">— kinds of pages to skip (one per line)</span>
+        <textarea className="min-h-[3rem] rounded border border-line bg-surface px-2 py-1 text-[11px] font-normal text-ink" placeholder="blog, docs, careers" value={lines(brief.ignore)} onChange={(e) => set({ ignore: parseLines(e.target.value) })} />
+      </label>
+
+      {/* structural hints */}
+      <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted md:col-span-2">
+        hints <span className="font-normal normal-case">— structural guidance for the query author (how this dataset is laid out)</span>
+        <textarea className="min-h-[2.5rem] rounded border border-line bg-surface px-2 py-1 text-[11px] font-normal text-ink" placeholder="the dataset splits into UPCOMING and ARCHIVED sections; ARCHIVED is tabbed by year" value={brief.hints} onChange={(e) => set({ hints: e.target.value })} />
+      </label>
+
+      {/* crawl config */}
+      <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted md:col-span-2">
+        crawl
+        <NumBox label="max pages" value={crawl.max_pages} onChange={(v) => setCrawl({ max_pages: v })} />
+        <NumBox label="depth" value={crawl.depth} onChange={(v) => setCrawl({ depth: v })} />
+        <NumBox label="rounds" value={crawl.rounds} onChange={(v) => setCrawl({ rounds: v })} />
+        <label className="flex items-center gap-1 font-normal normal-case">browser
+          <select className="rounded border border-line bg-surface px-1 py-0.5 text-[11px] text-ink" value={crawl.browser ?? ""} onChange={(e) => setCrawl({ browser: e.target.value })}>
+            <option value="">auto</option><option value="always">always</option><option value="never">never</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function NumBox({ label, value, onChange }: { label: string; value?: number; onChange: (v: number | "") => void }) {
+  return (
+    <label className="flex items-center gap-1 font-normal normal-case">{label}
+      <input type="number" min={0} className="w-16 rounded border border-line bg-surface px-1 py-0.5 text-[11px] text-ink" value={value ?? ""} onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))} />
+    </label>
   );
 }
 
