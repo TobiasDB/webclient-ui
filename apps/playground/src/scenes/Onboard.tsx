@@ -1,8 +1,8 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Button, Chip, cn, type Plan } from "@webclient/ui";
-import { api, ApiError, type OnboardingExample, type QueryView } from "../lib/api";
+import { Button, Chip, StageRail, cn, stagesLib, type Event, type Plan } from "@webclient/ui";
+import { api, ApiError, type OnboardingExample, type OnboardingResult, type QueryView } from "../lib/api";
 import { encSpec } from "./Run";
 
 /** a readable message from an API error: the problem detail + its hint when the API sent them. */
@@ -18,7 +18,7 @@ function errMsg(e: unknown): string {
  * completeness / correctness / timeliness. Worked EXAMPLES (one per dataset shape) come from the
  * API's GET /examples ($0, no model); a live run needs a model configured on the API. Every query
  * links straight into the Author (open its plan to refine) and Run (execute it). */
-export function Onboard() {
+export function Onboard({ events = [] }: { events?: Event[] }) {
   const nav = useNavigate();
   const examples = useQuery({ queryKey: ["examples"], queryFn: api.examples, staleTime: Infinity, retry: false });
 
@@ -39,7 +39,7 @@ export function Onboard() {
         </p>
       </header>
 
-      <LiveOnboard onOpenAuthor={openAuthor} onOpenRun={openRun} />
+      <LiveOnboard events={events} onOpenAuthor={openAuthor} onOpenRun={openRun} />
 
       <div className="mt-2">
         <div className="mb-1 flex items-center gap-2">
@@ -60,7 +60,7 @@ export function Onboard() {
 
 /** A live onboarding run: a company + brief -> POST /onboard. Needs a model on the API (else a
  * clear note). The result renders exactly like an example card. */
-function LiveOnboard({ onOpenAuthor, onOpenRun }: CardHandlers) {
+function LiveOnboard({ events, onOpenAuthor, onOpenRun }: { events: Event[] } & CardHandlers) {
   const [company, setCompany] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [fields, setFields] = React.useState("");
@@ -68,26 +68,37 @@ function LiveOnboard({ onOpenAuthor, onOpenRun }: CardHandlers) {
   const [model, setModel] = React.useState("shim");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [result, setResult] = React.useState<OnboardingExample | null>(null);
+  const [res, setRes] = React.useState<OnboardingResult | null>(null);
+  const [runAt, setRunAt] = React.useState(0);  // events since this run started (drop earlier ones)
+
+  // the live pipeline stages of the onboarding run: search -> crawl -> select -> evaluate -> source
+  // -> query, updated from the bus as the run unfolds -- so you can see WHERE it is (and where it stuck).
+  const stages = React.useMemo(
+    () => stagesLib.pipelineStages(
+      events.filter((e) => e.topic === "pipeline" && (e as { pipeline?: string }).pipeline === "onboarding" && (e.ts ?? 0) * 1000 >= runAt),
+    ),
+    [events, runAt],
+  );
 
   const run = async () => {
-    setBusy(true); setError(null); setResult(null);
+    setBusy(true); setError(null); setRes(null); setRunAt(Date.now());
     try {
-      const r = await api.onboard({
+      setRes(await api.onboard({
         company, url: url || undefined, model,
         brief: { description, fields: fields.split(",").map((s) => s.trim()).filter(Boolean) },
-      });
-      setResult({
-        name: company, title: company, description, source: r.evaluation?.url ?? "", ok: r.ok, reason: r.reason,
-        binary: false, brief: { description, fields: fields.split(",").map((s) => s.trim()).filter(Boolean) },
-        resolve: {}, latest: r.query_latest ?? null, all: r.query_all ?? null,
-      });
+      }));
     } catch (e) {
       setError(errMsg(e));
     } finally {
       setBusy(false);
     }
   };
+
+  const fieldList = fields.split(",").map((s) => s.trim()).filter(Boolean);
+  const ex: OnboardingExample | null = res && res.ok ? {
+    name: company, title: company, description, source: res.evaluation?.url ?? "", ok: res.ok, reason: res.reason,
+    binary: false, brief: { description, fields: fieldList }, resolve: {}, latest: res.query_latest ?? null, all: res.query_all ?? null,
+  } : null;
 
   return (
     <div className="rounded-lg border border-line bg-surface-2 p-3">
@@ -103,8 +114,38 @@ function LiveOnboard({ onOpenAuthor, onOpenRun }: CardHandlers) {
         <Button variant="primary" size="sm" disabled={busy || !company || !description} onClick={run}>{busy ? "onboarding…" : "Onboard ▶"}</Button>
       </div>
       <p className="mt-1 text-[11px] text-muted">The <b>shim</b> routes through your local <code className="font-mono">claude</code> CLI — no API key, runs out of the box (a few calls, ~30–60s). Pick <b>API key</b> to use a model configured on the API.</p>
+
+      {/* the live pipeline: the stages as they run, so it is easy to debug what is happening */}
+      {(busy || stages.length > 0) && (
+        <div className="mt-3 rounded border border-line bg-surface p-2">
+          <div className="mb-1.5 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
+            pipeline {busy && <span className="text-accent">· running</span>}
+          </div>
+          <StageRail stages={stages} />
+          {res && !res.ok && <p className="mt-2 text-[12px] text-bad">stopped: {res.reason || "unknown"}</p>}
+          {res?.steps?.length ? <Trace steps={res.steps} /> : busy ? <p className="mt-2 text-[11px] text-muted">running the pipeline… (the shim makes a few local claude calls)</p> : null}
+        </div>
+      )}
+
       {error && <p className="mt-2 text-[12px] text-warn">{error}</p>}
-      {result && <div className="mt-2"><ResultCard ex={result} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} /></div>}
+      {ex && <div className="mt-2"><ResultCard ex={ex} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} /></div>}
+    </div>
+  );
+}
+
+/** The run's step trace (what each stage did) -- collapsible, for debugging a run. */
+function Trace({ steps }: { steps: string[] }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="mt-2">
+      <button type="button" className="text-[11px] text-accent hover:underline" onClick={() => setOpen(!open)}>
+        {open ? "▾" : "▸"} trace ({steps.length} step{steps.length === 1 ? "" : "s"})
+      </button>
+      {open && (
+        <pre className="mt-1 max-h-56 overflow-auto rounded bg-surface-2 p-2 font-mono text-[10.5px] leading-relaxed text-ink-2">
+          {steps.join("\n")}
+        </pre>
+      )}
     </div>
   );
 }

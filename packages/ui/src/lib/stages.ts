@@ -266,3 +266,28 @@ export function structuralFeeds(sts: Stage[]): Record<string, string> {
   seq(sts);
   return out;
 }
+
+
+/** A pipeline's live STAGES from its PipelineEvents -- generic: any Pipeline that emits stage
+ * boundaries (enter / exit / gate / error, with an optional detail summary) renders as a rail.
+ * Shared by the Loops scene and the Onboard workspace so a pipeline object is visualised the same
+ * way everywhere. */
+export function pipelineStages(evs: PipelineStageEvent[]): import("../domain/StageRail").StageInfo[] {
+  type SI = import("../domain/StageRail").StageInfo;
+  const order: string[] = [];
+  const s = new Map<string, SI>();
+  for (const e of evs) {
+    if (!e.stage) continue;
+    if (!s.has(e.stage)) { order.push(e.stage); s.set(e.stage, { name: e.stage, status: "pending" }); }
+    const x = s.get(e.stage)!;
+    if (e.phase === "enter") x.status = "running";
+    if (e.phase === "exit") x.status = e.detail?.stopped ? "failed" : "done";
+    if (e.phase === "error") x.status = "failed";
+    if (e.phase === "gate") { if (e.detail?.waiting) x.status = "waiting"; else x.gate = e.detail?.passed === false ? "failed" : "passed"; }
+    if (e.phase === "review") x.review = String(e.detail?.verdict ?? "reviewed");
+    const r = e.detail?.reason ?? e.detail?.summary;
+    if (typeof r === "string" && r) x.summary = r;
+  }
+  return order.map((n) => s.get(n)!);
+}
+export type PipelineStageEvent = { topic?: string; pipeline?: string; stage?: string; phase?: string; detail?: Record<string, unknown> };

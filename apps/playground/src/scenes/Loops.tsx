@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AskCard, Button, Chip, DataFrame, EmptyState, FrontierMap, Input, Select, StageRail, TabPanel, Tabs, Toolbar, ToolbarGroup, ToolbarSpacer, type Event, type LoopEvent, type PipelineEvent, type StageInfo } from "@webclient/ui";
+import { AskCard, Button, Chip, DataFrame, EmptyState, FrontierMap, Input, Select, StageRail, TabPanel, Tabs, Toolbar, ToolbarGroup, ToolbarSpacer, stagesLib, type Event, type LoopEvent, type PipelineEvent } from "@webclient/ui";
 import { api, ApiError, type CrawlState } from "../lib/api";
 import { useSession } from "../lib/session";
 
@@ -50,11 +50,7 @@ export function Loops({ liveEvents }: { liveEvents: Event[] }) {
     for (const e of liveEvents) if (e.topic === "pipeline") { const pe = e as PipelineEvent; if (!m.has(pe.pipeline)) m.set(pe.pipeline, []); m.get(pe.pipeline)!.push(pe); }
     return [...m];
   }, [liveEvents]);
-  const stagesOf = (evs: PipelineEvent[]): StageInfo[] => {
-    const order: string[] = []; const s = new Map<string, StageInfo>();
-    for (const e of evs) { if (!s.has(e.stage)) { order.push(e.stage); s.set(e.stage, { name: e.stage, status: "pending" }); } const x = s.get(e.stage)!; if (e.phase === "enter") x.status = "running"; if (e.phase === "exit") x.status = e.detail.stopped ? "failed" : "done"; if (e.phase === "error") x.status = "failed"; if (e.phase === "gate") { if (e.detail.waiting) x.status = "waiting"; else x.gate = e.detail.passed === false ? "failed" : "passed"; } }
-    return order.map((n) => s.get(n)!);
-  };
+  const stagesOf = (evs: PipelineEvent[]) => stagesLib.pipelineStages(evs);  // the shared generic pipeline-stage view
   const waiting = useQuery({ queryKey: ["loops"], queryFn: api.loops, refetchInterval: 3000 });
 
   return (

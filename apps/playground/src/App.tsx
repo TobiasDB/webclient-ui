@@ -67,7 +67,7 @@ export function App() {
             back and forward, never loses what you were doing; the URL carries the essentials */}
         <Keep path="/" exact><Home /></Keep>
         <Keep path="/author"><Author /></Keep>
-        <Keep path="/onboard"><Onboard /></Keep>
+        <Keep path="/onboard"><Onboard events={events} /></Keep>
         {/* the three former workspaces live on as redirects into Author */}
         <Routes>
           <Route path="/explore" element={<Redirect />} /><Route path="/query" element={<Redirect />} /><Route path="/interact" element={<Redirect />} />
