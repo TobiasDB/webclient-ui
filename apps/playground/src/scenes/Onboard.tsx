@@ -1,8 +1,8 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Button, Chip, StageRail, cn, stagesLib, type Event, type Plan } from "@webclient/ui";
-import { api, ApiError, type OnboardingExample, type OnboardingResult, type QueryView } from "../lib/api";
+import { Button, Chip, EmptyState, StageRail, cn, stagesLib, type Event, type Plan, type StageStatus } from "@webclient/ui";
+import { api, ApiError, type CrawlPage, type Evaluation, type OnboardingExample, type OnboardingResult, type QueryView } from "../lib/api";
 import { encSpec } from "./Run";
 
 /** a readable message from an API error: the problem detail + its hint when the API sent them. */
@@ -41,31 +41,39 @@ export function Onboard({ events = [] }: { events?: Event[] }) {
 
       <LiveOnboard events={events} onOpenAuthor={openAuthor} onOpenRun={openRun} />
 
-      <div className="mt-2">
-        <div className="mb-1 flex items-center gap-2">
-          <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">Worked examples</h2>
-          <span className="text-[11px] text-muted">one per dataset shape · built by the pipeline, no model</span>
-        </div>
-        {examples.isLoading && <p className="text-[12px] text-muted">building the examples (running the pipeline)…</p>}
-        {examples.isError && <p className="text-[12px] text-bad">could not load examples: {errMsg(examples.error)}</p>}
-        <div className="grid gap-2 xl:grid-cols-2">
+      <details className="mt-1">
+        <summary className="cursor-pointer text-[13px] font-semibold uppercase tracking-wide text-muted">
+          Worked examples <span className="font-normal normal-case text-muted">({examples.data?.length ?? 0}) · one per dataset shape, built by the pipeline (no model)</span>
+        </summary>
+        {examples.isLoading && <p className="mt-2 text-[12px] text-muted">building the examples (running the pipeline)…</p>}
+        {examples.isError && <p className="mt-2 text-[12px] text-bad">could not load examples: {errMsg(examples.error)}</p>}
+        <div className="mt-2 grid gap-2 xl:grid-cols-2">
           {(examples.data ?? []).map((ex) => (
             <ResultCard key={ex.name} ex={ex} onOpenAuthor={openAuthor} onOpenRun={openRun} />
           ))}
         </div>
-      </div>
+      </details>
     </div>
   );
 }
 
 /** A live onboarding run: a company + brief -> POST /onboard. Needs a model on the API (else a
  * clear note). The result renders exactly like an example card. */
+const BROWSER: Record<string, { label: string; opts: () => Record<string, unknown> | undefined; note: string }> = {
+  default: { label: "headless · stealth (default)", opts: () => undefined, note: "the shared headless browser with stealth masks — fast, fine for most sites." },
+  hardened: { label: "hardened (fingerprint)", opts: () => ({ fingerprint: true }), note: "a randomised realistic identity per page — a stronger stealth for pickier sites." },
+  headed: { label: "headed (visible browser)", opts: () => ({ headless: false, fingerprint: true }), note: "a VISIBLE browser (a virtual display is started on the server) — defeats headless-only anti-bot detection." },
+  cdp: { label: "real Chrome (CDP)", opts: () => undefined, note: "attach to your own running Chrome/Edge (start it with --remote-debugging-port=9222) — your real profile, session and fingerprint. The strongest anti-bot path." },
+};
+
 function LiveOnboard({ events, onOpenAuthor, onOpenRun }: { events: Event[] } & CardHandlers) {
   const [company, setCompany] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [fields, setFields] = React.useState("");
   const [url, setUrl] = React.useState("");
   const [model, setModel] = React.useState("shim");
+  const [browser, setBrowser] = React.useState("default");
+  const [cdp, setCdp] = React.useState("http://localhost:9222");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [res, setRes] = React.useState<OnboardingResult | null>(null);
@@ -82,9 +90,10 @@ function LiveOnboard({ events, onOpenAuthor, onOpenRun }: { events: Event[] } & 
 
   const run = async () => {
     setBusy(true); setError(null); setRes(null); setRunAt(Date.now());
+    const bopts = browser === "cdp" ? { cdp_endpoint: cdp } : BROWSER[browser]?.opts();
     try {
       setRes(await api.onboard({
-        company, url: url || undefined, model,
+        company, url: url || undefined, model, ...(bopts ? { browser: bopts } : {}),
         brief: { description, fields: fields.split(",").map((s) => s.trim()).filter(Boolean) },
       }));
     } catch (e) {
@@ -94,43 +103,152 @@ function LiveOnboard({ events, onOpenAuthor, onOpenRun }: { events: Event[] } & 
     }
   };
 
-  const fieldList = fields.split(",").map((s) => s.trim()).filter(Boolean);
-  const ex: OnboardingExample | null = res && res.ok ? {
-    name: company, title: company, description, source: res.evaluation?.url ?? "", ok: res.ok, reason: res.reason,
-    binary: false, brief: { description, fields: fieldList }, resolve: {}, latest: res.query_latest ?? null, all: res.query_all ?? null,
-  } : null;
-
   return (
-    <div className="rounded-lg border border-line bg-surface-2 p-3">
-      <div className="grid gap-2 md:grid-cols-4">
-        <input className="rounded border border-line bg-surface px-2 py-1 text-[13px]" placeholder="company" value={company} onChange={(e) => setCompany(e.target.value)} />
-        <input className="rounded border border-line bg-surface px-2 py-1 text-[13px] md:col-span-2" placeholder="what data do you want? (the brief)" value={description} onChange={(e) => setDescription(e.target.value)} />
-        <input className="rounded border border-line bg-surface px-2 py-1 text-[13px]" placeholder="fields (comma-separated)" value={fields} onChange={(e) => setFields(e.target.value)} />
-        <input className="rounded border border-line bg-surface px-2 py-1 font-mono text-[12px] md:col-span-2" placeholder="a seed URL (optional — skips web search)" value={url} onChange={(e) => setUrl(e.target.value)} />
-        <select className="rounded border border-line bg-surface px-2 py-1 text-[13px]" value={model} onChange={(e) => setModel(e.target.value)} title="shim = the local claude CLI (no API key, slower); api = a model configured on the API (ANTHROPIC_API_KEY)">
-          <option value="shim">model: shim (local claude)</option>
-          <option value="">model: API key</option>
-        </select>
-        <Button variant="primary" size="sm" disabled={busy || !company || !description} onClick={run}>{busy ? "onboarding…" : "Onboard ▶"}</Button>
-      </div>
-      <p className="mt-1 text-[11px] text-muted">The <b>shim</b> routes through your local <code className="font-mono">claude</code> CLI — no API key, runs out of the box (a few calls, ~30–60s). Pick <b>API key</b> to use a model configured on the API.</p>
-
-      {/* the live pipeline: the stages as they run, so it is easy to debug what is happening */}
-      {(busy || stages.length > 0) && (
-        <div className="mt-3 rounded border border-line bg-surface p-2">
-          <div className="mb-1.5 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
-            pipeline {busy && <span className="text-accent">· running</span>}
-          </div>
-          <StageRail stages={stages} />
-          {res && !res.ok && <p className="mt-2 text-[12px] text-bad">stopped: {res.reason || "unknown"}</p>}
-          {res?.steps?.length ? <Trace steps={res.steps} /> : busy ? <p className="mt-2 text-[11px] text-muted">running the pipeline… (the shim makes a few local claude calls)</p> : null}
+    <div className="flex flex-col gap-2">
+      <div className="rounded-lg border border-line bg-surface-2 p-3">
+        <div className="grid gap-2 md:grid-cols-4">
+          <input className="rounded border border-line bg-surface px-2 py-1 text-[13px]" placeholder="company" value={company} onChange={(e) => setCompany(e.target.value)} />
+          <input className="rounded border border-line bg-surface px-2 py-1 text-[13px] md:col-span-2" placeholder="what data do you want? (the brief)" value={description} onChange={(e) => setDescription(e.target.value)} />
+          <input className="rounded border border-line bg-surface px-2 py-1 text-[13px]" placeholder="fields (comma-separated)" value={fields} onChange={(e) => setFields(e.target.value)} />
+          <input className="rounded border border-line bg-surface px-2 py-1 font-mono text-[12px] md:col-span-2" placeholder="a seed URL (optional — skips web search)" value={url} onChange={(e) => setUrl(e.target.value)} />
+          <select className="rounded border border-line bg-surface px-2 py-1 text-[13px]" value={model} onChange={(e) => setModel(e.target.value)} title="shim = the local claude CLI (no API key, slower); api = a model configured on the API (ANTHROPIC_API_KEY)">
+            <option value="shim">model: shim (local claude)</option>
+            <option value="">model: API key</option>
+          </select>
+          <Button variant="primary" size="sm" disabled={busy || !company || !description} onClick={run}>{busy ? "onboarding…" : "Onboard ▶"}</Button>
         </div>
-      )}
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
+          <span className="text-[11px] text-muted">browser:</span>
+          <select className="rounded border border-line bg-surface px-2 py-1 text-[12px]" value={browser} onChange={(e) => setBrowser(e.target.value)} title={BROWSER[browser]?.note}>
+            {Object.entries(BROWSER).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+          {browser === "cdp" && <input className="rounded border border-line bg-surface px-2 py-1 font-mono text-[11px]" style={{ minWidth: 220 }} placeholder="http://localhost:9222" value={cdp} onChange={(e) => setCdp(e.target.value)} />}
+          <span className="text-[11px] text-muted">{BROWSER[browser]?.note}</span>
+        </div>
+        <p className="mt-1 text-[11px] text-muted">The <b>shim</b> routes through your local <code className="font-mono">claude</code> CLI — no API key, runs out of the box (~30–60s).</p>
+      </div>
 
-      {error && <p className="mt-2 text-[12px] text-warn">{error}</p>}
-      {ex && <div className="mt-2"><ResultCard ex={ex} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} /></div>}
+      {/* the pipeline itself -- the main content: every stage, with what it produced */}
+      <PipelineView res={res} stages={stages} busy={busy} error={error} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} />
     </div>
   );
+}
+
+const STATUS_TONE: Record<StageStatus, string> = {
+  pending: "text-muted", running: "text-accent", done: "text-ok", failed: "text-bad", waiting: "text-warn", skipped: "text-muted",
+};
+
+/** The onboarding pipeline as its OWN view -- a stage rail plus one rich card per step (what the
+ * search found, what was crawled, the candidates, the evaluation with its flags, the fetch policy,
+ * and the A/B queries). The main content of the workspace, so a run is fully inspectable. */
+function PipelineView({ res, stages, busy, error, onOpenAuthor, onOpenRun }: {
+  res: OnboardingResult | null; stages: import("@webclient/ui").StageInfo[]; busy: boolean; error: string | null;
+} & CardHandlers) {
+  const statusOf = (name: string): StageStatus => stages.find((s) => s.name === name)?.status ?? (res ? "done" : "pending");
+  const source = res?.evaluation?.url ?? "";
+  return (
+    <section className="flex min-h-[420px] flex-col rounded-lg border border-line bg-surface">
+      <div className="flex items-center gap-2 border-b border-line px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        pipeline {busy && <span className="text-accent">· running</span>}
+        <span className="flex-1" />
+        {res && !res.ok && <Chip tone="bad">stopped: {res.reason || "unknown"}</Chip>}
+        {res?.ok && <Chip tone="ok">onboarded</Chip>}
+      </div>
+      {(busy || stages.length > 0) && <div className="border-b border-line px-3 py-2"><StageRail stages={stages} /></div>}
+      {error && <p className="px-3 py-2 text-[12px] text-warn">{error}</p>}
+      {!res && busy && <p className="px-3 py-4 text-center text-[12px] text-muted">running the pipeline… stages light up as they complete (the shim makes a few local <code className="font-mono">claude</code> calls).</p>}
+      {!res && !busy && !error && <div className="p-4"><EmptyState title="No run yet" hint="Fill a brief above and Onboard ▶. Each stage below then shows exactly what it produced — the seeds, the crawled pages, the candidates, the page evaluation with its signals, the fetch policy, and the two queries." /></div>}
+      {res && (
+        <div className="grid gap-2 p-3">
+          <StageCard n={1} title="Search" status={statusOf("search")} summary={`${res.seeds.length} seed${res.seeds.length === 1 ? "" : "s"}`}>
+            {res.seeds.length ? <ul className="space-y-0.5">{res.seeds.map((u) => <li key={u}><a className="font-mono text-[11px] text-accent hover:underline" href={u} target="_blank" rel="noreferrer">{u}</a></li>)}</ul> : <Muted>no seeds — web search returned nothing (install ddgs, or paste a seed URL)</Muted>}
+          </StageCard>
+          <StageCard n={2} title="Crawl" status={statusOf("crawl")} summary={`${res.crawl_pages.length} page${res.crawl_pages.length === 1 ? "" : "s"} fetched`}>
+            <PageTable pages={res.crawl_pages} />
+          </StageCard>
+          <StageCard n={3} title="Select" status={statusOf("select")} summary={`${res.candidates.length} candidate${res.candidates.length === 1 ? "" : "s"}`}>
+            {res.candidates.length ? <ul className="space-y-0.5">{res.candidates.map((c) => <li key={c.url} className="flex items-center gap-2 text-[11px]"><span className="rounded bg-surface-3 px-1 text-[10px] text-muted">{c.tier}</span><span className="truncate font-mono" title={c.url}>{c.url}</span>{c.note && <span className="truncate text-muted" title={c.note}>— {c.note}</span>}</li>)}</ul> : <Muted>no candidates</Muted>}
+          </StageCard>
+          <StageCard n={4} title="Evaluate" status={statusOf("evaluate")} summary={res.evaluation?.url}>
+            <EvalPanel ev={res.evaluation} />
+          </StageCard>
+          <StageCard n={5} title="Source" status={statusOf("source")} summary={resolveSummary(res.resolve)}>
+            <div className="text-[11px] text-muted">{source && <>fetches <span className="font-mono">{source}</span> with </>}{resolveSummary(res.resolve)}.</div>
+          </StageCard>
+          <StageCard n={6} title="Query" status={statusOf("query")} summary="the latest (A) and all (B) queries">
+            {res.query_latest || res.query_all ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                <QueryBlock label="A · latest" hint="the newest rows (incremental poll)" view={res.query_latest ?? null} source={source} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} name={`${res.company}-latest`} binary={false} />
+                <QueryBlock label="B · all" hint="the whole dataset (backfill)" view={res.query_all ?? null} source={source} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} name={`${res.company}-all`} binary={false} />
+              </div>
+            ) : <Muted>no query authored{res.reason ? ` — ${res.reason}` : ""}</Muted>}
+          </StageCard>
+          {res.steps?.length ? <Trace steps={res.steps} /> : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StageCard({ n, title, status, summary, children }: { n: number; title: string; status: StageStatus; summary?: string | null; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-line bg-surface-2">
+      <div className="flex items-center gap-2 border-b border-line px-3 py-1.5">
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-line-2 text-[10px] text-muted">{n}</span>
+        <h3 className="text-[13px] font-semibold">{title}</h3>
+        <span className={cn("text-[11px] font-medium capitalize", STATUS_TONE[status])}>{status}</span>
+        {summary && <span className="ml-auto max-w-[55%] truncate text-[11px] text-muted" title={summary}>{summary}</span>}
+      </div>
+      <div className="px-3 py-2 text-[12px]">{children}</div>
+    </div>
+  );
+}
+
+const Muted = ({ children }: { children: React.ReactNode }) => <span className="text-[11px] text-muted">{children}</span>;
+
+function PageTable({ pages }: { pages: CrawlPage[] }) {
+  if (!pages.length) return <Muted>no pages fetched</Muted>;
+  return (
+    <div className="space-y-0.5">
+      {pages.slice(0, 25).map((p) => (
+        <div key={p.url} className="flex items-center gap-2 text-[11px]">
+          {p.tier && <span className="rounded bg-surface-3 px-1 text-[10px] text-muted">{p.tier}</span>}
+          <span className="min-w-0 flex-1 truncate" title={p.url}>{p.title || p.url}</span>
+          {p.flags.map((f) => <span key={f} className="rounded bg-warn-soft px-1 text-[9px] text-warn">{f}</span>)}
+        </div>
+      ))}
+      {pages.length > 25 && <Muted>+{pages.length - 25} more</Muted>}
+    </div>
+  );
+}
+
+function EvalPanel({ ev }: { ev?: Evaluation | null }) {
+  if (!ev) return <Muted>not evaluated</Muted>;
+  const flags = Object.entries(ev.flags ?? {});
+  const Score = ({ label, on }: { label: string; on?: boolean }) => <span className={cn("rounded px-1.5 py-0.5 text-[10px]", on ? "bg-ok-soft text-ok" : "bg-surface-3 text-muted")}>{on ? "✓" : "·"} {label}</span>;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-1 text-[11px]">
+        <Score label="queryable" on={ev.is_queryable} />
+        <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-ink-2">scrapability {ev.scrapability ?? "?"}/10</span>
+        <Score label="paginated" on={ev.has_pagination} />
+        <Score label="filtered" on={ev.has_filters} />
+        {ev.dataset_is_subset && <span className="rounded bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn">a subset</span>}
+        {ev.sort_order && <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-ink-2">{ev.sort_order}</span>}
+        {ev.api_endpoint && <span className="rounded bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent" title={ev.api_endpoint}>data API</span>}
+      </div>
+      {flags.length > 0 && <div className="flex flex-wrap gap-1">{flags.sort((a, b) => b[1] - a[1]).map(([name, c]) => <span key={name} className="rounded bg-surface-3 px-1 text-[10px] text-ink-2" title={(ev.flag_signals?.[name] ?? []).join("\n") || undefined}>{name.replace(/_/g, " ")} {Math.round(c * 100)}%</span>)}</div>}
+      {ev.verdict && <p className="text-[11px] text-muted">“{ev.verdict}”</p>}
+      {ev.recency_hint && <p className="text-[11px] text-muted">recency: {ev.recency_hint}</p>}
+    </div>
+  );
+}
+
+function resolveSummary(resolve: Record<string, unknown>): string {
+  const b = resolve.browser as { when?: string } | null | undefined;
+  const antibot = resolve.antibot as { level?: string } | null | undefined;
+  const bits = [b?.when ? `a browser (${b.when})` : "a plain static fetch", resolve.proxy ? "a proxy" : null, antibot?.level && antibot.level !== "off" ? `anti-bot ${antibot.level}` : null].filter(Boolean);
+  return bits.join(" · ");
 }
 
 /** The run's step trace (what each stage did) -- collapsible, for debugging a run. */

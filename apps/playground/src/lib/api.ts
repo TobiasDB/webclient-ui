@@ -128,17 +128,32 @@ export type QueryView = {
   mode: string; describe: string; blob: string; plan: Record<string, unknown>; row_count: number; sample: unknown[];
   timeliness: string; completeness: string; correctness: string; covers_all: boolean; correct: boolean;
 };
-/** a worked onboarding: the source + brief and the A/latest + B/all query views */
+/** a crawled page, a ranked candidate, and the page evaluation -- the per-stage products the
+ * pipeline visualisation shows for each step. */
+export type CrawlPage = { url: string; title?: string | null; kind?: string | null; tier?: string | null; flags: string[] };
+export type Candidate = { url: string; tier?: string; note?: string };
+export type Evaluation = {
+  url: string; dataset_present?: boolean; is_queryable?: boolean; scrapability?: number; has_pagination?: boolean;
+  has_filters?: boolean; dataset_is_subset?: boolean; interactive?: boolean; sort_order?: string | null;
+  recency_hint?: string; verdict?: string; api_endpoint?: string | null;
+  flags?: Record<string, number>; flag_signals?: Record<string, string[]>;
+};
+/** the per-stage products of a run (search → crawl → select → evaluate → source → query). */
+export type OnboardingStages = {
+  seeds: string[]; crawl_pages: CrawlPage[]; candidates: Candidate[];
+  evaluation?: Evaluation | null; resolve: Record<string, unknown>; steps: string[];
+};
+/** a worked onboarding: the source + brief, the per-stage products, and the A/latest + B/all queries */
 export type OnboardingExample = {
   name: string; title: string; description: string; source: string; ok: boolean; reason: string; binary: boolean;
-  brief: { description: string; fields: string[] }; resolve: Record<string, unknown>;
+  brief: { description: string; fields: string[] };
   latest: QueryView | null; all: QueryView | null;
-};
+} & OnboardingStages;
 /** the full live-onboarding result (the pipeline's OnboardingResult, serialised) */
 export type OnboardingResult = {
-  company: string; ok: boolean; reason: string; evaluation?: { url: string } | null;
-  query_latest?: QueryView | null; query_all?: QueryView | null; steps: string[];
-};
+  company: string; ok: boolean; reason: string;
+  query_latest?: QueryView | null; query_all?: QueryView | null;
+} & OnboardingStages & { evaluation?: Evaluation | null };
 
 export function subscribe(onEvent: (e: Event) => void, opts: { since?: number; topic?: string; onOpen?: () => void; onClose?: () => void } = {}) {
   const q = new URLSearchParams();
