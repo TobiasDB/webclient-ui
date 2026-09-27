@@ -2,8 +2,16 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Button, Chip, cn, type Plan } from "@webclient/ui";
-import { api, type OnboardingExample, type QueryView, type ApiError } from "../lib/api";
+import { api, ApiError, type OnboardingExample, type QueryView } from "../lib/api";
 import { encSpec } from "./Run";
+
+/** a readable message from an API error: the problem detail + its hint when the API sent them. */
+function errMsg(e: unknown): string {
+  const a = e as ApiError;
+  const d = a?.detail;
+  if (d?.message) return d.hint ? `${d.message} — ${d.hint}` : d.message;
+  return a?.message ?? String(e);
+}
 
 /** The ONBOARD workspace: the pipeline finds a source for a brief and authors two queries --
  * A/latest (the newest rows) and B/all (the whole dataset, pagination walked) -- each judged on
@@ -39,7 +47,7 @@ export function Onboard() {
           <span className="text-[11px] text-muted">one per dataset shape · built by the pipeline, no model</span>
         </div>
         {examples.isLoading && <p className="text-[12px] text-muted">building the examples (running the pipeline)…</p>}
-        {examples.isError && <p className="text-[12px] text-bad">could not load examples: {(examples.error as ApiError)?.message}</p>}
+        {examples.isError && <p className="text-[12px] text-bad">could not load examples: {errMsg(examples.error)}</p>}
         <div className="grid gap-2 xl:grid-cols-2">
           {(examples.data ?? []).map((ex) => (
             <ResultCard key={ex.name} ex={ex} onOpenAuthor={openAuthor} onOpenRun={openRun} />
@@ -57,6 +65,7 @@ function LiveOnboard({ onOpenAuthor, onOpenRun }: CardHandlers) {
   const [description, setDescription] = React.useState("");
   const [fields, setFields] = React.useState("");
   const [url, setUrl] = React.useState("");
+  const [model, setModel] = React.useState("shim");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<OnboardingExample | null>(null);
@@ -65,7 +74,7 @@ function LiveOnboard({ onOpenAuthor, onOpenRun }: CardHandlers) {
     setBusy(true); setError(null); setResult(null);
     try {
       const r = await api.onboard({
-        company, url: url || undefined,
+        company, url: url || undefined, model,
         brief: { description, fields: fields.split(",").map((s) => s.trim()).filter(Boolean) },
       });
       setResult({
@@ -74,7 +83,7 @@ function LiveOnboard({ onOpenAuthor, onOpenRun }: CardHandlers) {
         resolve: {}, latest: r.query_latest ?? null, all: r.query_all ?? null,
       });
     } catch (e) {
-      setError((e as ApiError)?.message ?? "onboarding failed");
+      setError(errMsg(e));
     } finally {
       setBusy(false);
     }
@@ -86,9 +95,14 @@ function LiveOnboard({ onOpenAuthor, onOpenRun }: CardHandlers) {
         <input className="rounded border border-line bg-surface px-2 py-1 text-[13px]" placeholder="company" value={company} onChange={(e) => setCompany(e.target.value)} />
         <input className="rounded border border-line bg-surface px-2 py-1 text-[13px] md:col-span-2" placeholder="what data do you want? (the brief)" value={description} onChange={(e) => setDescription(e.target.value)} />
         <input className="rounded border border-line bg-surface px-2 py-1 text-[13px]" placeholder="fields (comma-separated)" value={fields} onChange={(e) => setFields(e.target.value)} />
-        <input className="rounded border border-line bg-surface px-2 py-1 font-mono text-[12px] md:col-span-3" placeholder="a seed URL (optional — skips web search)" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <input className="rounded border border-line bg-surface px-2 py-1 font-mono text-[12px] md:col-span-2" placeholder="a seed URL (optional — skips web search)" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <select className="rounded border border-line bg-surface px-2 py-1 text-[13px]" value={model} onChange={(e) => setModel(e.target.value)} title="shim = the local claude CLI (no API key, slower); api = a model configured on the API (ANTHROPIC_API_KEY)">
+          <option value="shim">model: shim (local claude)</option>
+          <option value="">model: API key</option>
+        </select>
         <Button variant="primary" size="sm" disabled={busy || !company || !description} onClick={run}>{busy ? "onboarding…" : "Onboard ▶"}</Button>
       </div>
+      <p className="mt-1 text-[11px] text-muted">The <b>shim</b> routes through your local <code className="font-mono">claude</code> CLI — no API key, runs out of the box (a few calls, ~30–60s). Pick <b>API key</b> to use a model configured on the API.</p>
       {error && <p className="mt-2 text-[12px] text-warn">{error}</p>}
       {result && <div className="mt-2"><ResultCard ex={result} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} /></div>}
     </div>
