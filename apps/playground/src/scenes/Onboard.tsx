@@ -79,14 +79,22 @@ function LiveOnboard({ events, onOpenAuthor, onOpenRun }: { events: Event[] } & 
   const [res, setRes] = React.useState<OnboardingResult | null>(null);
   const [runAt, setRunAt] = React.useState(0);  // events since this run started (drop earlier ones)
 
-  // the live pipeline stages of the onboarding run: search -> crawl -> select -> evaluate -> source
-  // -> query, updated from the bus as the run unfolds -- so you can see WHERE it is (and where it stuck).
-  const stages = React.useMemo(
-    () => stagesLib.pipelineStages(
-      events.filter((e) => e.topic === "pipeline" && (e as { pipeline?: string }).pipeline === "onboarding" && (e.ts ?? 0) * 1000 >= runAt),
-    ),
+  // the live pipeline of the onboarding run: search -> crawl -> select -> evaluate -> source ->
+  // query. Both the STATUS (the rail) and the per-stage DETAIL (what each step produced) come from
+  // the bus as the run unfolds -- so every card fills in the moment its stage finishes, not at the end.
+  const runEvents = React.useMemo(
+    () => events.filter((e) => e.topic === "pipeline" && (e as { pipeline?: string }).pipeline === "onboarding" && (e.ts ?? 0) * 1000 >= runAt),
     [events, runAt],
   );
+  const stages = React.useMemo(() => stagesLib.pipelineStages(runEvents), [runEvents]);
+  const detail = React.useMemo(() => {
+    const m: Record<string, Record<string, unknown>> = {};
+    for (const e of runEvents) {
+      const pe = e as unknown as { phase?: string; stage?: string; detail?: Record<string, unknown> };
+      if (pe.phase === "exit" && pe.detail) m[pe.stage ?? ""] = pe.detail;
+    }
+    return m;
+  }, [runEvents]);
 
   const run = async () => {
     setBusy(true); setError(null); setRes(null); setRunAt(Date.now());
@@ -128,8 +136,8 @@ function LiveOnboard({ events, onOpenAuthor, onOpenRun }: { events: Event[] } & 
         <p className="mt-1 text-[11px] text-muted">The <b>shim</b> routes through your local <code className="font-mono">claude</code> CLI — no API key, runs out of the box (~30–60s).</p>
       </div>
 
-      {/* the pipeline itself -- the main content: every stage, with what it produced */}
-      <PipelineView res={res} stages={stages} busy={busy} error={error} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} />
+      {/* the pipeline itself -- the main content: every stage, with what it produced, LIVE */}
+      <PipelineView detail={detail} res={res} stages={stages} busy={busy} error={error} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} />
     </div>
   );
 }
@@ -141,53 +149,69 @@ const STATUS_TONE: Record<StageStatus, string> = {
 /** The onboarding pipeline as its OWN view -- a stage rail plus one rich card per step (what the
  * search found, what was crawled, the candidates, the evaluation with its flags, the fetch policy,
  * and the A/B queries). The main content of the workspace, so a run is fully inspectable. */
-function PipelineView({ res, stages, busy, error, onOpenAuthor, onOpenRun }: {
-  res: OnboardingResult | null; stages: import("@webclient/ui").StageInfo[]; busy: boolean; error: string | null;
+function PipelineView({ detail, res, stages, busy, error, onOpenAuthor, onOpenRun }: {
+  detail: Record<string, Record<string, unknown>>; res: OnboardingResult | null; stages: import("@webclient/ui").StageInfo[]; busy: boolean; error: string | null;
 } & CardHandlers) {
-  const statusOf = (name: string): StageStatus => stages.find((s) => s.name === name)?.status ?? (res ? "done" : "pending");
-  const source = res?.evaluation?.url ?? "";
+  const statusOf = (name: string): StageStatus => stages.find((s) => s.name === name)?.status ?? "pending";
+  const d = (stage: string) => detail[stage];
+  const arr = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v as Record<string, unknown>[] : []);
+  const source = (d("evaluate")?.url as string) || res?.evaluation?.url || "";
+  const started = busy || stages.length > 0 || !!res;
+  const seeds = (d("search")?.seeds as string[]) ?? [];
+  const pages = arr(d("crawl")?.pages);
+  const cands = arr(d("select")?.candidates);
+  const q = d("query");
   return (
-    <section className="flex min-h-[420px] flex-col rounded-lg border border-line bg-surface">
+    <section className="flex min-h-[440px] flex-col rounded-lg border border-line bg-surface">
       <div className="flex items-center gap-2 border-b border-line px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
         pipeline {busy && <span className="text-accent">· running</span>}
         <span className="flex-1" />
         {res && !res.ok && <Chip tone="bad">stopped: {res.reason || "unknown"}</Chip>}
         {res?.ok && <Chip tone="ok">onboarded</Chip>}
       </div>
-      {(busy || stages.length > 0) && <div className="border-b border-line px-3 py-2"><StageRail stages={stages} /></div>}
+      {started && <div className="border-b border-line px-3 py-2"><StageRail stages={stages} /></div>}
       {error && <p className="px-3 py-2 text-[12px] text-warn">{error}</p>}
-      {!res && busy && <p className="px-3 py-4 text-center text-[12px] text-muted">running the pipeline… stages light up as they complete (the shim makes a few local <code className="font-mono">claude</code> calls).</p>}
-      {!res && !busy && !error && <div className="p-4"><EmptyState title="No run yet" hint="Fill a brief above and Onboard ▶. Each stage below then shows exactly what it produced — the seeds, the crawled pages, the candidates, the page evaluation with its signals, the fetch policy, and the two queries." /></div>}
-      {res && (
+      {!started && !error && <div className="p-4"><EmptyState title="No run yet" hint="Fill a brief above and Onboard ▶. Each stage below then fills in — LIVE as it completes — with exactly what it produced: the seeds, the crawled pages, the candidates, the page evaluation with its signals, the fetch policy, and the two queries." /></div>}
+      {started && (
         <div className="grid gap-2 p-3">
-          <StageCard n={1} title="Search" status={statusOf("search")} summary={`${res.seeds.length} seed${res.seeds.length === 1 ? "" : "s"}`}>
-            {res.seeds.length ? <ul className="space-y-0.5">{res.seeds.map((u) => <li key={u}><a className="font-mono text-[11px] text-accent hover:underline" href={u} target="_blank" rel="noreferrer">{u}</a></li>)}</ul> : <Muted>no seeds — web search returned nothing (install ddgs, or paste a seed URL)</Muted>}
+          <StageCard n={1} title="Search" status={statusOf("search")} summary={d("search") ? `${d("search")!.count ?? seeds.length} seed(s)` : undefined}>
+            {d("search") ? (seeds.length ? <ul className="space-y-0.5">{seeds.map((u) => <li key={u}><a className="font-mono text-[11px] text-accent hover:underline" href={u} target="_blank" rel="noreferrer">{u}</a></li>)}</ul> : <Muted>no seeds — web search returned nothing (install ddgs, or paste a seed URL)</Muted>) : <Pending status={statusOf("search")} />}
           </StageCard>
-          <StageCard n={2} title="Crawl" status={statusOf("crawl")} summary={`${res.crawl_pages.length} page${res.crawl_pages.length === 1 ? "" : "s"} fetched`}>
-            <PageTable pages={res.crawl_pages} />
+          <StageCard n={2} title="Crawl" status={statusOf("crawl")} summary={d("crawl") ? `${d("crawl")!.fetched ?? pages.length} fetched · ${d("crawl")!.failed ?? 0} failed` : undefined}>
+            {d("crawl") ? <PageTable pages={pages as unknown as CrawlPage[]} /> : <Pending status={statusOf("crawl")} />}
           </StageCard>
-          <StageCard n={3} title="Select" status={statusOf("select")} summary={`${res.candidates.length} candidate${res.candidates.length === 1 ? "" : "s"}`}>
-            {res.candidates.length ? <ul className="space-y-0.5">{res.candidates.map((c) => <li key={c.url} className="flex items-center gap-2 text-[11px]"><span className="rounded bg-surface-3 px-1 text-[10px] text-muted">{c.tier}</span><span className="truncate font-mono" title={c.url}>{c.url}</span>{c.note && <span className="truncate text-muted" title={c.note}>— {c.note}</span>}</li>)}</ul> : <Muted>no candidates</Muted>}
+          <StageCard n={3} title="Select" status={statusOf("select")} summary={d("select") ? `${cands.length} candidate(s)` : undefined}>
+            {d("select") ? (cands.length ? <ul className="space-y-0.5">{cands.map((c) => <li key={String(c.url)} className="flex items-center gap-2 text-[11px]"><span className="rounded bg-surface-3 px-1 text-[10px] text-muted">{String(c.tier)}</span><span className="truncate font-mono" title={String(c.url)}>{String(c.url)}</span>{c.note ? <span className="truncate text-muted" title={String(c.note)}>— {String(c.note)}</span> : null}</li>)}</ul> : <Muted>no candidates</Muted>) : <Pending status={statusOf("select")} />}
           </StageCard>
-          <StageCard n={4} title="Evaluate" status={statusOf("evaluate")} summary={res.evaluation?.url}>
-            <EvalPanel ev={res.evaluation} />
+          <StageCard n={4} title="Evaluate" status={statusOf("evaluate")} summary={d("evaluate")?.url as string | undefined}>
+            {d("evaluate") ? <EvalPanel ev={d("evaluate") as unknown as Evaluation} /> : <Pending status={statusOf("evaluate")} />}
           </StageCard>
-          <StageCard n={5} title="Source" status={statusOf("source")} summary={resolveSummary(res.resolve)}>
-            <div className="text-[11px] text-muted">{source && <>fetches <span className="font-mono">{source}</span> with </>}{resolveSummary(res.resolve)}.</div>
+          <StageCard n={5} title="Source" status={statusOf("source")} summary={d("source") ? resolveSummary((d("source")!.resolve as Record<string, unknown>) ?? {}) : undefined}>
+            {d("source") ? <div className="text-[11px] text-muted">{source && <>fetches <span className="font-mono">{source}</span> with </>}{resolveSummary((d("source")!.resolve as Record<string, unknown>) ?? {})}.</div> : <Pending status={statusOf("source")} />}
           </StageCard>
-          <StageCard n={6} title="Query" status={statusOf("query")} summary="the latest (A) and all (B) queries">
-            {res.query_latest || res.query_all ? (
+          <StageCard n={6} title="Query" status={statusOf("query")} summary={q ? (q.authored ? "the latest (A) and all (B) queries" : "no query") : undefined}>
+            {res && (res.query_latest || res.query_all) ? (
               <div className="grid gap-2 sm:grid-cols-2">
                 <QueryBlock label="A · latest" hint="the newest rows (incremental poll)" view={res.query_latest ?? null} source={source} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} name={`${res.company}-latest`} binary={false} />
                 <QueryBlock label="B · all" hint="the whole dataset (backfill)" view={res.query_all ?? null} source={source} onOpenAuthor={onOpenAuthor} onOpenRun={onOpenRun} name={`${res.company}-all`} binary={false} />
               </div>
-            ) : <Muted>no query authored{res.reason ? ` — ${res.reason}` : ""}</Muted>}
+            ) : q?.authored ? (
+              <div className="space-y-1">
+                <code className="block truncate font-mono text-[10.5px] text-ink-2" title={String(q.describe)}>{String(q.describe)}</code>
+                <div className="flex flex-wrap gap-1"><Assess ok={true} note={String(q.completeness ?? "")} label="complete" /><Assess ok={true} note={String(q.correctness ?? "")} label="correct" /><Assess ok={!/STALE|MISSING/.test(String(q.timeliness ?? ""))} note={String(q.timeliness ?? "")} label="timely" /></div>
+              </div>
+            ) : q ? <Muted>no query authored{res?.reason ? ` — ${res.reason}` : ""}</Muted> : <Pending status={statusOf("query")} />}
           </StageCard>
-          {res.steps?.length ? <Trace steps={res.steps} /> : null}
+          {res?.steps?.length ? <Trace steps={res.steps} /> : null}
         </div>
       )}
     </section>
   );
+}
+
+/** a stage that hasn't produced its detail yet -- running or still to come. */
+function Pending({ status }: { status: StageStatus }) {
+  return <Muted>{status === "running" ? "working…" : status === "failed" ? "did not complete" : "—"}</Muted>;
 }
 
 function StageCard({ n, title, status, summary, children }: { n: number; title: string; status: StageStatus; summary?: string | null; children: React.ReactNode }) {
