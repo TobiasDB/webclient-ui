@@ -391,7 +391,9 @@ function PageTable({ pages }: { pages: CrawlPage[] }) {
 
 function EvalPanel({ ev }: { ev?: Evaluation | null }) {
   if (!ev) return <Muted>not evaluated</Muted>;
-  const flags = Object.entries(ev.flags ?? {});
+  // the "live data API" signal gets its own prominent callout (below), so keep it out of the generic chips
+  const flags = Object.entries(ev.flags ?? {}).filter(([n]) => n !== "data_api");
+  const liveApi = ev.flags?.data_api != null || !!ev.api_endpoint;  // the page calls a JSON data API
   const Score = ({ label, on }: { label: string; on?: boolean }) => <span className={cn("rounded px-1.5 py-0.5 text-[10px]", on ? "bg-ok-soft text-ok" : "bg-surface-3 text-muted")}>{on ? "✓" : "·"} {label}</span>;
   return (
     <div className="space-y-1.5">
@@ -402,8 +404,14 @@ function EvalPanel({ ev }: { ev?: Evaluation | null }) {
         <Score label="filtered" on={ev.has_filters} />
         {ev.dataset_is_subset && <span className="rounded bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn">a subset</span>}
         {ev.sort_order && <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-ink-2">{ev.sort_order}</span>}
-        {ev.api_endpoint && <span className="rounded bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent" title={ev.api_endpoint}>data API</span>}
       </div>
+      {liveApi && (
+        <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-topic-network/40 bg-topic-network/10 px-2 py-1 text-[11px]">
+          <span className="font-semibold text-topic-network">⚡ live data API</span>
+          <span className="text-ink-2">the page fetches its data from a JSON API — the whole dataset likely lives there, not in the rendered HTML</span>
+          {ev.api_endpoint && <code className="ml-auto max-w-full truncate font-mono text-[10px] text-topic-network" title={ev.api_endpoint}>{ev.api_endpoint}</code>}
+        </div>
+      )}
       {flags.length > 0 && <div className="flex flex-wrap gap-1">{flags.sort((a, b) => b[1] - a[1]).map(([name, c]) => <span key={name} className="rounded bg-surface-3 px-1 text-[10px] text-ink-2" title={(ev.flag_signals?.[name] ?? []).join("\n") || undefined}>{name.replace(/_/g, " ")} {Math.round(c * 100)}%</span>)}</div>}
       {ev.verdict && <p className="text-[11px] text-muted">“{ev.verdict}”</p>}
       {ev.recency_hint && <p className="text-[11px] text-muted">recency: {ev.recency_hint}</p>}

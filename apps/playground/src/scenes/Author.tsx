@@ -365,6 +365,21 @@ export function Author() {
       setHead({ page: pageNode.id, at: pageNode.id, docId: head.docId }); setPending([]); setLiveUrl(h.url ?? url); pullNow.current();
     } catch (e) { setActError(e as ApiError); } finally { setBusy(null); }
   };
+  /** bring the PLAN here: re-root the plan's Reference at the live page's CURRENT url -- the inverse of
+   * bringLiveHere. For "I clicked around and FOUND the dataset; point the plan at THIS page, keeping the
+   * steps". The navigations that got here are subsumed into the new root, so pending clears. */
+  const rerootHere = () => {
+    if (!graph || !liveUrl) return;
+    const target = liveUrl;
+    const rootPage = Object.values(graph.nodes).find((x) => x.parent === graph.root && x.op?.name === "resolve");
+    setGraph((g) => ({ ...g, url: target }));  // the root Reference now points at the page you navigated to
+    if (rootPage) {
+      setPages((ps) => ({ ...ps, [rootPage.id]: { docId: liveDocId ?? undefined, live: !!liveDocId, url: target } }));
+      setHead({ page: rootPage.id, at: rootPage.id, docId: liveDocId ?? head?.docId ?? "" });
+      select(rootPage.id);
+    }
+    setPending([]); setActError(null);
+  };
   /** go live at the step on screen (a fork when it is not the head) */
   const goLiveHere = async () => { if (!stateNode) return; setActError(null); try { await liveAt(stateNode); } catch (e) { setActError(e as ApiError); } finally { setBusy(null); } };
   const runAction = async (op: string, args: unknown[], record: boolean, _under?: string) => act(op, args, record);
@@ -907,6 +922,7 @@ export function Author() {
             {liveDocId && <span className="mr-1 flex shrink-0 items-center gap-0.5 border-r border-line pr-1">
               <button type="button" data-act="live-back" disabled={!!busy} onClick={() => { void liveBack(); }} className="rounded px-1 hover:bg-surface-2 disabled:opacity-40" title="the browser's back button, on this page (the actions not in the plan are trimmed to where it lands)">⟵ back</button>
               <button type="button" data-act="live-reset" disabled={(!pending.length && !awayFromHead) || !!busy} onClick={() => { void liveReset(); }} className="rounded px-1 hover:bg-surface-2 disabled:opacity-40" title="back until no action outside the plan is left (rebuilt at the plan's head only when a click made no history entry)">⟲ to the plan</button>
+              {awayFromHead && <button type="button" data-act="reroot-here" disabled={!!busy} onClick={rerootHere} className="rounded bg-accent/90 px-1 text-white hover:brightness-110 disabled:opacity-40" title="re-root the plan's Reference at the page you navigated to — bring the PLAN to the current URL (your steps are kept; the navigations that got here become the new starting point)">⤓ re-root here</button>}
               {placed && placed.page === pageKey && !pending.length && <span className="text-muted">on <b className="text-accent">{graph.nodes[placed.page]?.output ? `.resolve() → ${graph.nodes[placed.page]!.output}` : ".resolve()"}</b>{placed.of ? ` (${placed.hits}/${placed.of} selectors match)` : " (its URL)"}</span>}
               {busy && <span className="text-muted">{busy}…</span>}
             </span>}
